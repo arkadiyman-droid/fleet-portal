@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Forbidden — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>You don't have permission to do that</h1>
+  </div>
+  <p>Your account doesn't have the access needed for this action. If you think this is wrong, ask your Fleet Portal administrator to check your permissions.</p>
+  <a class="btn plain" href="{{ url_for('admin.list_clients') }}">Back to Clients</a>
+{% endblock %}

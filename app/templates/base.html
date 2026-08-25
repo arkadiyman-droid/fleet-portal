@@ -59,6 +59,7 @@
     .status-ok { background: #ecfdf3; color: var(--success); }
     .status-err { background: #fef2f2; color: var(--danger); }
     .status-unconfigured { background: var(--bg); color: var(--muted); }
+    .identity { color: var(--muted); font-size: 13px; margin-right: 14px; }
   </style>
 </head>
 <body>
@@ -70,7 +71,9 @@
       <a href="{{ url_for('admin.list_buildings') }}">Buildings</a>
       <a href="{{ url_for('admin.list_controllers') }}">Controllers</a>
       <a href="{{ url_for('admin.fleet_status') }}">Fleet Status</a>
+      {% if g.is_superuser %}<a href="{{ url_for('admin.list_users') }}">Users</a>{% endif %}
     </nav>
+    <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}{{ g.user.name }}{% endif %}</span>
     <form method="post" action="{{ url_for('auth.logout') }}">
       <button type="submit">Log out</button>
     </form>

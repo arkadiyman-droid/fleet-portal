@@ -134,3 +134,55 @@ class ControllerStatus(db.Model):
 
     def __repr__(self):
         return f"<ControllerStatus controller_id={self.controller_id} ok={self.ok}>"
+
+
+class User(db.Model):
+    __tablename__ = "users"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)
+    email = db.Column(db.String(200), nullable=False, unique=True)
+    login = db.Column(db.String(80), nullable=False, unique=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    permissions = db.relationship(
+        "Permission", back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    def __repr__(self):
+        return f"<User {self.id} {self.login!r}>"
+
+
+class Permission(db.Model):
+    """A (user, scope, role) grant. scope_type/scope_id is a polymorphic
+    reference to a Client/Property/Building row — no DB FK is possible
+    across three different target tables, so referential validity is
+    enforced at write time (app/routes.py's add_permission(), via
+    get_or_404 against the right model), not by the schema. See
+    app/permissions.py for how a grant at one level implies the same role
+    on everything beneath it."""
+    __tablename__ = "permissions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    scope_type = db.Column(db.String(20), nullable=False)
+    scope_id = db.Column(db.Integer, nullable=False)
+    role = db.Column(db.String(20), nullable=False)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    user = db.relationship("User", back_populates="permissions")
+
+    __table_args__ = (
+        CheckConstraint("scope_type IN ('client', 'property', 'building')", name="ck_permissions_scope_type"),
+        CheckConstraint("role IN ('viewer', 'operator', 'admin')", name="ck_permissions_role"),
+        db.UniqueConstraint("user_id", "scope_type", "scope_id", name="uq_permissions_user_scope"),
+        db.Index("ix_permissions_scope", "scope_type", "scope_id"),
+    )
+
+    def __repr__(self):
+        return f"<Permission user_id={self.user_id} {self.scope_type}:{self.scope_id} {self.role}>"

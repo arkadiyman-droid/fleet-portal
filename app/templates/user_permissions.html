@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <a class="btn plain" href="{{ url_for('admin.list_users') }}">Back to Users</a>
+  </div>
+
+  <h2 style="font-size:14px;margin:0 0 8px">Current Grants</h2>
+  {% if grants %}
+  <table style="margin-bottom:28px">
+    <thead>
+      <tr><th>Scope</th><th>Role</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for g_row in grants %}
+      <tr>
+        <td>{{ g_row.label }}</td>
+        <td>{{ g_row.role }}</td>
+        <td class="row-actions">
+          <form method="post" action="{{ url_for('admin.revoke_permission', user_id=user.id, permission_id=g_row.id) }}" onsubmit="return confirm('Revoke this grant?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn danger">Revoke</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty" style="margin-bottom:28px">No grants yet — {{ user.name }} can't see or edit anything.</div>
+  {% endif %}
+
+  <h2 style="font-size:14px;margin:0 0 8px">Add a Grant</h2>
+  <div style="display:flex;gap:16px;flex-wrap:wrap">
+    {% for scope_type, label, options in [("client", "Client", clients), ("property", "Property", properties), ("building", "Building", buildings)] %}
+    <div class="form-panel" style="max-width:260px">
+      <div style="font-weight:600;margin-bottom:10px">Grant on a {{ label }}</div>
+      <form method="post" action="{{ url_for('admin.add_permission', user_id=user.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="scope_type" value="{{ scope_type }}">
+        <label for="scope_id_{{ scope_type }}">{{ label }}</label>
+        <select id="scope_id_{{ scope_type }}" name="scope_id" required>
+          <option value="" selected disabled>Select…</option>
+          {% for o in options %}<option value="{{ o.id }}">{{ o.name }}</option>{% endfor %}
+        </select>
+        <label for="role_{{ scope_type }}">Role</label>
+        <select id="role_{{ scope_type }}" name="role" required>
+          <option value="viewer">Viewer</option>
+          <option value="operator">Operator</option>
+          <option value="admin">Admin</option>
+        </select>
+        <button type="submit" class="btn">Grant</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -2,7 +2,7 @@ import getpass
 
 import click
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, render_template
 from werkzeug.security import generate_password_hash
 
 from app.extensions import csrf, db, migrate
@@ -25,6 +25,10 @@ def create_app():
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
+
+    @app.errorhandler(403)
+    def _forbidden(e):
+        return render_template("403.html"), 403
 
     from app.fleet_poller import fleet_poller
     fleet_poller.start(app)

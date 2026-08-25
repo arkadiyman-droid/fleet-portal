@@ -3,7 +3,7 @@
 {% block content %}
   <div class="page-head">
     <h1>{{ title }}</h1>
-    <a class="btn" href="{{ new_url }}">+ New</a>
+    {% if new_url %}<a class="btn" href="{{ new_url }}">+ New</a>{% endif %}
   </div>
 
   <p>
@@ -27,7 +27,11 @@
       <tr class="{{ 'archived' if not row.is_active else '' }}">
         {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
         <td class="row-actions">
+          {% if row.extra_url %}<a class="btn plain" href="{{ row.extra_url }}">Permissions</a>{% endif %}
+          {% if row.can_edit %}
           <a class="btn plain" href="{{ url_for('admin.edit_' + entity_singular, **{entity_singular + '_id': row.id}) }}">Edit</a>
+          {% endif %}
+          {% if row.can_archive %}
           {% if row.is_active %}
           <form method="post" action="{{ url_for('admin.delete_' + entity_singular, **{entity_singular + '_id': row.id}) }}" onsubmit="return confirm('Archive this record and everything under it?');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -38,6 +42,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn plain">Restore</button>
           </form>
+          {% endif %}
           {% endif %}
         </td>
       </tr>
