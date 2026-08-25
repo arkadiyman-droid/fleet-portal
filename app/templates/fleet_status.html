@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+  </div>
+
+  {% if controllers %}
+  <table>
+    <thead>
+      <tr>
+        <th>Controller</th>
+        <th>Building</th>
+        <th>Status</th>
+        <th>Reported Building</th>
+        <th>Version</th>
+        <th>Last Polled</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ctrl in controllers %}
+      {% set s = ctrl.status %}
+      <tr>
+        <td>{{ ctrl.name }}</td>
+        <td>{{ ctrl.building.name }}</td>
+        <td>
+          {% if not ctrl.tailscale_ip or not ctrl.fleet_api_token %}
+            <span class="status-pill status-unconfigured">Not configured</span>
+          {% elif not s %}
+            <span class="status-pill status-unconfigured">Never polled</span>
+          {% elif s.ok %}
+            <span class="status-pill status-ok">Online</span>
+          {% else %}
+            <span class="status-pill status-err" title="{{ s.error or '' }}">Offline</span>
+          {% endif %}
+        </td>
+        <td>{{ s.building_name if s and s.building_name else "—" }}</td>
+        <td>{{ s.version if s and s.version else "—" }}</td>
+        <td>{{ s.polled_at.strftime("%Y-%m-%d %H:%M:%S UTC") if s else "—" }}</td>
+        <td class="row-actions">
+          <form method="post" action="{{ url_for('admin.fleet_poll_now', controller_id=ctrl.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn plain">Poll Now</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty">No controllers yet.</div>
+  {% endif %}
+{% endblock %}

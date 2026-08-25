@@ -1,7 +1,9 @@
 from datetime import datetime, date
 
 from sqlalchemy import CheckConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 
+from app.crypto_types import EncryptedString
 from app.extensions import db
 
 
@@ -88,12 +90,16 @@ class Controller(db.Model):
     building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
     name = db.Column(db.String(200), nullable=False)
 
-    # Inert until Phase 2 (connectivity).
+    # Tailscale IP is what the fleet poller actually connects to — stable
+    # per-device. Hostname is informational only (MagicDNS isn't guaranteed
+    # tailnet-wide, so it's never relied on for the poll URL).
     tailscale_hostname = db.Column(db.String(200))
     tailscale_ip = db.Column(db.String(50))
-    # Inert until Phase 2/6. Plaintext is acceptable ONLY while this column is unused —
-    # real secret handling must be designed before Phase 2 starts populating it.
-    fleet_api_token = db.Column(db.String(200))
+    # Fleet Portal read-only status-polling credential, matched against a
+    # sha256 hash stored on the controller itself (see EMS's fleet/token.py)
+    # — encrypted at rest here (see app/crypto_types.py) since, unlike while
+    # this column was inert, it's now a live credential worth protecting.
+    fleet_api_token = db.Column(EncryptedString)
 
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -103,3 +109,28 @@ class Controller(db.Model):
 
     def __repr__(self):
         return f"<Controller {self.id} {self.name!r}>"
+
+
+class ControllerStatus(db.Model):
+    """Latest polled /api/status snapshot for a Controller — one row per
+    controller (upserted), not a growing history table. Phase 2's job is
+    proving connectivity, not trending; a history table would need its own
+    retention policy this phase doesn't need. The full raw payload is kept
+    (not hand-picked columns) so EMS-side field additions don't require a
+    fleet-portal migration — see app/fleet_poller.py."""
+    __tablename__ = "controller_statuses"
+
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="CASCADE"), primary_key=True)
+    polled_at = db.Column(db.DateTime, nullable=False)
+    ok = db.Column(db.Boolean, nullable=False)
+    http_status = db.Column(db.Integer)
+    error = db.Column(db.Text)
+    response_ms = db.Column(db.Integer)
+    raw_json = db.Column(JSONB)
+    building_name = db.Column(db.String(200))
+    version = db.Column(db.String(50))
+
+    controller = db.relationship("Controller", backref=db.backref("status", uselist=False))
+
+    def __repr__(self):
+        return f"<ControllerStatus controller_id={self.controller_id} ok={self.ok}>"

@@ -1,8 +1,9 @@
 from datetime import datetime
 
-from flask import Blueprint, flash, redirect, render_template, request, url_for
+from flask import Blueprint, current_app, flash, redirect, render_template, request, url_for
 
 from app.extensions import db
+from app.fleet_poller import poll_controller
 from app.models import Building, Client, Controller, Property
 
 admin_bp = Blueprint("admin", __name__)
@@ -393,12 +394,17 @@ def _controller_fields(ctrl=None):
         },
         {"name": "name", "label": "Name", "type": "text", "required": True, "value": ctrl.name if ctrl else ""},
         {
-            "name": "tailscale_hostname", "label": "Tailscale Hostname (Phase 2, not yet used)", "type": "text",
-            "required": False, "value": (ctrl.tailscale_hostname or "") if ctrl else "",
+            "name": "tailscale_ip", "label": "Tailscale IP", "type": "text",
+            "required": False, "value": (ctrl.tailscale_ip or "") if ctrl else "",
         },
         {
-            "name": "tailscale_ip", "label": "Tailscale IP (Phase 2, not yet used)", "type": "text",
-            "required": False, "value": (ctrl.tailscale_ip or "") if ctrl else "",
+            "name": "tailscale_hostname", "label": "Tailscale Hostname (informational — MagicDNS not assumed)",
+            "type": "text", "required": False, "value": (ctrl.tailscale_hostname or "") if ctrl else "",
+        },
+        {
+            "name": "fleet_api_token",
+            "label": "Fleet API Token" + (" (set — leave blank to keep)" if ctrl and ctrl.fleet_api_token else ""),
+            "type": "password", "required": False, "value": "",
         },
     ]
 
@@ -411,6 +417,7 @@ def new_controller():
             name=request.form["name"],
             tailscale_hostname=request.form.get("tailscale_hostname") or None,
             tailscale_ip=request.form.get("tailscale_ip") or None,
+            fleet_api_token=request.form.get("fleet_api_token") or None,
         )
         db.session.add(ctrl)
         db.session.commit()
@@ -427,6 +434,9 @@ def edit_controller(controller_id):
         ctrl.name = request.form["name"]
         ctrl.tailscale_hostname = request.form.get("tailscale_hostname") or None
         ctrl.tailscale_ip = request.form.get("tailscale_ip") or None
+        new_token = request.form.get("fleet_api_token")
+        if new_token:
+            ctrl.fleet_api_token = new_token
         db.session.commit()
         flash(f"Controller {ctrl.name!r} updated.", "success")
         return redirect(url_for("admin.list_controllers", building_id=ctrl.building_id))
@@ -453,3 +463,23 @@ def restore_controller(controller_id):
     db.session.commit()
     flash(f"Restored {ctrl.name!r}.", "success")
     return redirect(url_for("admin.list_controllers", building_id=ctrl.building_id))
+
+
+# ─── Fleet Status (Phase 2 — read-only status rollup) ───────────────────
+
+@admin_bp.route("/fleet")
+def fleet_status():
+    controllers = Controller.query.filter_by(is_active=True).order_by(Controller.name).all()
+    return render_template("fleet_status.html", title="Fleet Status", controllers=controllers)
+
+
+@admin_bp.route("/fleet/<int:controller_id>/poll", methods=["POST"])
+def fleet_poll_now(controller_id):
+    ctrl = Controller.query.get_or_404(controller_id)
+    if not ctrl.tailscale_ip or not ctrl.fleet_api_token:
+        flash(f"{ctrl.name!r} has no Tailscale IP / token configured.", "error")
+        return redirect(url_for("admin.fleet_status"))
+    row = poll_controller(current_app._get_current_object(), ctrl)
+    flash(f"Polled {ctrl.name!r}: {'OK' if row.ok else 'FAILED — ' + (row.error or '')}",
+          "success" if row.ok else "error")
+    return redirect(url_for("admin.fleet_status"))
