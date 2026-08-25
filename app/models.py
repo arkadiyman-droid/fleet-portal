@@ -20,7 +20,8 @@ class Client(db.Model):
     # invoice generation/approval flow at all — Phase 5's payment-processor
     # integration is what will actually act on this value.
     billing_method = db.Column(db.String(20), nullable=False, default="invoice")
-    # Inert until Phase 5 (payment processor).
+    # Stripe Customer id — created lazily on the first Checkout Session for
+    # this client. See app/stripe_billing.py::get_or_create_customer().
     billing_customer_id = db.Column(db.String(200))
 
     is_active = db.Column(db.Boolean, nullable=False, default=True)
@@ -255,6 +256,11 @@ class Invoice(db.Model):
     issued_date = db.Column(db.Date)  # set on approve
     due_date = db.Column(db.Date)     # set on approve = issued_date + INVOICE_DUE_DAYS
 
+    # Latest Stripe Checkout Session for this invoice — overwritten by
+    # every (re)generation, no uniqueness needed. See app/stripe_billing.py.
+    stripe_checkout_session_id = db.Column(db.String(255))
+    stripe_checkout_url = db.Column(db.Text)
+
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -278,10 +284,11 @@ class Invoice(db.Model):
 
 
 class Payment(db.Model):
-    """Single-shot payment record — Phase 4 has no payment processor
-    (Phase 5), so recording a payment takes one amount/date/method and
-    flips the Invoice straight to paid. Deliberately no partial-payment
-    reconciliation for this first cut."""
+    """One payment against an invoice, recorded either manually by a
+    Superuser or automatically via a verified Stripe webhook (see
+    app/stripe_billing.py) — both paths funnel through
+    app/billing.py::_finalize_payment(). Deliberately no partial-payment
+    reconciliation: one Payment settles an Invoice in full."""
     __tablename__ = "payments"
 
     id = db.Column(db.Integer, primary_key=True)
@@ -289,6 +296,11 @@ class Payment(db.Model):
     amount_cents = db.Column(db.Integer, nullable=False)
     paid_date = db.Column(db.Date, nullable=False)
     method = db.Column(db.String(20), nullable=False)
+    # Stripe PaymentIntent id — NULL for manually-recorded payments. UNIQUE
+    # so a retried webhook delivery (Stripe explicitly retries) can never
+    # double-record a payment. Postgres allows multiple NULLs under a
+    # unique constraint, so manual payments are unaffected.
+    stripe_payment_intent_id = db.Column(db.String(255))
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
@@ -297,6 +309,7 @@ class Payment(db.Model):
     __table_args__ = (
         CheckConstraint("amount_cents > 0", name="ck_payments_amount_positive"),
         CheckConstraint("method IN ('check', 'ach', 'wire', 'card', 'other')", name="ck_payments_method"),
+        db.UniqueConstraint("stripe_payment_intent_id", name="uq_payments_stripe_payment_intent_id"),
     )
 
     def __repr__(self):

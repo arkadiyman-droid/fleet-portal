@@ -8,7 +8,7 @@ from app.permissions import load_identity
 
 auth_bp = Blueprint("auth", __name__)
 
-_EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static"}
+_EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static", "admin.stripe_webhook"}
 
 
 def _safe_next(target: str) -> str:

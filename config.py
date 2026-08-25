@@ -23,6 +23,12 @@ class Config:
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))
 
+        # Stripe payment processor (Phase 5) — optional; the whole feature
+        # degrades to manual/pay-by-hand invoicing when unset. See
+        # app/stripe_billing.py.
+        self.STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
+        self.STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
 
 def _require_env(name: str) -> str:
     val = os.environ.get(name)

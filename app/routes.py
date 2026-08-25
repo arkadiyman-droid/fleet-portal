@@ -4,10 +4,10 @@ from flask import Blueprint, abort, current_app, flash, redirect, render_templat
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
-from app.billing import INVOICE_DUE_DAYS, current_contract, generate_invoices, period_for_date
-from app.extensions import db
+from app.billing import INVOICE_DUE_DAYS, _finalize_payment, current_contract, generate_invoices, period_for_date
+from app.extensions import csrf, db
 from app.fleet_poller import poll_controller
-from app.models import Building, Client, Contract, Controller, Invoice, Payment, Permission, Property, User
+from app.models import Building, Client, Contract, Controller, Invoice, Permission, Property, User
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -23,6 +23,13 @@ from app.permissions import (
     visible_client_query,
     visible_controller_query,
     visible_property_query,
+)
+from app.stripe_billing import (
+    WebhookVerificationError,
+    create_checkout_session,
+    mark_paid_from_stripe_event,
+    stripe_configured,
+    verify_stripe_webhook,
 )
 
 admin_bp = Blueprint("admin", __name__)
@@ -837,7 +844,10 @@ def billing_generate_now():
 def invoice_detail(invoice_id):
     invoice = Invoice.query.get_or_404(invoice_id)
     is_overdue = invoice.status == "pending" and invoice.due_date is not None and invoice.due_date < datetime.utcnow().date()
-    return render_template("invoice_detail.html", title=f"Invoice #{invoice.id}", invoice=invoice, is_overdue=is_overdue)
+    return render_template(
+        "invoice_detail.html", title=f"Invoice #{invoice.id}", invoice=invoice,
+        is_overdue=is_overdue, stripe_configured=stripe_configured(),
+    )
 
 
 @admin_bp.route("/billing/invoices/<int:invoice_id>/approve", methods=["POST"])
@@ -851,6 +861,20 @@ def approve_invoice(invoice_id):
     invoice.issued_date = datetime.utcnow().date()
     invoice.due_date = invoice.issued_date + timedelta(days=INVOICE_DUE_DAYS)
     db.session.commit()
+
+    client = invoice.building.property.client
+    if client.billing_method == "auto_charge" and stripe_configured():
+        try:
+            create_checkout_session(invoice)
+        except Exception:
+            current_app.logger.exception("Stripe: failed to auto-create Checkout Session for invoice %s", invoice.id)
+            flash(
+                f"Invoice #{invoice.id} approved and issued — due {invoice.due_date.isoformat()}, "
+                "but the Stripe payment link could not be created automatically (see logs); "
+                "use ‘Create Payment Link’ on the invoice to retry.", "error",
+            )
+            return redirect(url_for("admin.billing_dashboard"))
+
     flash(f"Invoice #{invoice.id} approved and issued — due {invoice.due_date.isoformat()}.", "success")
     return redirect(url_for("admin.billing_dashboard"))
 
@@ -884,11 +908,48 @@ def record_payment(invoice_id):
     if amount_cents <= 0 or method not in {"check", "ach", "wire", "card", "other"}:
         flash("Invalid payment.", "error")
         return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
-    db.session.add(Payment(invoice_id=invoice.id, amount_cents=amount_cents, paid_date=paid_date, method=method))
-    invoice.status = "paid"
-    db.session.commit()
-    flash(f"Payment of {_dollars(amount_cents)} recorded — invoice #{invoice.id} marked paid.", "success")
+    payment = _finalize_payment(invoice, amount_cents, paid_date, method)
+    if payment is None:
+        flash("Invoice is no longer pending — payment not recorded.", "error")
+    else:
+        flash(f"Payment of {_dollars(amount_cents)} recorded — invoice #{invoice.id} marked paid.", "success")
     return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+
+
+@admin_bp.route("/billing/invoices/<int:invoice_id>/create-payment-link", methods=["POST"])
+@superuser_required
+def create_payment_link(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    if invoice.status != "pending":
+        flash("Only pending (issued) invoices can have a payment link created.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    if not stripe_configured():
+        flash("Stripe isn't configured on this server — set STRIPE_SECRET_KEY to enable payment links.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    try:
+        create_checkout_session(invoice)
+    except Exception:
+        current_app.logger.exception("Stripe: failed to create Checkout Session for invoice %s", invoice.id)
+        flash("Stripe error creating the payment link — see server logs.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    flash("Payment link created.", "success")
+    return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+
+
+@admin_bp.route("/webhooks/stripe", methods=["POST"])
+@csrf.exempt
+def stripe_webhook():
+    """Stripe calls this unauthenticated, with no CSRF token — exempted
+    from both the login gate (see admin_auth.py's _EXEMPT_ENDPOINTS) and
+    Flask-WTF's CSRF protection. A verified cryptographic signature
+    (STRIPE_WEBHOOK_SECRET) stands in for both of those instead."""
+    try:
+        event = verify_stripe_webhook(request.get_data(), request.headers.get("Stripe-Signature", ""))
+    except WebhookVerificationError:
+        current_app.logger.warning("Stripe webhook: rejected (missing/invalid signature or not configured).")
+        abort(400)
+    mark_paid_from_stripe_event(event)
+    return ("", 200)
 
 
 # ─── Building Contracts (Phase 4 — Superuser-only) ───────────────────────

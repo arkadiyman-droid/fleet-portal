@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
-from app.models import Building, Contract, Invoice
+from app.models import Building, Contract, Invoice, Payment
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +82,31 @@ def generate_invoices(period_start: datetime.date, period_end: datetime.date):
         created.append(invoice)
     db.session.commit()
     return created
+
+
+def _finalize_payment(invoice, amount_cents, paid_date, method, stripe_payment_intent_id=None):
+    """Shared by routes.record_payment() (manual) and
+    stripe_billing.mark_paid_from_stripe_event() (webhook) — the only two
+    places an Invoice may move pending -> paid, so the two paths can never
+    drift. Returns the created Payment, or None if the invoice is no
+    longer pending (already paid/void), or the SAVEPOINT-isolated insert
+    hits the stripe_payment_intent_id unique constraint (a retried webhook
+    delivery) — both are legitimate no-ops, not errors."""
+    if invoice.status != "pending":
+        return None
+    payment = Payment(
+        invoice_id=invoice.id, amount_cents=amount_cents, paid_date=paid_date,
+        method=method, stripe_payment_intent_id=stripe_payment_intent_id,
+    )
+    try:
+        with db.session.begin_nested():  # SAVEPOINT — isolates this insert
+            db.session.add(payment)
+            db.session.flush()
+    except IntegrityError:
+        return None  # duplicate stripe_payment_intent_id — a retried webhook delivery
+    invoice.status = "paid"
+    db.session.commit()
+    return payment
 
 
 class BillingScheduler:
