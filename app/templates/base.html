@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Fleet Portal{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f5f6f8; --panel: #ffffff; --text: #1a1d23; --muted: #6b7280;
+      --border: #e2e5ea; --accent: #2563eb; --accent-hover: #1d4ed8;
+      --danger: #dc2626; --success: #16a34a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg); color: var(--text);
+    }
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 0 24px; display: flex; align-items: center; justify-content: space-between; height: 56px;
+    }
+    header .brand { font-weight: 600; }
+    nav { display: flex; gap: 18px; }
+    nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
+    nav a:hover, nav a.active { color: var(--text); }
+    header form { margin: 0; }
+    header button { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; }
+    header button:hover { color: var(--text); }
+    main { max-width: 960px; margin: 32px auto; padding: 0 24px; }
+    .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+    .flash-success { background: #ecfdf3; color: var(--success); border: 1px solid #bbf7d0; }
+    .flash-error { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
+    table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
+    tr.archived { opacity: .5; }
+    a.btn, button.btn {
+      display: inline-block; padding: 8px 14px; border-radius: 6px; text-decoration: none;
+      background: var(--accent); color: #fff; border: none; cursor: pointer; font: inherit; font-weight: 500;
+    }
+    a.btn:hover, button.btn:hover { background: var(--accent-hover); }
+    button.btn.danger { background: #fff; color: var(--danger); border: 1px solid #fecaca; }
+    button.btn.danger:hover { background: #fef2f2; }
+    button.btn.plain { background: #fff; color: var(--text); border: 1px solid var(--border); }
+    button.btn.plain:hover { background: var(--bg); }
+    .page-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .page-head h1 { font-size: 18px; margin: 0; }
+    .row-actions { display: flex; gap: 8px; }
+    .row-actions form { margin: 0; }
+    label { display: block; font-weight: 500; margin-bottom: 4px; }
+    input, select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px;
+      font: inherit; margin-bottom: 14px; background: #fff; color: var(--text);
+    }
+    textarea { resize: vertical; min-height: 60px; }
+    .form-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 24px; max-width: 520px; }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">EchoTherm Fleet Portal</div>
+    <nav>
+      <a href="{{ url_for('admin.list_clients') }}">Clients</a>
+      <a href="{{ url_for('admin.list_properties') }}">Properties</a>
+      <a href="{{ url_for('admin.list_buildings') }}">Buildings</a>
+      <a href="{{ url_for('admin.list_controllers') }}">Controllers</a>
+    </nav>
+    <form method="post" action="{{ url_for('auth.logout') }}">
+      <button type="submit">Log out</button>
+    </form>
+  </header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

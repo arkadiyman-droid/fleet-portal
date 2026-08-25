@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+  </div>
+  <div class="form-panel">
+    <form method="post" action="{{ action }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% for field in fields %}
+        <label for="{{ field.name }}">{{ field.label }}{% if field.required %} *{% endif %}</label>
+        {% if field.type == "select" %}
+          <select id="{{ field.name }}" name="{{ field.name }}" {% if field.required %}required{% endif %}>
+            {% if not field.value %}
+              <option value="" selected {% if field.required %}disabled{% endif %}>{{ "Select…" if field.required else "—" }}</option>
+            {% endif %}
+            {% for value, label in field.options %}
+              <option value="{{ value }}" {% if field.value|string == value|string %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        {% elif field.type == "textarea" %}
+          <textarea id="{{ field.name }}" name="{{ field.name }}" {% if field.required %}required{% endif %}>{{ field.value }}</textarea>
+        {% else %}
+          <input type="{{ field.type }}" id="{{ field.name }}" name="{{ field.name }}" value="{{ field.value }}" {% if field.required %}required{% endif %}>
+        {% endif %}
+      {% endfor %}
+      <button type="submit" class="btn">Save</button>
+      <a class="btn plain" href="javascript:history.back()">Cancel</a>
+    </form>
+  </div>
+{% endblock %}

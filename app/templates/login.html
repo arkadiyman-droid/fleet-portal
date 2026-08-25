@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Log in — Fleet Portal</title>
+  <style>
+    body {
+      margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+      background: #f5f6f8; color: #1a1d23;
+      display: flex; align-items: center; justify-content: center; min-height: 100vh;
+    }
+    .panel { background: #fff; border: 1px solid #e2e5ea; border-radius: 8px; padding: 32px; width: 320px; }
+    h1 { font-size: 18px; margin: 0 0 20px; }
+    label { display: block; font-weight: 500; margin-bottom: 4px; }
+    input {
+      width: 100%; padding: 8px 10px; border: 1px solid #e2e5ea; border-radius: 6px;
+      font: inherit; margin-bottom: 14px; box-sizing: border-box;
+    }
+    button {
+      width: 100%; padding: 10px; border-radius: 6px; border: none;
+      background: #2563eb; color: #fff; font: inherit; font-weight: 500; cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    .flash-error { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h1>EchoTherm Fleet Portal</h1>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ next }}">
+      <label for="username">Username</label>
+      <input type="text" id="username" name="username" autofocus required>
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required>
+      <button type="submit">Log in</button>
+    </form>
+  </div>
+</body>
+</html>
