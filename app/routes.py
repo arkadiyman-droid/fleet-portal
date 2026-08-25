@@ -1,12 +1,13 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
+from app.billing import INVOICE_DUE_DAYS, current_contract, generate_invoices, period_for_date
 from app.extensions import db
 from app.fleet_poller import poll_controller
-from app.models import Building, Client, Controller, Permission, Property, User
+from app.models import Building, Client, Contract, Controller, Invoice, Payment, Permission, Property, User
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -49,6 +50,10 @@ def _toggle_archived_url(show_archived: bool) -> str:
     args = request.args.to_dict()
     args["show_archived"] = "0" if show_archived else "1"
     return url_for(request.endpoint, **args)
+
+
+def _dollars(cents: int) -> str:
+    return f"${cents / 100:,.2f}"
 
 
 def _can_edit(entity) -> bool:
@@ -333,16 +338,22 @@ def list_buildings():
     if filter_property:
         q = q.filter_by(property_id=property_id)
     buildings = q.order_by(Building.name).all()
-    rows = [
-        {
+    rows = []
+    for b in buildings:
+        contract = current_contract(b)
+        contract_cell = f"{contract.unit_count} unit(s) @ {_dollars(contract.rate_per_unit_cents)}/yr" if contract else "—"
+        rows.append({
             "id": b.id,
             "is_active": b.is_active,
-            "cells": [b.name, b.property.name, str(b.billed_unit_count) if b.billed_unit_count is not None else "—"],
+            "cells": [b.name, b.property.name, contract_cell],
             "can_edit": _can_edit(b),
             "can_archive": _can_archive(b),
-        }
-        for b in buildings
-    ]
+            # Contract management is Superuser-only (Phase 4) even though
+            # this list itself is visible to scoped viewer/operator/admin
+            # users too — only show the link when it would actually work.
+            "extra_url": url_for("admin.building_contract", building_id=b.id) if is_superuser() else None,
+            "extra_label": "Manage Contract",
+        })
     can_create = is_superuser() or user_has_min_role_anywhere("operator")
     if property_id:
         new_url = url_for("admin.new_building", property_id=property_id) if can_create else None
@@ -351,7 +362,7 @@ def list_buildings():
     return render_template(
         "entity_list.html",
         title="Buildings" + (f" — {filter_property.name}" if filter_property else ""),
-        columns=["Name", "Property", "Billed Units"],
+        columns=["Name", "Property", "Current Contract"],
         rows=rows,
         entity="buildings",
         entity_singular="building",
@@ -380,14 +391,6 @@ def _building_fields(bld=None):
         },
         {"name": "name", "label": "Name", "type": "text", "required": True, "value": bld.name if bld else ""},
         {"name": "address", "label": "Address", "type": "textarea", "required": False, "value": (bld.address or "") if bld else ""},
-        {
-            "name": "billed_unit_count", "label": "Billed Unit Count (contractual)", "type": "number", "required": False,
-            "value": bld.billed_unit_count if bld and bld.billed_unit_count is not None else "",
-        },
-        {
-            "name": "contract_start_date", "label": "Contract Start Date", "type": "date", "required": False,
-            "value": bld.contract_start_date.isoformat() if bld and bld.contract_start_date else "",
-        },
     ]
 
 
@@ -403,8 +406,6 @@ def new_building():
             property_id=int(request.form["property_id"]),
             name=request.form["name"],
             address=request.form.get("address") or None,
-            billed_unit_count=_parse_int(request.form.get("billed_unit_count", "")),
-            contract_start_date=_parse_date(request.form.get("contract_start_date", "")),
         )
         db.session.add(bld)
         db.session.commit()
@@ -423,8 +424,6 @@ def edit_building(building_id):
         # else: parent is immutable for scoped users — ignore the submitted value.
         bld.name = request.form["name"]
         bld.address = request.form.get("address") or None
-        bld.billed_unit_count = _parse_int(request.form.get("billed_unit_count", ""))
-        bld.contract_start_date = _parse_date(request.form.get("contract_start_date", ""))
         db.session.commit()
         flash(f"Building {bld.name!r} updated.", "success")
         return redirect(url_for("admin.list_buildings", property_id=bld.property_id))
@@ -803,3 +802,128 @@ def revoke_permission(user_id, permission_id):
     db.session.commit()
     flash("Grant revoked.", "success")
     return redirect(url_for("admin.user_permissions", user_id=user_id))
+
+
+# ─── Billing (Phase 4 — Superuser-only) ──────────────────────────────────
+
+@admin_bp.route("/billing")
+@superuser_required
+def billing_dashboard():
+    today = datetime.utcnow().date()
+    period_start, period_end = period_for_date(today)
+    drafts = Invoice.query.filter_by(status="draft").order_by(Invoice.period_start.desc(), Invoice.id).all()
+    pending = Invoice.query.filter_by(status="pending").order_by(Invoice.due_date).all()
+    recent_paid = Invoice.query.filter_by(status="paid").order_by(Invoice.updated_at.desc()).limit(20).all()
+    return render_template(
+        "billing_dashboard.html", title="Billing", period_start=period_start, period_end=period_end,
+        drafts=drafts, pending=pending, recent_paid=recent_paid, today=today,
+    )
+
+
+@admin_bp.route("/billing/generate", methods=["POST"])
+@superuser_required
+def billing_generate_now():
+    period_start, period_end = period_for_date(datetime.utcnow().date())
+    created = generate_invoices(period_start, period_end)
+    if created:
+        flash(f"Generated {len(created)} draft invoice(s) for {period_start.isoformat()}–{period_end.isoformat()}.", "success")
+    else:
+        flash("No new invoices to generate — every eligible building already has one for this period.", "success")
+    return redirect(url_for("admin.billing_dashboard"))
+
+
+@admin_bp.route("/billing/invoices/<int:invoice_id>")
+@superuser_required
+def invoice_detail(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    is_overdue = invoice.status == "pending" and invoice.due_date is not None and invoice.due_date < datetime.utcnow().date()
+    return render_template("invoice_detail.html", title=f"Invoice #{invoice.id}", invoice=invoice, is_overdue=is_overdue)
+
+
+@admin_bp.route("/billing/invoices/<int:invoice_id>/approve", methods=["POST"])
+@superuser_required
+def approve_invoice(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    if invoice.status != "draft":
+        flash("Only draft invoices can be approved.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    invoice.status = "pending"
+    invoice.issued_date = datetime.utcnow().date()
+    invoice.due_date = invoice.issued_date + timedelta(days=INVOICE_DUE_DAYS)
+    db.session.commit()
+    flash(f"Invoice #{invoice.id} approved and issued — due {invoice.due_date.isoformat()}.", "success")
+    return redirect(url_for("admin.billing_dashboard"))
+
+
+@admin_bp.route("/billing/invoices/<int:invoice_id>/void", methods=["POST"])
+@superuser_required
+def void_invoice(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    if invoice.status != "draft":
+        flash("Only draft invoices can be voided.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    invoice.status = "void"
+    db.session.commit()
+    flash(f"Invoice #{invoice.id} voided.", "success")
+    return redirect(url_for("admin.billing_dashboard"))
+
+
+@admin_bp.route("/billing/invoices/<int:invoice_id>/pay", methods=["POST"])
+@superuser_required
+def record_payment(invoice_id):
+    invoice = Invoice.query.get_or_404(invoice_id)
+    if invoice.status != "pending":
+        flash("Only pending (issued) invoices can be marked paid.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    method = request.form.get("method", "")
+    paid_date = _parse_date(request.form.get("paid_date", "")) or datetime.utcnow().date()
+    try:
+        amount_cents = round(float(request.form.get("amount_dollars", "0")) * 100)
+    except ValueError:
+        amount_cents = 0
+    if amount_cents <= 0 or method not in {"check", "ach", "wire", "card", "other"}:
+        flash("Invalid payment.", "error")
+        return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+    db.session.add(Payment(invoice_id=invoice.id, amount_cents=amount_cents, paid_date=paid_date, method=method))
+    invoice.status = "paid"
+    db.session.commit()
+    flash(f"Payment of {_dollars(amount_cents)} recorded — invoice #{invoice.id} marked paid.", "success")
+    return redirect(url_for("admin.invoice_detail", invoice_id=invoice.id))
+
+
+# ─── Building Contracts (Phase 4 — Superuser-only) ───────────────────────
+
+@admin_bp.route("/buildings/<int:building_id>/contract")
+@superuser_required
+def building_contract(building_id):
+    bld = Building.query.get_or_404(building_id)
+    contracts = Contract.query.filter_by(building_id=bld.id).order_by(Contract.start_date.desc()).all()
+    return render_template(
+        "building_contract.html", title=f"Contract: {bld.name}", building=bld,
+        contract=current_contract(bld), contracts=contracts,
+    )
+
+
+@admin_bp.route("/buildings/<int:building_id>/contract", methods=["POST"])
+@superuser_required
+def update_building_contract(building_id):
+    bld = Building.query.get_or_404(building_id)
+    unit_count = _parse_int(request.form.get("unit_count", ""))
+    rate_per_unit_cents = _parse_int(request.form.get("rate_per_unit_cents", "")) or 1000
+    start_date = _parse_date(request.form.get("start_date", "")) or datetime.utcnow().date()
+    if not unit_count or unit_count <= 0:
+        flash("Unit count must be a positive number.", "error")
+        return redirect(url_for("admin.building_contract", building_id=bld.id))
+    existing = current_contract(bld)
+    if existing is not None:
+        if start_date <= existing.start_date:
+            flash("New contract's start date must be after the current contract's start date.", "error")
+            return redirect(url_for("admin.building_contract", building_id=bld.id))
+        existing.end_date = start_date - timedelta(days=1)
+    db.session.add(Contract(
+        building_id=bld.id, unit_count=unit_count,
+        rate_per_unit_cents=rate_per_unit_cents, start_date=start_date, end_date=None,
+    ))
+    db.session.commit()
+    flash(f"Contract updated: {unit_count} unit(s) @ {_dollars(rate_per_unit_cents)}/yr, effective {start_date.isoformat()}.", "success")
+    return redirect(url_for("admin.building_contract", building_id=bld.id))

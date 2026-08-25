@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <a class="btn plain" href="{{ url_for('admin.list_buildings') }}">Back to Buildings</a>
+  </div>
+
+  <h2 style="font-size:14px;margin:0 0 8px">Current Contract</h2>
+  {% if contract %}
+  <div class="form-panel" style="max-width:400px;margin-bottom:28px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Units</span><span>{{ contract.unit_count }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Rate</span><span>${{ "%.2f"|format(contract.rate_per_unit_cents / 100) }}/unit/yr</span></div>
+    <div style="display:flex;justify-content:space-between"><span style="color:var(--muted)">In effect since</span><span>{{ contract.start_date.isoformat() }}</span></div>
+  </div>
+  {% else %}
+    <div class="empty" style="margin-bottom:28px">No contract yet — this building won't be included in invoice generation.</div>
+  {% endif %}
+
+  <h2 style="font-size:14px;margin:0 0 8px">{{ "Update Contract" if contract else "Set Up Contract" }}</h2>
+  <div class="form-panel" style="max-width:320px;margin-bottom:28px">
+    <form method="post" action="{{ url_for('admin.update_building_contract', building_id=building.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="unit_count">Unit Count</label>
+      <input type="number" min="1" id="unit_count" name="unit_count" required>
+      <label for="rate_per_unit_cents">Rate ($/unit/year)</label>
+      <input type="number" step="0.01" min="0.01" id="rate_dollars" onchange="document.getElementById('rate_per_unit_cents').value = Math.round(this.value * 100)" value="10.00">
+      <input type="hidden" id="rate_per_unit_cents" name="rate_per_unit_cents" value="1000">
+      <label for="start_date">Effective Date</label>
+      <input type="date" id="start_date" name="start_date" required>
+      <button type="submit" class="btn">Save</button>
+    </form>
+  </div>
+
+  <h2 style="font-size:14px;margin:0 0 8px">History</h2>
+  {% if contracts %}
+  <table>
+    <thead><tr><th>Units</th><th>Rate</th><th>Start</th><th>End</th></tr></thead>
+    <tbody>
+      {% for c in contracts %}
+      <tr>
+        <td>{{ c.unit_count }}</td>
+        <td>${{ "%.2f"|format(c.rate_per_unit_cents / 100) }}/yr</td>
+        <td>{{ c.start_date.isoformat() }}</td>
+        <td>{{ c.end_date.isoformat() if c.end_date else "current" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty">No contract history yet.</div>
+  {% endif %}
+{% endblock %}

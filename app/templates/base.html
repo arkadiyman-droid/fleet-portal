@@ -72,6 +72,7 @@
       <a href="{{ url_for('admin.list_controllers') }}">Controllers</a>
       <a href="{{ url_for('admin.fleet_status') }}">Fleet Status</a>
       {% if g.is_superuser %}<a href="{{ url_for('admin.list_users') }}">Users</a>{% endif %}
+      {% if g.is_superuser %}<a href="{{ url_for('admin.billing_dashboard') }}">Billing</a>{% endif %}
     </nav>
     <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}{{ g.user.name }}{% endif %}</span>
     <form method="post" action="{{ url_for('auth.logout') }}">

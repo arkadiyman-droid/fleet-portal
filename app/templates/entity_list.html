@@ -27,7 +27,7 @@
       <tr class="{{ 'archived' if not row.is_active else '' }}">
         {% for cell in row.cells %}<td>{{ cell }}</td>{% endfor %}
         <td class="row-actions">
-          {% if row.extra_url %}<a class="btn plain" href="{{ row.extra_url }}">Permissions</a>{% endif %}
+          {% if row.extra_url %}<a class="btn plain" href="{{ row.extra_url }}">{{ row.extra_label or "Permissions" }}</a>{% endif %}
           {% if row.can_edit %}
           <a class="btn plain" href="{{ url_for('admin.edit_' + entity_singular, **{entity_singular + '_id': row.id}) }}">Edit</a>
           {% endif %}

@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <form method="post" action="{{ url_for('admin.billing_generate_now') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn">Generate Now</button>
+    </form>
+  </div>
+  <p style="color:var(--muted);font-size:13px;margin-top:-10px">
+    Current period: {{ period_start.isoformat() }} – {{ period_end.isoformat() }}.
+    Generation only creates drafts — nothing is sent until you approve it below.
+  </p>
+
+  <h2 style="font-size:14px;margin:24px 0 8px">Drafts — Needs Review</h2>
+  {% if drafts %}
+  <table style="margin-bottom:28px">
+    <thead>
+      <tr><th>Building</th><th>Period</th><th>Amount</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for inv in drafts %}
+      <tr>
+        <td><a href="{{ url_for('admin.invoice_detail', invoice_id=inv.id) }}">{{ inv.building.name }}</a></td>
+        <td>{{ inv.period_start.isoformat() }} – {{ inv.period_end.isoformat() }}</td>
+        <td>${{ "%.2f"|format(inv.amount_cents / 100) }}</td>
+        <td class="row-actions">
+          <form method="post" action="{{ url_for('admin.approve_invoice', invoice_id=inv.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn">Approve</button>
+          </form>
+          <form method="post" action="{{ url_for('admin.void_invoice', invoice_id=inv.id) }}" onsubmit="return confirm('Void this draft invoice?');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn danger">Void</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty" style="margin-bottom:28px">No drafts awaiting review.</div>
+  {% endif %}
+
+  <h2 style="font-size:14px;margin:24px 0 8px">Pending — Issued, Awaiting Payment</h2>
+  {% if pending %}
+  <table style="margin-bottom:28px">
+    <thead>
+      <tr><th>Building</th><th>Period</th><th>Amount</th><th>Due</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for inv in pending %}
+      <tr>
+        <td><a href="{{ url_for('admin.invoice_detail', invoice_id=inv.id) }}">{{ inv.building.name }}</a></td>
+        <td>{{ inv.period_start.isoformat() }} – {{ inv.period_end.isoformat() }}</td>
+        <td>${{ "%.2f"|format(inv.amount_cents / 100) }}</td>
+        <td>{{ inv.due_date.isoformat() if inv.due_date else "—" }}</td>
+        <td>
+          {% if inv.due_date and inv.due_date < today %}
+            <span class="status-pill status-err">Overdue</span>
+          {% else %}
+            <span class="status-pill status-unconfigured">Pending</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty" style="margin-bottom:28px">No invoices awaiting payment.</div>
+  {% endif %}
+
+  <h2 style="font-size:14px;margin:24px 0 8px">Recently Paid</h2>
+  {% if recent_paid %}
+  <table>
+    <thead>
+      <tr><th>Building</th><th>Period</th><th>Amount</th><th>Paid</th></tr>
+    </thead>
+    <tbody>
+      {% for inv in recent_paid %}
+      <tr>
+        <td><a href="{{ url_for('admin.invoice_detail', invoice_id=inv.id) }}">{{ inv.building.name }}</a></td>
+        <td>{{ inv.period_start.isoformat() }} – {{ inv.period_end.isoformat() }}</td>
+        <td>${{ "%.2f"|format(inv.amount_cents / 100) }}</td>
+        <td><span class="status-pill status-ok">Paid</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <div class="empty">No paid invoices yet.</div>
+  {% endif %}
+{% endblock %}

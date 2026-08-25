@@ -33,6 +33,9 @@ def create_app():
     from app.fleet_poller import fleet_poller
     fleet_poller.start(app)
 
+    from app.billing import billing_scheduler
+    billing_scheduler.start(app)
+
     @app.cli.command("hash-password")
     def hash_password():
         """Prompt for a password and print its werkzeug hash, for pasting into .env as ADMIN_PASSWORD_HASH."""

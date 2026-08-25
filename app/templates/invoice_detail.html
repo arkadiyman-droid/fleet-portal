@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <a class="btn plain" href="{{ url_for('admin.billing_dashboard') }}">Back to Billing</a>
+  </div>
+
+  <div class="form-panel" style="max-width:480px;margin-bottom:24px">
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Building</span><span>{{ invoice.building.name }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Client</span><span>{{ invoice.building.property.client.name }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Period</span><span>{{ invoice.period_start.isoformat() }} – {{ invoice.period_end.isoformat() }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Units × Rate</span><span>{{ invoice.unit_count }} × ${{ "%.2f"|format(invoice.rate_per_unit_cents / 100) }}/yr</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Amount</span><span><strong>${{ "%.2f"|format(invoice.amount_cents / 100) }}</strong></span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Issued</span><span>{{ invoice.issued_date.isoformat() if invoice.issued_date else "—" }}</span></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px"><span style="color:var(--muted)">Due</span><span>{{ invoice.due_date.isoformat() if invoice.due_date else "—" }}</span></div>
+    <div style="display:flex;justify-content:space-between">
+      <span style="color:var(--muted)">Status</span>
+      <span>
+        {% if invoice.status == "draft" %}<span class="status-pill status-unconfigured">Draft</span>
+        {% elif invoice.status == "void" %}<span class="status-pill status-unconfigured">Void</span>
+        {% elif invoice.status == "paid" %}<span class="status-pill status-ok">Paid</span>
+        {% elif is_overdue %}<span class="status-pill status-err">Overdue</span>
+        {% else %}<span class="status-pill status-unconfigured">Pending</span>
+        {% endif %}
+      </span>
+    </div>
+  </div>
+
+  {% if invoice.status == "draft" %}
+  <div style="display:flex;gap:10px;margin-bottom:24px">
+    <form method="post" action="{{ url_for('admin.approve_invoice', invoice_id=invoice.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn">Approve</button>
+    </form>
+    <form method="post" action="{{ url_for('admin.void_invoice', invoice_id=invoice.id) }}" onsubmit="return confirm('Void this draft invoice?');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn danger">Void</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if invoice.status == "pending" %}
+  <div class="form-panel" style="max-width:320px;margin-bottom:24px">
+    <div style="font-weight:600;margin-bottom:10px">Record Payment</div>
+    <form method="post" action="{{ url_for('admin.record_payment', invoice_id=invoice.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="amount_dollars">Amount ($)</label>
+      <input type="number" step="0.01" min="0.01" id="amount_dollars" name="amount_dollars" value="{{ '%.2f'|format(invoice.amount_cents / 100) }}" required>
+      <label for="paid_date">Date</label>
+      <input type="date" id="paid_date" name="paid_date" required>
+      <label for="method">Method</label>
+      <select id="method" name="method" required>
+        <option value="check">Check</option>
+        <option value="ach">ACH</option>
+        <option value="wire">Wire</option>
+        <option value="card">Card</option>
+        <option value="other">Other</option>
+      </select>
+      <button type="submit" class="btn">Record Payment</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if invoice.payments %}
+  <h2 style="font-size:14px;margin:0 0 8px">Payment History</h2>
+  <table>
+    <thead><tr><th>Date</th><th>Amount</th><th>Method</th></tr></thead>
+    <tbody>
+      {% for p in invoice.payments %}
+      <tr>
+        <td>{{ p.paid_date.isoformat() }}</td>
+        <td>${{ "%.2f"|format(p.amount_cents / 100) }}</td>
+        <td>{{ p.method }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+{% endblock %}

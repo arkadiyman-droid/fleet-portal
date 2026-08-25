@@ -19,6 +19,10 @@ class Config:
         self.FLEET_OBIX_PORT = int(os.environ.get("FLEET_OBIX_PORT", "8061"))
         self.FLEET_POLLER_ENABLED = os.environ.get("FLEET_POLLER_ENABLED", "1") not in ("0", "false", "False")
 
+        # Billing (Phase 4) — see app/billing.py.
+        self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
+        self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))
+
 
 def _require_env(name: str) -> str:
     val = os.environ.get(name)

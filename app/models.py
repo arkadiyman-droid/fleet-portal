@@ -16,7 +16,9 @@ class Client(db.Model):
     contact_email = db.Column(db.String(200))
     contact_phone = db.Column(db.String(50))
 
-    # Inert until Phase 4 (billing).
+    # Set at onboarding (invoice vs auto_charge). Not consumed by Phase 4's
+    # invoice generation/approval flow at all — Phase 5's payment-processor
+    # integration is what will actually act on this value.
     billing_method = db.Column(db.String(20), nullable=False, default="invoice")
     # Inert until Phase 5 (payment processor).
     billing_customer_id = db.Column(db.String(200))
@@ -66,10 +68,6 @@ class Building(db.Model):
     name = db.Column(db.String(200), nullable=False)
     address = db.Column(db.Text)
 
-    # Inert until Phase 4 (billing) — contractual unit count, independent of actual sensor config.
-    billed_unit_count = db.Column(db.Integer)
-    contract_start_date = db.Column(db.Date)
-
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -77,6 +75,16 @@ class Building(db.Model):
     property = db.relationship("Property", back_populates="buildings")
     controllers = db.relationship(
         "Controller", back_populates="building", cascade="all, delete-orphan", passive_deletes=True
+    )
+    # Billed unit count / contract terms (Phase 1 placeholders removed in
+    # Phase 4) now live in Contract, ordered newest-first — the "current"
+    # one is whichever has end_date IS NULL. See app/billing.py::current_contract().
+    contracts = db.relationship(
+        "Contract", back_populates="building", cascade="all, delete-orphan",
+        passive_deletes=True, order_by="Contract.start_date.desc()",
+    )
+    invoices = db.relationship(
+        "Invoice", back_populates="building", cascade="all, delete-orphan", passive_deletes=True
     )
 
     def __repr__(self):
@@ -186,3 +194,110 @@ class Permission(db.Model):
 
     def __repr__(self):
         return f"<Permission user_id={self.user_id} {self.scope_type}:{self.scope_id} {self.role}>"
+
+
+class Contract(db.Model):
+    """A new row per unit-count/rate period for a Building — existing rows
+    are never mutated, only closed (end_date set). At most one row per
+    Building may be 'current' (end_date IS NULL) — enforced by the partial
+    unique index below, not just app logic. See app/billing.py."""
+    __tablename__ = "contracts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
+    unit_count = db.Column(db.Integer, nullable=False)
+    # Per-row, not a global constant — a future rate change never rewrites
+    # the history on old contracts.
+    rate_per_unit_cents = db.Column(db.Integer, nullable=False, default=1000)  # $10.00/unit/year
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date)  # NULL = currently in effect
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    building = db.relationship("Building", back_populates="contracts")
+
+    __table_args__ = (
+        CheckConstraint("unit_count > 0", name="ck_contracts_unit_count_positive"),
+        CheckConstraint("rate_per_unit_cents > 0", name="ck_contracts_rate_positive"),
+        CheckConstraint("end_date IS NULL OR end_date >= start_date", name="ck_contracts_end_after_start"),
+        db.Index(
+            "uq_contracts_building_current", "building_id", unique=True,
+            postgresql_where=db.text("end_date IS NULL"),
+        ),
+    )
+
+    def __repr__(self):
+        return f"<Contract building_id={self.building_id} units={self.unit_count} start={self.start_date}>"
+
+
+class Invoice(db.Model):
+    """One invoice per Building per half-year period — never consolidated
+    per Client. unit_count/rate_per_unit_cents are snapshotted from the
+    Contract at generation time, so a later contract change never
+    retroactively alters an already-generated invoice's amount.
+    status: draft -> pending -> paid, plus void (discard a mistaken draft
+    before it's sent). 'Overdue' is never stored — derived at render time
+    as status == 'pending' and due_date < today. See app/billing.py."""
+    __tablename__ = "invoices"
+
+    id = db.Column(db.Integer, primary_key=True)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
+    contract_id = db.Column(db.Integer, db.ForeignKey("contracts.id", ondelete="RESTRICT"), nullable=False)
+
+    period_start = db.Column(db.Date, nullable=False)
+    period_end = db.Column(db.Date, nullable=False)
+
+    unit_count = db.Column(db.Integer, nullable=False)
+    rate_per_unit_cents = db.Column(db.Integer, nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+
+    status = db.Column(db.String(20), nullable=False, default="draft")
+    issued_date = db.Column(db.Date)  # set on approve
+    due_date = db.Column(db.Date)     # set on approve = issued_date + INVOICE_DUE_DAYS
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    building = db.relationship("Building", back_populates="invoices")
+    contract = db.relationship("Contract")
+    payments = db.relationship(
+        "Payment", back_populates="invoice", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    __table_args__ = (
+        CheckConstraint("status IN ('draft', 'pending', 'paid', 'void')", name="ck_invoices_status"),
+        CheckConstraint("amount_cents >= 0", name="ck_invoices_amount_nonneg"),
+        # DB-level backstop making generate_invoices() safely re-runnable —
+        # see app/billing.py.
+        db.UniqueConstraint("building_id", "period_start", name="uq_invoices_building_period"),
+        db.Index("ix_invoices_status", "status"),
+    )
+
+    def __repr__(self):
+        return f"<Invoice {self.id} building_id={self.building_id} period={self.period_start} {self.status}>"
+
+
+class Payment(db.Model):
+    """Single-shot payment record — Phase 4 has no payment processor
+    (Phase 5), so recording a payment takes one amount/date/method and
+    flips the Invoice straight to paid. Deliberately no partial-payment
+    reconciliation for this first cut."""
+    __tablename__ = "payments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    invoice_id = db.Column(db.Integer, db.ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False)
+    amount_cents = db.Column(db.Integer, nullable=False)
+    paid_date = db.Column(db.Date, nullable=False)
+    method = db.Column(db.String(20), nullable=False)
+
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    invoice = db.relationship("Invoice", back_populates="payments")
+
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_payments_amount_positive"),
+        CheckConstraint("method IN ('check', 'ach', 'wire', 'card', 'other')", name="ck_payments_method"),
+    )
+
+    def __repr__(self):
+        return f"<Payment invoice_id={self.invoice_id} amount_cents={self.amount_cents}>"
