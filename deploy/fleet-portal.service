@@ -1,0 +1,43 @@
+[Unit]
+Description=EchoTherm Fleet Portal
+# Postgres is on this host; without the ordering the first boot after a
+# power cut races the database and the app exits before it is listening.
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/fleet-portal
+EnvironmentFile=/home/pi/fleet-portal/.env
+
+# Two workers, not the usual (2 x cores) + 1: this Pi already runs the
+# Beverly compliance platform, the TurboGen dashboard and Postgres. The
+# portal is a low-traffic admin UI for one operator, so it gets a small
+# fixed share rather than sizing itself to the box.
+ExecStart=/home/pi/fleet-portal/.venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:8090 \
+    --timeout 60 \
+    --access-logfile - \
+    --error-logfile - \
+    wsgi:app
+
+Restart=on-failure
+RestartSec=5
+
+# The billing scheduler and fleet poller are daemon threads inside the
+# app, and both take a Postgres advisory lock before doing anything — so
+# running two workers does not double-generate invoices or double-poll.
+# See app/billing.py and app/fleet_poller.py.
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/pi/fleet-portal
+
+[Install]
+WantedBy=multi-user.target
