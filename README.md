@@ -26,8 +26,6 @@ the controller mints itself (EMS `use_controller/fleet/token.py`).
 **Not deployed anywhere yet.** Intended target is beverly-pi behind a Cloudflare
 tunnel, alongside the existing violations portal.
 
-**No migrations are committed** — see Setup step 4. This needs fixing before any
-deployment that holds real data.
 
 **Not built, beyond Phase 6:** utility-data ingestion (ConEd / National Grid /
 DEP Green Button). See `UTILITY_DATA_INTEGRATION.md` in the EMS repo for the
@@ -76,19 +74,16 @@ build on it:
    Stripe is optional. With `STRIPE_SECRET_KEY` unset the whole payment feature
    degrades to manual pay-by-hand invoicing, which is the state it ships in.
 
-4. **Migrations.** ⚠ **No `migrations/` directory is committed to this repo**, so
-   there is no shared schema history to upgrade against — each environment has to
-   generate its own:
+4. **Migrations:**
    ```bash
-   flask db init
-   flask db migrate -m "Initial schema"
    flask db upgrade
    ```
-   This is a real gap, not a convenience: two environments set up this way have
-   independent migration histories and will drift the moment the schema changes.
-   **Before this is deployed anywhere that holds real data, generate the initial
-   migration once and commit it**, after which the above collapses to
-   `flask db upgrade`.
+   The initial revision is committed, so every environment shares one schema
+   history. Use `flask db migrate -m "..."` only when changing the models — and
+   **always apply a generated migration before committing it.** `env.py` defines
+   a `render_item()` hook so that a column using `EncryptedString` carries its
+   own import; without it autogenerate emits the type but not the import, and the
+   migration fails with `NameError` on a fresh database.
 
 5. **Run:**
    ```bash
