@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ card.building.name if card.building else card.ctrl.name }} — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+
+{% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
+
+{% block content %}
+  {% set e = card.eval %}{% set c = card.ctrl %}
+  <div class="crumbs"><a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
+    {% if card.client %} · {{ card.client.name }}{% endif %}{% if card.property %} · {{ card.property.name }}{% endif %}</div>
+  <div class="page-head">
+    <h1>{{ card.building.name if card.building else c.name }} <span class="card-sub">· {{ c.name }}</span></h1>
+    <form method="post" action="{{ url_for('admin.fleet_poll_now', controller_id=c.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.path }}">
+      <button class="btn plain" type="submit">Refresh now</button>
+    </form>
+  </div>
+
+  {% set headline = {'ok': 'All good', 'info': 'All good, with notes', 'warn': 'Needs a look', 'crit': 'Needs attention now', 'unknown': 'No status yet'} %}
+  <div class="banner {{ e.level }}">
+    {% if e.online %}<span class="dot on"></span>{% elif e.online == false %}<span class="dot off"></span>{% else %}<span class="dot"></span>{% endif %}
+    {{ headline[e.level] }}{% if e.seen %} · {{ ('seen ' ~ e.seen) if e.online else e.seen }}{% endif %}
+  </div>
+
+  {% if e.issues %}
+  <div class="section" style="margin-bottom:14px">
+    <h2>What to look at</h2>
+    <ul class="issues">{% for lvl, text in e.issues %}<li class="{{ lvl }}">{{ text }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <div class="sections">
+    {% if e.heating %}{% set h = e.heating %}
+    <div class="section"><h2>Heating</h2><div class="kv">
+      {{ row('Mode', h.mode) }}{{ row('Why', h.reason) }}
+      {{ row('Outdoor', (h.outdoor ~ ' °F') if h.outdoor is not none else none) }}
+      {{ row('Apartments avg', ('%.1f °F'|format(h.avgApt)) if h.avgApt is not none else none) }}
+      {{ row('Target', (h.target ~ ' °F') if h.target else none) }}
+      {{ row('Calling for heat', 'yes' if h.demand else 'no') }}
+      {{ row('Bypass', 'ON' if h.bypass else 'off') }}
+      {{ row('Boiler 1 lifetime', (h.blr1Hours ~ ' h') if h.blr1Hours is not none else none) }}
+      {% if h.hasBlr2 %}{{ row('Boiler 2 lifetime', (h.blr2Hours ~ ' h') if h.blr2Hours is not none else none) }}{% endif %}
+    </div></div>
+    {% endif %}
+
+    {% if e.backup %}{% set b = e.backup %}
+    <div class="section"><h2>Backup &amp; restore</h2><div class="kv">
+      {{ row('Backup', 'on' if b.enabled else 'OFF') }}
+      {{ row('Last result', 'OK' if b.lastOk else ('FAILED' if b.lastOk == false else 'not yet')) }}
+      {% if b.error %}{{ row('Error', b.error) }}{% endif %}
+      {{ row('Config backed up', b.configAgo) }}
+      {{ row('History snapshot', b.historyAgo) }}
+      {{ row('Site bundle', 'off' if not b.bundleOn else b.bundleAgo) }}
+      {% if b.bundleError %}{{ row('Bundle error', b.bundleError) }}{% endif %}
+      {{ row('Restored from bundle', (e.restored.ts[:16]|replace('T', ' ')) ~ ' · bundle from ' ~ (e.restored.bundle_created[:16]|replace('T', ' ')) ~ ' UTC' if e.restored else 'no') }}
+    </div></div>
+    {% endif %}
+
+    {% if e.health %}{% set hh = e.health %}
+    <div class="section"><h2>Controller box</h2><div class="kv">
+      {{ row('Hostname', hh.hostname) }}{{ row('Up for', hh.uptime) }}
+      {{ row('Power', 'UNDER-VOLTAGE NOW' if hh.undervoltageNow else ('dipped since boot' if hh.undervoltageSinceBoot else 'OK')) }}
+      {{ row('CPU temperature', ('%.1f °C'|format(hh.cpuTempC)) if hh.cpuTempC is not none else none) }}
+      {{ row('Load', hh.load1) }}{{ row('Memory used', (hh.memUsedPct ~ ' %') if hh.memUsedPct is not none else none) }}
+      {{ row('Disk used', (hh.diskUsedPct ~ ' % · ' ~ hh.diskFreeGb ~ ' GB free') if hh.diskUsedPct is not none else none) }}
+      {{ row('Throttled', 'now' if hh.throttledNow else 'no') }}
+    </div></div>
+    {% endif %}
+
+    <div class="section"><h2>Software &amp; connection</h2><div class="kv">
+      {% set sw = e.software or {} %}
+      {{ row('Version', sw.version) }}
+      {{ row('Update', ('available: ' ~ sw.availableSha) if sw.updateAvailable else ('confirming' if sw.pending else 'up to date')) }}
+      {{ row('Address', c.tailscale_ip) }}{{ row('Hostname (Tailscale)', c.tailscale_hostname) }}
+      {{ row('Last poll', status.polled_at.strftime('%Y-%m-%d %H:%M:%S UTC') if status else none) }}
+      {{ row('Response', (status.response_ms ~ ' ms') if status and status.response_ms is not none else none) }}
+      {% if status and not status.ok %}{{ row('What it means', e.errorPlain) }}{{ row('Raw error', status.error) }}{% endif %}
+    </div></div>
+  </div>
+
+  {% if raw.recentAlarms %}
+  <div class="section" style="margin-top:14px"><h2>Recent alarms</h2>
+    <table>
+      <thead><tr><th>When</th><th>Alarm</th><th>Detail</th><th>State</th></tr></thead>
+      <tbody>
+      {% for a in raw.recentAlarms %}
+        <tr><td style="white-space:nowrap">{{ (a.ts or '')[:16]|replace('T', ' ') }}</td><td>{{ a.label }}</td><td>{{ a.description }}</td>
+          <td>{% if a.active %}<span class="status-pill status-err">active</span>{% elif a.acked %}acknowledged{% else %}cleared{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+{% endblock %}

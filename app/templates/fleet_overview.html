@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Fleet Overview — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="{{ [poll_secs, 30]|max }}">{% endblock %}
+
+{% macro level_chip(level, text) -%}
+  <span class="chip {{ level if level in ('ok','warn','crit','info') else '' }}">{{ text }}</span>
+{%- endmacro %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>Fleet Overview</h1>
+  </div>
+
+  {% set s = summary %}
+  <div class="tiles">
+    <a class="tile {{ 'sel' if show == 'all' }}" href="{{ url_for('admin.fleet_overview') }}">
+      <div class="n">{{ s.total }}</div><div class="l">Controllers</div></a>
+    <a class="tile ok {{ 'zero' if not s.online }}" href="{{ url_for('admin.fleet_overview') }}">
+      <div class="n">{{ s.online }}</div><div class="l">Online</div></a>
+    <a class="tile crit {{ 'zero' if not s.offline }} {{ 'sel' if show == 'offline' }}" href="{{ url_for('admin.fleet_overview', show='offline') }}">
+      <div class="n">{{ s.offline }}</div><div class="l">Offline</div></a>
+    <a class="tile crit {{ 'zero' if not s.alarms }} {{ 'sel' if show == 'alarms' }}" href="{{ url_for('admin.fleet_overview', show='alarms') }}">
+      <div class="n">{{ s.alarms }}</div><div class="l">Alarms active</div></a>
+    <a class="tile warn {{ 'zero' if not s.attention }} {{ 'sel' if show == 'attention' }}" href="{{ url_for('admin.fleet_overview', show='attention') }}">
+      <div class="n">{{ s.attention }}</div><div class="l">Need attention</div></a>
+    <a class="tile warn {{ 'zero' if not s.backups }} {{ 'sel' if show == 'backups' }}" href="{{ url_for('admin.fleet_overview', show='backups') }}">
+      <div class="n">{{ s.backups }}</div><div class="l">Backup issues</div></a>
+    <div class="tile {{ 'zero' if not s.updates }}"><div class="n">{{ s.updates }}</div><div class="l">Updates waiting</div></div>
+  </div>
+
+  <div class="filters">
+    {% for key, label in [('all','All'), ('attention','Need attention'), ('alarms','Alarms'), ('offline','Offline'), ('backups','Backups')] %}
+      <a class="chip-link {{ 'sel' if show == key }}" href="{{ url_for('admin.fleet_overview', show=key) if key != 'all' else url_for('admin.fleet_overview') }}">{{ label }}</a>
+    {% endfor %}
+    <span class="refresh-note">Refreshes every {{ [poll_secs, 30]|max }} s · worst first</span>
+  </div>
+
+  {% if not cards %}
+    <div class="empty">
+      {% if show != 'all' %}Nothing here. {{ s.total }} controller{{ '' if s.total == 1 else 's' }} in total.
+      {% else %}No controllers yet. Add one under <a href="{{ url_for('admin.list_controllers') }}">Controllers</a>.{% endif %}
+    </div>
+  {% endif %}
+
+  <div class="cards">
+  {% for k in cards %}
+    {% set e = k.eval %}{% set c = k.ctrl %}
+    <div class="card lvl-{{ e.level }}">
+      <div class="card-head">
+        <div>
+          <a class="card-title" href="{{ url_for('admin.fleet_controller', controller_id=c.id) }}">{{ k.building.name if k.building else c.name }}</a>
+          <div class="card-sub">{{ k.client.name if k.client }}{% if k.property %} · {{ k.property.name }}{% endif %} · {{ c.name }}</div>
+        </div>
+        <div class="seen">
+          {% if e.online is none %}<span class="dot"></span>No status yet
+          {% elif e.online %}<span class="dot on"></span>Online · {{ e.seen }}
+          {% else %}<span class="dot off"></span>Offline · {{ e.seen }}{% endif %}
+        </div>
+      </div>
+
+      {% if e.heating %}{% set h = e.heating %}
+      <div class="heat">
+        <div><div class="k">Outdoor</div><div class="v">{{ h.outdoor if h.outdoor is not none else '—' }}°</div></div>
+        <div><div class="k">Apts avg</div>
+          <div class="v {% if h.avgApt and h.target %}{{ 'low' if h.avgApt < h.target - 2 else ('high' if h.avgApt > h.target + 3 else '') }}{% endif %}">
+            {{ '%.0f'|format(h.avgApt) if h.avgApt is not none else '—' }}°<span class="card-sub"> / {{ h.target or '—' }}°</span></div></div>
+        <div><div class="k">Heat</div><div class="v" style="font-size:14px;padding-top:3px">{{ h.mode or '—' }}{% if h.demand %} · <span style="color:var(--warn)">calling</span>{% endif %}</div></div>
+      </div>
+      {% endif %}
+
+      {% if e.health or e.backup %}
+      <div>
+        {% if e.health %}{% set hh = e.health %}
+        <div class="chip-row"><span class="k">Box</span><div class="chips">
+          {{ level_chip('crit' if hh.undervoltageNow else ('warn' if hh.undervoltageSinceBoot else 'ok'),
+                        'Power ' ~ ('LOW' if hh.undervoltageNow else ('dipped' if hh.undervoltageSinceBoot else 'OK'))) }}
+          {% if hh.cpuTempC is not none %}{{ level_chip('crit' if hh.cpuTempC >= 80 else ('warn' if hh.cpuTempC >= 70 else 'ok'), '%.0f °C'|format(hh.cpuTempC)) }}{% endif %}
+          {% if hh.diskUsedPct is not none %}{{ level_chip('crit' if hh.diskUsedPct >= 90 else ('warn' if hh.diskUsedPct >= 80 else 'ok'), 'Disk %.0f%%'|format(hh.diskUsedPct)) }}{% endif %}
+          {{ level_chip('', 'Up ' ~ hh.uptime) }}
+        </div></div>
+        {% endif %}
+        {% if e.backup %}{% set b = e.backup %}
+        <div class="chip-row" style="margin-top:4px"><span class="k">Backup</span><div class="chips">
+          {% if not b.enabled %}{{ level_chip('warn', 'OFF') }}
+          {% else %}
+            {{ level_chip('crit' if b.lastOk == false else ('ok' if b.lastOk else ''), 'Config ' ~ b.configAgo) }}
+            {{ level_chip(b.historyLevel, 'History ' ~ b.historyAgo) }}
+            {{ level_chip('warn' if not b.bundleOn else ('crit' if b.bundleError else b.bundleLevel), 'Bundle ' ~ ('off' if not b.bundleOn else b.bundleAgo)) }}
+          {% endif %}
+        </div></div>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if e.issues and e.level != 'ok' %}
+        <ul class="issues">
+          {% for lvl, text in e.issues[:3] %}<li class="{{ lvl }}">{{ text }}</li>{% endfor %}
+          {% if e.issues|length > 3 %}<li class="info">+{{ e.issues|length - 3 }} more on the controller page</li>{% endif %}
+        </ul>
+      {% elif e.level == 'ok' %}
+        <div class="all-good">All good</div>
+      {% endif %}
+
+      <div class="card-foot">
+        <span>{{ e.software.version if e.software and e.software.version else '' }}{% if e.restored %} · restored {{ e.restored.ts[:10] }}{% endif %}</span>
+        <form method="post" action="{{ url_for('admin.fleet_poll_now', controller_id=c.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="link-btn" type="submit">Refresh now</button>
+        </form>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+{% endblock %}

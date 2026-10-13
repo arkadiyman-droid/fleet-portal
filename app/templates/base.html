@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Fleet Portal{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%232563eb'/%3E%3Cpath d='M4 11 L7 5 L9 9 L12 4' stroke='white' stroke-width='1.6' fill='none'/%3E%3C/svg%3E">
   <style>
     :root {
       --bg: #f5f6f8; --panel: #ffffff; --text: #1a1d23; --muted: #6b7280;
@@ -60,12 +61,80 @@
     .status-err { background: #fef2f2; color: var(--danger); }
     .status-unconfigured { background: var(--bg); color: var(--muted); }
     .identity { color: var(--muted); font-size: 13px; margin-right: 14px; }
+
+    /* ── Fleet dashboard (overview + controller pages) ─────────────────── */
+    :root { --ok: #16a34a; --ok-bg: #ecfdf3; --warn: #b45309; --warn-bg: #fffbeb; --warn-line: #f59e0b;
+            --crit: #dc2626; --crit-bg: #fef2f2; --info: #2563eb; --info-bg: #eff6ff; --unk: #6b7280; --unk-bg: #f3f4f6; }
+    main.wide { max-width: 1280px; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .tile { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 14px; text-decoration: none; color: var(--text); }
+    .tile:hover { border-color: #c7ccd4; }
+    .tile .n { font-size: 26px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+    .tile .l { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+    .tile.ok .n { color: var(--ok); } .tile.warn .n { color: var(--warn); } .tile.crit .n { color: var(--crit); }
+    .tile.zero .n { color: #c3c8d0; }
+    .tile.sel { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+    .chip-link { padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border); background: #fff;
+                 color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 500; }
+    .chip-link.sel { background: var(--text); color: #fff; border-color: var(--text); }
+    .refresh-note { margin-left: auto; color: var(--muted); font-size: 12px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--border); border-left: 5px solid var(--unk);
+            border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+    .card.lvl-ok { border-left-color: var(--ok); } .card.lvl-info { border-left-color: var(--info); }
+    .card.lvl-warn { border-left-color: var(--warn-line); } .card.lvl-crit { border-left-color: var(--crit); }
+    .card-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+    .card-title { font-weight: 650; font-size: 15px; color: var(--text); text-decoration: none; }
+    .card-title:hover { color: var(--accent); }
+    .card-sub { color: var(--muted); font-size: 12px; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: var(--unk); }
+    .dot.on { background: var(--ok); box-shadow: 0 0 0 3px #dcfce7; } .dot.off { background: var(--crit); box-shadow: 0 0 0 3px #fee2e2; }
+    .seen { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    .heat { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; background: var(--bg); border-radius: 8px; padding: 8px 10px; }
+    .heat .v { font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
+    .heat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .heat .low { color: var(--info); } .heat .high { color: var(--warn); }
+    .chips { display: flex; flex-wrap: wrap; gap: 5px; }
+    .chip { font-size: 12px; padding: 2px 8px; border-radius: 6px; background: var(--unk-bg); color: var(--unk); white-space: nowrap; }
+    .chip.ok { background: var(--ok-bg); color: var(--ok); } .chip.warn { background: var(--warn-bg); color: var(--warn); }
+    .chip.crit { background: var(--crit-bg); color: var(--crit); font-weight: 600; } .chip.info { background: var(--info-bg); color: var(--info); }
+    .chip-row { display: flex; gap: 8px; align-items: baseline; }
+    .chip-row .k { width: 64px; flex: none; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+    .issues { margin: 0; padding: 0; list-style: none; font-size: 13px; }
+    .issues li { padding: 2px 0 2px 18px; position: relative; }
+    .issues li::before { content: ""; position: absolute; left: 4px; top: 9px; width: 7px; height: 7px; border-radius: 50%; background: var(--unk); }
+    .issues li.crit { color: var(--crit); } .issues li.crit::before { background: var(--crit); }
+    .issues li.warn { color: var(--warn); } .issues li.warn::before { background: var(--warn-line); }
+    .issues li.info::before { background: var(--info); }
+    .card-foot { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
+    .card-foot form { margin: 0; }
+    .link-btn { background: none; border: none; color: var(--accent); cursor: pointer; font: inherit; padding: 0; }
+    .all-good { color: var(--ok); font-size: 13px; }
+    .sections { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+    .section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 0 0 10px; }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 13px; }
+    .kv .k { color: var(--muted); } .kv .v { font-variant-numeric: tabular-nums; }
+    .crumbs { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+    .crumbs a { color: var(--muted); }
+    .banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; font-weight: 600; }
+    .banner.ok { background: var(--ok-bg); color: var(--ok); } .banner.warn { background: var(--warn-bg); color: var(--warn); }
+    .banner.crit { background: var(--crit-bg); color: var(--crit); } .banner.info { background: var(--info-bg); color: var(--info); }
+    .banner.unknown { background: var(--unk-bg); color: var(--unk); }
+    @media (max-width: 640px) { header { height: auto; flex-wrap: wrap; padding: 8px 16px; gap: 8px; } nav { flex-wrap: wrap; gap: 10px; }
+      main { padding: 0 16px; margin-top: 16px; } .cards { grid-template-columns: 1fr; }
+      .tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; } .tile { padding: 8px 10px; }
+      .tile .n { font-size: 20px; } .tile .l { font-size: 10px; } .refresh-note { margin-left: 0; width: 100%; } }
   </style>
+  {% block head %}{% endblock %}
 </head>
 <body>
   <header>
     <div class="brand">EchoTherm Fleet Portal</div>
     <nav>
+      <a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
       <a href="{{ url_for('admin.list_clients') }}">Clients</a>
       <a href="{{ url_for('admin.list_properties') }}">Properties</a>
       <a href="{{ url_for('admin.list_buildings') }}">Buildings</a>
@@ -79,7 +148,7 @@
       <button type="submit">Log out</button>
     </form>
   </header>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
         <div class="flash flash-{{ category }}">{{ message }}</div>

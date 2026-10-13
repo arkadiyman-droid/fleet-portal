@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash
 
 from app.billing import INVOICE_DUE_DAYS, _finalize_payment, current_contract, generate_invoices, period_for_date
 from app.extensions import csrf, db
+from app import fleet_health
 from app.fleet_poller import poll_controller
 from app.models import Building, Client, Contract, Controller, Invoice, Permission, Property, User
 from app.permissions import (
@@ -96,7 +97,7 @@ def _soft_delete_cascade(obj) -> int:
 
 @admin_bp.route("/")
 def index():
-    return redirect(url_for("admin.list_clients"))
+    return redirect(url_for("admin.fleet_overview"))
 
 
 # ─── Client ──────────────────────────────────────────────────────────────
@@ -618,11 +619,69 @@ def fleet_poll_now(controller_id):
     require_role("viewer", ctrl)
     if not ctrl.tailscale_ip or not ctrl.fleet_api_token:
         flash(f"{ctrl.name!r} has no Tailscale IP / token configured.", "error")
-        return redirect(url_for("admin.fleet_status"))
+        return redirect(_local_next(url_for("admin.fleet_status")))
     row = poll_controller(current_app._get_current_object(), ctrl)
     flash(f"Polled {ctrl.name!r}: {'OK' if row.ok else 'FAILED — ' + (row.error or '')}",
           "success" if row.ok else "error")
-    return redirect(url_for("admin.fleet_status"))
+    return redirect(_local_next(url_for("admin.fleet_status")))
+
+
+def _local_next(default):
+    """Back to the page the button was on -- but only a path on this site,
+    never an absolute URL a crafted form could smuggle in."""
+    nxt = request.form.get("next") or ""
+    if nxt.startswith("/") and not nxt.startswith("//") and "\\" not in nxt:
+        return nxt
+    return default
+
+
+# ─── Fleet Overview (the dashboard home) ────────────────────────────────
+
+_LEVEL_ORDER = {"crit": 0, "warn": 1, "info": 2, "unknown": 3, "ok": 4}
+
+
+def _card(ctrl):
+    b = ctrl.building
+    p = b.property if b else None
+    return {"ctrl": ctrl, "building": b, "property": p, "client": p.client if p else None,
+            "eval": fleet_health.evaluate(ctrl, ctrl.status)}
+
+
+def _fleet_cards():
+    base = Controller.query if is_superuser() else visible_controller_query(current_user().id)
+    cards = [_card(ctrl) for ctrl in base.filter_by(is_active=True).all()]
+    cards.sort(key=lambda k: (_LEVEL_ORDER.get(k["eval"]["level"], 9),
+                              (k["client"].name if k["client"] else ""), k["ctrl"].name))
+    return cards
+
+
+_FILTERS = {
+    "attention": lambda e: e["level"] in ("warn", "crit"),
+    "offline":   lambda e: e["online"] is False,
+    "alarms":    lambda e: bool(e["alarms"]),
+    "backups":   lambda e: any(w in t for _, t in e["issues"] for w in ("ackup", "undle", "istory")),
+}
+
+
+@admin_bp.route("/overview")
+def fleet_overview():
+    cards = _fleet_cards()
+    summary = fleet_health.summarize(cards)
+    show = request.args.get("show", "all")
+    if show in _FILTERS:
+        cards = [k for k in cards if _FILTERS[show](k["eval"])]
+    else:
+        show = "all"
+    return render_template("fleet_overview.html", title="Fleet Overview", cards=cards, summary=summary,
+                           show=show, poll_secs=current_app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60))
+
+
+@admin_bp.route("/fleet/<int:controller_id>")
+def fleet_controller(controller_id):
+    ctrl = Controller.query.get_or_404(controller_id)
+    require_role("viewer", ctrl)
+    return render_template("fleet_controller.html", title=ctrl.name, card=_card(ctrl), status=ctrl.status,
+                           raw=(ctrl.status.raw_json if ctrl.status else None) or {})
 
 
 # ─── Users & Permissions (Phase 3 — Superuser-only) ──────────────────────

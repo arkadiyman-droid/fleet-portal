@@ -22,9 +22,41 @@ the controller mints itself (EMS `use_controller/fleet/token.py`).
 | 4 | Billing — contracts, invoices, payments | ✅ built |
 | 5 | Stripe payment processor | ✅ built |
 | 6 | Fleet-proxied control actions into EMS | ❌ not built |
+| — | **Fleet Overview dashboard** (the home page) | ✅ built 2026-10-13 |
 
 **Not deployed anywhere yet.** Intended target is beverly-pi behind a Cloudflare
-tunnel, alongside the existing violations portal.
+tunnel, alongside the existing violations portal. **First run anywhere:
+2026-10-13**, as a development copy on the operator's laptop: all tests
+(including the Postgres tier) pass, the schema migrates, login and the
+Client → Property → Building → Controller screens work, and the poller reads
+the bench controller.
+
+### Fleet Overview
+
+`/` opens `/overview`: tiles for controllers, online, offline, alarms active,
+need attention, backup issues and updates waiting (each a filter), then one
+card per controller, worst first. A card shows the building and client,
+online/offline and when it was last heard from, the heating picture (outdoor,
+apartment average against target, mode, calling for heat), the box (power,
+CPU temperature, disk, uptime), the backup (config, history snapshot, site
+bundle, each aged and coloured), the software version, whether it was
+restored from a bundle, and the reasons for any amber or red, in plain words.
+`/fleet/<id>` is the same controller in full, with its recent alarms.
+
+What is green, amber or red is decided in one place, `app/fleet_health.py`,
+with its thresholds as constants and its rules under test
+(`tests/test_fleet_health.py`). Box health, backup and software state come
+from the `fleetHealth` block EMS publishes in `/api/status` (EMS
+`use_controller/fleet/health.py`, from 2026-10-13); a controller on older
+software shows its heating data and "health not reported", never a false red.
+`ControllerStatus.last_ok_at` records when a controller last answered, so an
+offline one says how long it has been gone.
+
+Fixed on the way: the poller looked the status row up BEFORE its network
+call, so the background poll and a "Refresh now" click on a never-polled,
+offline controller could both INSERT it and the page crashed on the primary
+key. It now looks up after the call and retries a lost race as an update
+(`tests/test_fleet_poller_db.py` reproduces the race).
 
 
 **Not built, beyond Phase 6:** utility-data ingestion (ConEd / National Grid /

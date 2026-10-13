@@ -138,6 +138,10 @@ class ControllerStatus(db.Model):
     raw_json = db.Column(JSONB)
     building_name = db.Column(db.String(200))
     version = db.Column(db.String(50))
+    # When the controller last answered. polled_at is the last ATTEMPT, so on
+    # an offline controller it keeps moving; this says how long it has really
+    # been gone. Set by fleet_poller.poll_controller on success only.
+    last_ok_at = db.Column(db.DateTime)
 
     controller = db.relationship("Controller", backref=db.backref("status", uselist=False))
 

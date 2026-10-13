@@ -25,6 +25,7 @@ import time
 
 import requests
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import Controller, ControllerStatus
@@ -85,29 +86,42 @@ def poll_controller(app, ctrl: Controller) -> ControllerStatus:
     url = f"http://{ctrl.tailscale_ip}:{port}/api/status"
     started = time.monotonic()
 
-    row = ControllerStatus.query.get(ctrl.id) or ControllerStatus(controller_id=ctrl.id)
+    # The network call comes FIRST and the row is looked up only afterwards.
+    # Looking it up before the call (as Phase 2 did) left a window as long as
+    # the timeout -- 8 s on an offline controller -- in which the background
+    # poller and a "Refresh now" click could both see "no row yet", both
+    # INSERT, and the second crash on the primary key (found 2026-10-13 on
+    # the first Refresh of a never-polled, unreachable controller).
+    result = {}
     try:
         resp = requests.get(url, timeout=timeout, headers={"Authorization": f"Bearer {ctrl.fleet_api_token}"})
         resp.raise_for_status()
         payload = resp.json()
-        row.ok = True
-        row.http_status = resp.status_code
-        row.error = None
-        row.response_ms = int((time.monotonic() - started) * 1000)
-        row.raw_json = payload
-        row.building_name = payload.get("buildingName")
-        row.version = payload.get("version")
+        result = {"ok": True, "http_status": resp.status_code, "error": None, "raw_json": payload,
+                  "building_name": payload.get("buildingName"), "version": payload.get("version"),
+                  "last_ok_at": datetime.datetime.utcnow()}
     except Exception as e:
-        row.ok = False
-        row.http_status = getattr(getattr(e, "response", None), "status_code", None)
-        row.error = str(e)[:500]
-        row.response_ms = int((time.monotonic() - started) * 1000)
         # raw_json/building_name/version deliberately left untouched — the
         # rollup page shows last-known-good data plus the error, not a blank.
+        result = {"ok": False, "http_status": getattr(getattr(e, "response", None), "status_code", None),
+                  "error": str(e)[:500]}
+    result["response_ms"] = int((time.monotonic() - started) * 1000)
+    result["polled_at"] = datetime.datetime.utcnow()
 
-    row.polled_at = datetime.datetime.utcnow()
-    db.session.add(row)
-    db.session.commit()
+    # Even after the call the window is not zero, so a lost race on the
+    # INSERT is retried once as an UPDATE of the row the other side made.
+    for attempt in (1, 2):
+        row = db.session.get(ControllerStatus, ctrl.id) or ControllerStatus(controller_id=ctrl.id)
+        for k, v in result.items():
+            setattr(row, k, v)
+        db.session.add(row)
+        try:
+            db.session.commit()
+            return row
+        except IntegrityError:
+            db.session.rollback()
+            if attempt == 2:
+                raise
     return row
 
 
