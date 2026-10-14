@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}{{ r.box.name }} — Live — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
+
+{% block content %}
+  {% set c = r.c or {} %}{% set b = r.box %}
+  <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
+  <div class="page-head"><h1>{{ b.name }}</h1></div>
+
+  <div class="banner {{ {'live': ({'crit':'crit','warn':'warn'}.get(c.tone, 'ok')), 'dark':'crit', 'login':'crit', 'other':'crit'}[r.state] }}">
+    {% if r.state == 'live' %}{{ c.status }} · read {{ r.age }}{% else %}{{ r.why }}{% endif %}
+  </div>
+
+  <div class="sections" style="margin-top:14px">
+    <div class="section"><h2>Building</h2><div class="kv">
+      {{ row('Outside', c.out) }}{{ row('Inside average', c.inside) }}{{ row('Desired inside (DIT)', c.dit) }}
+      {{ row('Status code', c.code) }}
+      {{ row('Apartment sensors', (c.apartments|join(', ')) if c.apartments else none) }}
+    </div></div>
+    <div class="section"><h2>Run times today</h2><div class="kv">
+      {{ row('Heat (boiler 1)', hhmm(c.heat_rt)) }}{{ row('Hot water (boiler 1)', hhmm(c.hw_rt)) }}{{ row('Total', hhmm(c.total_rt)) }}
+      {% if c.boiler2_heat %}{{ row('Heat (boiler 2)', hhmm(c.boiler2_heat)) }}{% endif %}
+    </div></div>
+    <div class="section"><h2>Plant</h2><div class="kv">
+      {{ row('Stack', c.stack) }}{{ row('High stack', c.hi_stack) }}{{ row('Water meter', c.water) }}
+      {% if c.oil_pct is not none %}{{ row('Oil', (c.oil_pct ~ ' %')) }}{% endif %}
+    </div></div>
+    <div class="section"><h2>Box</h2><div class="kv">
+      {{ row('Address', b.host ~ ':' ~ b.port) }}{{ row('Identity', b.identity) }}
+      {{ row('Last good read', r.last_ok.strftime('%Y-%m-%d %H:%M UTC') if r.last_ok else none) }}
+      {{ row('Box clock', c.box_time) }}
+      {{ row('Response', (r.st.response_ms ~ ' ms') if r.st and r.st.response_ms else none) }}
+      {% if r.st and r.st.error %}{{ row('Last error', r.st.error) }}{% endif %}
+      {{ row('Latest box alarm', (c.alarm.name ~ ' at ' ~ c.alarm.at ~ (' (active)' if c.alarm.active else '')) if c.alarm else none) }}
+    </div></div>
+  </div>
+
+  {% if c.temps %}
+  <div class="section" style="margin-top:14px"><h2>All system temperatures (the box's own sensor names)</h2>
+    <table><thead><tr>{% for i, name, val in c.temps %}<th>{{ name }}</th>{% endfor %}</tr></thead>
+      <tbody><tr>{% for i, name, val in c.temps %}<td>{{ '—' if val is none else val }}</td>{% endfor %}</tr></tbody></table>
+  </div>
+  {% endif %}
+{% endblock %}

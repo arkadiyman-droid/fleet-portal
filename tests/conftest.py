@@ -44,6 +44,7 @@ os.environ.setdefault("FLEET_TOKEN_ENCRYPTION_KEY",
 # has no business running them.
 os.environ.setdefault("FLEET_POLLER_ENABLED", "0")
 os.environ.setdefault("BILLING_SCHEDULER_ENABLED", "0")
+os.environ.setdefault("LEGACY_POLLER_ENABLED", "0")
 
 TEST_DB_URL = os.environ.get("FLEET_TEST_DATABASE_URL")
 

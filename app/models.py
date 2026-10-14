@@ -469,3 +469,57 @@ class RolloutTarget(db.Model):
 
     rollout = db.relationship("Rollout", back_populates="targets")
     controller = db.relationship("Controller")
+
+
+class LegacyLogin(db.Model):
+    """A login for the installed 2010 gateways (app/legacy.py). Most boxes
+    share one; others are added when a box refuses the shared one."""
+    __tablename__ = "legacy_logins"
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(60), nullable=False, unique=True)
+    username = db.Column(EncryptedString, nullable=False)
+    password = db.Column(EncryptedString, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class LegacyBox(db.Model):
+    """One installed 2010 gateway, read view-only over oBIX for /live."""
+    __tablename__ = "legacy_boxes"
+    __table_args__ = (db.UniqueConstraint("host", "port", name="uq_legacy_box_address"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(200), nullable=False)               # as the old client's list names it
+    host = db.Column(db.String(200), nullable=False)
+    port = db.Column(db.Integer, nullable=False)
+    # gateway | open | other | unreachable | unknown: 'other' is never sent a login
+    identity = db.Column(db.String(12), nullable=False, default="unknown")
+    login_id = db.Column(db.Integer, db.ForeignKey("legacy_logins.id", ondelete="SET NULL"))
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    login = db.relationship("LegacyLogin")
+    building = db.relationship("Building")
+    status = db.relationship("LegacyStatus", uselist=False, back_populates="box", cascade="all, delete-orphan")
+
+    @property
+    def url(self):
+        return f"http://{self.host}:{self.port}"
+
+
+class LegacyStatus(db.Model):
+    """The latest reading of one box (overwritten each poll)."""
+    __tablename__ = "legacy_statuses"
+
+    box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="CASCADE"), primary_key=True)
+    polled_at = db.Column(db.DateTime, nullable=False)
+    ok = db.Column(db.Boolean, nullable=False, default=False)
+    auth_failed = db.Column(db.Boolean, nullable=False, default=False)
+    error = db.Column(db.String(300))
+    response_ms = db.Column(db.Integer)
+    last_ok_at = db.Column(db.DateTime)
+    names_at = db.Column(db.DateTime)
+    data = db.Column(JSONB)                                         # {status:{...}, names:{...}, alarm:{...}}
+
+    box = db.relationship("LegacyBox", back_populates="status")

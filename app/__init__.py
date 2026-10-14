@@ -69,6 +69,9 @@ def create_app():
     from app.billing import billing_scheduler
     billing_scheduler.start(app)
 
+    from app.legacy import legacy_poller
+    legacy_poller.start(app)
+
     @app.cli.command("hash-password")
     def hash_password():
         """Prompt for a password and print its werkzeug hash, for pasting into .env as ADMIN_PASSWORD_HASH."""

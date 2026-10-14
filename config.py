@@ -43,6 +43,10 @@ class Config:
         self.SMTP_FROM = os.environ.get("SMTP_FROM", "")
         self.PORTAL_PUBLIC_URL = os.environ.get("PORTAL_PUBLIC_URL", "")
 
+        # Installed 2010 gateways, read view-only for /live (app/legacy.py).
+        self.LEGACY_POLLER_ENABLED = os.environ.get("LEGACY_POLLER_ENABLED", "1") not in ("0", "false", "False")
+        self.LEGACY_POLL_INTERVAL_SECONDS = int(os.environ.get("LEGACY_POLL_INTERVAL_SECONDS", "300"))
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import IntegrityError
@@ -10,7 +10,7 @@ from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
 from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
-                        Permission, Property, Rollout, RolloutTarget, User)
+                        LegacyBox, Permission, Property, Rollout, RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -883,6 +883,97 @@ def fleet_update_one(controller_id):
         flash(f"Updating {ctrl.name!r} to {r.target_sha[:7]}: it starts within a minute, then proves itself "
               "for 10 minutes. Follow it on the Updates page.", "success")
     return redirect(_local_next(url_for("admin.fleet_controller", controller_id=ctrl.id)))
+
+
+# ─── Live view of the installed 2010 gateways (app/legacy.py) ───────────
+
+_TONE_ORDER = {"crit": 0, "warn": 1, "heat": 2, "ok": 3, "idle": 4}
+
+
+def _legacy_rows(now):
+    from app import legacy
+    rows = []
+    for b in LegacyBox.query.filter_by(is_active=True).order_by(LegacyBox.name).all():
+        st = b.status
+        c = legacy.card(st.data) if st and st.data else None
+        last_ok = st.last_ok_at if st else None
+        if b.identity == "other":
+            state, why = "other", "Another device answers at this address: no login is sent there"
+        elif st and st.auth_failed:
+            state, why = "login", "The box refused the login"
+        elif not last_ok or now - last_ok > legacy.STALE:
+            state = "dark"
+            why = (st.error if st and st.error else "never read") if not last_ok else \
+                f"not read for {fleet_health.ago((now - last_ok).total_seconds())[:-4]}" + (f": {st.error}" if st and st.error else "")
+        else:
+            state, why = "live", None
+        alarm = (c or {}).get("alarm")
+        recent_alarm = None
+        if alarm and alarm.get("at"):
+            try:
+                at = datetime.fromisoformat(alarm["at"])
+                if at.tzinfo is not None:                     # the box sends local time with its offset
+                    at = at.astimezone(timezone.utc).replace(tzinfo=None)
+                if now - at < timedelta(hours=24):
+                    recent_alarm = alarm
+            except ValueError:
+                pass
+        problem = state in ("dark", "login", "other") or (c and c["tone"] == "crit") or bool(recent_alarm)
+        rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
+                     "recent_alarm": recent_alarm, "problem": problem,
+                     "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
+    return rows
+
+
+_LIVE_SORTS = {
+    "name": lambda r: r["box"].name.lower(),
+    "problems": lambda r: (not r["problem"], {"other": 0, "login": 1, "dark": 2, "live": 3}[r["state"]],
+                           _TONE_ORDER.get((r["c"] or {}).get("tone"), 5), r["box"].name.lower()),
+    "hi_stack": lambda r: -((r["c"] or {}).get("hi_stack") or -1),
+    "aqua": lambda r: -((r["c"] or {}).get("aqua") or -1),
+    "coil": lambda r: -((r["c"] or {}).get("coil") or -1),
+}
+
+
+@admin_bp.route("/live")
+def live_page():
+    if not is_superuser():
+        abort(403)
+    now = datetime.utcnow()
+    rows = _legacy_rows(now)
+    summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows),
+               "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
+               "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
+               "problems": sum(r["problem"] for r in rows)}
+    newest = max((r for r in rows if r["recent_alarm"]), key=lambda r: r["recent_alarm"]["at"], default=None)
+    show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
+    if show == "problems":
+        rows = [r for r in rows if r["problem"]]
+    elif show == "dark":
+        rows = [r for r in rows if r["state"] in ("dark", "login", "other")]
+    elif show == "calling":
+        rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"]
+    else:
+        show = "all"
+    if q:
+        rows = [r for r in rows if q in r["box"].name.lower()]
+    sort = request.args.get("sort", "problems")
+    rows.sort(key=_LIVE_SORTS.get(sort, _LIVE_SORTS["problems"]))
+    view = "table" if request.args.get("view") == "table" else "cards"
+    from app import legacy
+    return render_template("live.html", title="Live", rows=rows, summary=summary, newest=newest, show=show,
+                           q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
+                           hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
+
+
+@admin_bp.route("/live/<int:box_id>")
+def live_box(box_id):
+    if not is_superuser():
+        abort(403)
+    b = LegacyBox.query.get_or_404(box_id)
+    row = next(r for r in _legacy_rows(datetime.utcnow()) if r["box"].id == b.id)
+    from app import legacy
+    return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm)
 
 
 # ─── Adopt a blank module (EMS fleet/enroll.py ↔ app/enroll_api.py) ─────
