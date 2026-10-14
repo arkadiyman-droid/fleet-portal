@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 
 import requests
-from requests.auth import HTTPBasicAuth, HTTPDigestAuth
+from requests.auth import HTTPDigestAuth
 
 SAVED = Path(__file__).resolve().parent.parent / ".obix_test.json"
 TIMEOUT = 15
@@ -53,8 +53,8 @@ def setup():
     print(f"Saved (only pi can read it). Testing {host}:{port} now.\n")
 
 
-def fetch(box, path, auth_kind):
-    auth = (HTTPDigestAuth if auth_kind == "digest" else HTTPBasicAuth)(box["user"], box["password"])
+def fetch(box, path, auth_kind="digest"):
+    auth = HTTPDigestAuth(box["user"], box["password"])
     t = time.monotonic()
     r = requests.get(f"{box['url']}/{path}", auth=auth, timeout=TIMEOUT)
     return r, int((time.monotonic() - t) * 1000)
@@ -75,15 +75,22 @@ def main():
     box = json.loads(SAVED.read_text())
     print(f"Box: {box['url']}  (user {box['user']})")
 
-    auth_kind = "basic"
+    # Ask WITHOUT a login first: the 2010 gateway answers 401 with a Digest
+    # challenge for realm "USEnergy" (OBIX_SVR.C). Only then is a login sent,
+    # and only by Digest, so the password never crosses the network readable,
+    # and never goes to an address that is not one of these gateways.
     try:
-        r, ms = fetch(box, "obix/about", auth_kind)
+        first = requests.get(f"{box['url']}/obix/about", timeout=TIMEOUT, allow_redirects=False)
     except requests.RequestException as e:
         sys.exit(f"NOT REACHABLE from beverly-pi: {type(e).__name__}. The box may only be reachable "
                  "from Anagha's server, or the address/port is wrong.")
-    if r.status_code == 401 and "digest" in r.headers.get("WWW-Authenticate", "").lower():
-        auth_kind = "digest"
-        r, ms = fetch(box, "obix/about", auth_kind)
+    challenge = first.headers.get("WWW-Authenticate", "")
+    if first.status_code == 401 and "USEnergy" not in challenge:
+        sys.exit("Something answered at that address, but it is NOT a USEnergy gateway. No login was sent.")
+    if first.status_code == 401 and not challenge.lower().startswith("digest"):
+        sys.exit("The gateway asked for a non-Digest login; this tool sends logins only by Digest. Nothing sent.")
+    auth_kind = "digest"
+    r, ms = fetch(box, "obix/about", auth_kind)
     print(f"obix/about: HTTP {r.status_code} in {ms} ms ({auth_kind} login)")
     if r.status_code == 401:
         sys.exit("The box refused the user name or password. Run with --setup to enter them again.")
