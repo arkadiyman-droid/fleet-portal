@@ -58,6 +58,36 @@ offline controller could both INSERT it and the page crashed on the primary
 key. It now looks up after the call and retries a lost race as an update
 (`tests/test_fleet_poller_db.py` reproduces the race).
 
+### Adopt a module
+
+A controller flashed with the golden image and built with the portal's
+address (EMS `build_image.bat <ip> <portal-url>`) calls home when it has not
+been restored from a bundle (EMS `use_controller/fleet/enroll.py`). It shows a
+pairing code on its touchscreen. **Adopt** (in the nav, and a notice on the
+overview whenever a module is waiting): type the code, pick the building and
+a name, press Adopt. The page then follows four steps — found, assigned,
+module confirmed, first status — and refreshes itself; the module hands over
+its own polling token within about 15 seconds, so nobody types an address or
+a token. Model: `Enrollment` (migration `d4dafc53716b`).
+
+The three `/api/enroll/*` endpoints (`app/enroll_api.py`) are the only ones
+reachable without a login. The module proves itself with a secret on every
+call (only its hash is stored, as is the code's), a stranger cannot take
+over a known module, the code is never shown by the portal, a module's adopt
+page opens only after its code was typed in this session, and calls are
+rate-limited. Behind Cloudflare Access those paths need a bypass policy:
+see `deploy/README.md`. Tests: `tests/test_enroll_db.py`.
+
+Not yet: **restore an existing site onto the module** instead of adding a
+new controller. Each module already sends its own public key (`age`) when it
+calls home, so a site bundle can be re-encrypted to that module alone; what
+remains open is where the master key is used to decrypt it (the operator's
+browser, so the server never holds it, is the recommendation).
+
+For development without hardware: EMS `tools/simulate_blank_module.py
+--portal http://127.0.0.1:5050` runs the real enrollment code as a pretend
+module and answers this portal's polls.
+
 
 **Not built, beyond Phase 6:** utility-data ingestion (ConEd / National Grid /
 DEP Green Button). See `UTILITY_DATA_INTEGRATION.md` in the EMS repo for the

@@ -21,10 +21,12 @@ def create_app():
     csrf.init_app(app)
 
     from app.admin_auth import auth_bp
+    from app.enroll_api import enroll_bp
     from app.routes import admin_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
+    app.register_blueprint(enroll_bp)
 
     @app.errorhandler(403)
     def _forbidden(e):

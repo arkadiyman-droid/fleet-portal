@@ -12,6 +12,10 @@
     <h1>Fleet Overview</h1>
   </div>
 
+  {% if waiting %}
+  <a class="banner info" style="display:block;text-decoration:none" href="{{ url_for('admin.adopt') }}">
+    {{ waiting }} new module{{ '' if waiting == 1 else 's' }} waiting to be adopted. Adopt →</a>
+  {% endif %}
   {% set s = summary %}
   <div class="tiles">
     <a class="tile {{ 'sel' if show == 'all' }}" href="{{ url_for('admin.fleet_overview') }}">

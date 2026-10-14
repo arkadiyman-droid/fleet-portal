@@ -318,3 +318,52 @@ class Payment(db.Model):
 
     def __repr__(self):
         return f"<Payment invoice_id={self.invoice_id} amount_cents={self.amount_cents}>"
+
+
+class Enrollment(db.Model):
+    """A blank controller that called home to be adopted (EMS
+    use_controller/fleet/enroll.py, portal app/enroll_api.py).
+
+    It is NOT a Controller until an operator adopts it by typing the pairing
+    code the module shows on its own screen. Until then it is only what the
+    module claims about itself, so none of it is trusted for anything but
+    display. The module proves it is the same box on every call with a
+    secret; only hashes of the secret and the code are kept here.
+
+    state: waiting  -> said hello, nobody has adopted it
+           assigned -> an operator adopted it; a Controller row exists with no
+                       token yet; the module has not confirmed
+           complete -> the module handed over its polling token
+           rejected -> an operator dismissed it
+    """
+    __tablename__ = "enrollments"
+
+    id = db.Column(db.String(36), primary_key=True)          # the module's own uuid
+    secret_hash = db.Column(db.String(64), nullable=False)
+    code_hash = db.Column(db.String(64), nullable=False, index=True)
+    state = db.Column(db.String(12), nullable=False, default="waiting")
+
+    hostname = db.Column(db.String(100))
+    serial = db.Column(db.String(64))
+    model = db.Column(db.String(120))
+    ems_version = db.Column(db.String(60))
+    lan_ip = db.Column(db.String(50))
+    remote_ip = db.Column(db.String(50))                       # what the portal saw the call come from
+    age_recipient = db.Column(db.String(100))                  # the module's own public key (for a later restore)
+
+    first_seen = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    last_seen = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="SET NULL"))
+    assigned_by = db.Column(db.String(120))
+    assigned_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+
+    controller = db.relationship("Controller", backref=db.backref("enrollment", uselist=False))
+
+    __table_args__ = (
+        CheckConstraint("state IN ('waiting','assigned','complete','rejected')", name="ck_enrollments_state"),
+    )
+
+    def __repr__(self):
+        return f"<Enrollment {self.id} {self.state} {self.hostname}>"

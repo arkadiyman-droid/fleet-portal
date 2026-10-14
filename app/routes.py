@@ -1,14 +1,15 @@
 from datetime import datetime, timedelta
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
 from app.billing import INVOICE_DUE_DAYS, _finalize_payment, current_contract, generate_invoices, period_for_date
 from app.extensions import csrf, db
 from app import fleet_health
+from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
-from app.models import Building, Client, Contract, Controller, Invoice, Permission, Property, User
+from app.models import Building, Client, Contract, Controller, Enrollment, Invoice, Permission, Property, User
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -673,7 +674,8 @@ def fleet_overview():
     else:
         show = "all"
     return render_template("fleet_overview.html", title="Fleet Overview", cards=cards, summary=summary,
-                           show=show, poll_secs=current_app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60))
+                           show=show, poll_secs=current_app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60),
+                           waiting=len(_waiting_modules()) if _can_adopt() else 0)
 
 
 @admin_bp.route("/fleet/<int:controller_id>")
@@ -682,6 +684,107 @@ def fleet_controller(controller_id):
     require_role("viewer", ctrl)
     return render_template("fleet_controller.html", title=ctrl.name, card=_card(ctrl), status=ctrl.status,
                            raw=(ctrl.status.raw_json if ctrl.status else None) or {})
+
+
+# ─── Adopt a blank module (EMS fleet/enroll.py ↔ app/enroll_api.py) ─────
+#
+# The operator types the pairing code the module shows on its own screen.
+# That code is the only way to open a module's adopt page: a code that
+# matched is remembered in the session, so nobody adopts a box just by
+# picking it from the "recently seen" list. Adopting creates the Controller
+# row; the module then hands over its own polling token by itself.
+
+ADOPT_SEEN_DAYS = 7
+
+
+def _can_adopt() -> bool:
+    return is_superuser() or user_has_min_role_anywhere("operator")
+
+
+def _adopt_buildings():
+    q = Building.query if is_superuser() else Building.query.filter(
+        Building.id.in_(creatable_controller_building_query(current_user().id)))
+    return q.filter_by(is_active=True).order_by(Building.name).all()
+
+
+def _waiting_modules():
+    since = datetime.utcnow() - timedelta(days=ADOPT_SEEN_DAYS)
+    return Enrollment.query.filter(Enrollment.state == "waiting", Enrollment.last_seen >= since) \
+        .order_by(Enrollment.last_seen.desc()).all()
+
+
+def _opened(eid) -> bool:
+    return eid in (session.get("adopt_opened") or [])
+
+
+@admin_bp.route("/adopt", methods=["GET", "POST"])
+def adopt():
+    if not _can_adopt():
+        abort(403)
+    if request.method == "POST":
+        code = normalize_code(request.form.get("code"))
+        row = None
+        if len(code) == 6:
+            row = Enrollment.query.filter(Enrollment.code_hash == enroll_code_hash(code),
+                                          Enrollment.state.in_(("waiting", "assigned"))).first()
+        if row is None:
+            flash("No module waiting to be adopted shows that code. Check the screen: six letters and digits, "
+                  "and the module must be powered and online.", "error")
+            return redirect(url_for("admin.adopt"))
+        opened = session.get("adopt_opened") or []
+        session["adopt_opened"] = (opened + [row.id])[-20:]
+        return redirect(url_for("admin.adopt_module", eid=row.id))
+    return render_template("adopt.html", title="Adopt a module", waiting=_waiting_modules())
+
+
+@admin_bp.route("/adopt/<eid>", methods=["GET", "POST"])
+def adopt_module(eid):
+    if not _can_adopt():
+        abort(403)
+    row = Enrollment.query.get_or_404(eid)
+    if not _opened(eid) and row.state in ("waiting", "assigned"):
+        flash("Type the code shown on the module's screen to open it.", "error")
+        return redirect(url_for("admin.adopt"))
+    if row.controller is not None:
+        require_role("viewer", row.controller)
+
+    if request.method == "POST" and request.form.get("action") == "assign":
+        if row.state != "waiting":
+            flash("This module is already being adopted.", "error")
+            return redirect(url_for("admin.adopt_module", eid=eid))
+        building = Building.query.get_or_404(_parse_int(request.form.get("building_id")) or 0)
+        require_role("operator", building)
+        name = (request.form.get("name") or row.hostname or "controller").strip()[:200]
+        ctrl = Controller(building_id=building.id, name=name, tailscale_ip=row.lan_ip,
+                          tailscale_hostname=row.hostname, fleet_api_token=None)
+        db.session.add(ctrl)
+        db.session.flush()
+        row.controller_id = ctrl.id
+        row.state = "assigned"
+        row.assigned_at = datetime.utcnow()
+        u = current_user()
+        row.assigned_by = "superuser" if is_superuser() else (u.login if u else None)
+        db.session.commit()
+        flash(f"Adopted into {building.name}. Waiting for the module to confirm; it checks in every 15 seconds.", "success")
+        return redirect(url_for("admin.adopt_module", eid=eid))
+
+    if request.method == "POST" and request.form.get("action") == "dismiss":
+        if row.state == "waiting":
+            row.state = "rejected"
+            db.session.commit()
+            flash("Dismissed. The module stops showing up here; it keeps its code until it is reflashed.", "success")
+        return redirect(url_for("admin.adopt"))
+
+    # Once the module has confirmed, take its first status straight away so
+    # the last step of the page can turn green without waiting for the poller.
+    if row.state == "complete" and row.controller and row.controller.status is None:
+        try:
+            poll_controller(current_app._get_current_object(), row.controller)
+        except Exception:
+            db.session.rollback()
+    return render_template("adopt_module.html", title="Adopt a module", m=row,
+                           buildings=_adopt_buildings() if row.state == "waiting" else [],
+                           card=_card(row.controller) if row.controller else None)
 
 
 # ─── Users & Permissions (Phase 3 — Superuser-only) ──────────────────────

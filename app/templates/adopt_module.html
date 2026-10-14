@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Adopt {{ m.hostname or 'module' }} — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}{% if m.state == 'assigned' %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+
+{% macro step(n, done, active, title, text) -%}
+  <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">
+    <div style="flex:none;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;
+         background:{{ 'var(--ok)' if done else ('var(--info-bg)' if active else 'var(--unk-bg)') }};
+         color:{{ '#fff' if done else ('var(--info)' if active else 'var(--unk)') }}">{{ '✓' if done else n }}</div>
+    <div><div style="font-weight:600">{{ title }}</div><div class="card-sub">{{ text }}</div></div>
+  </div>
+{%- endmacro %}
+
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('admin.adopt') }}">Adopt</a></div>
+  <div class="page-head"><h1>{{ m.hostname or 'Module' }} <span class="card-sub">· {{ m.model or '' }}</span></h1></div>
+
+  <div class="sections" style="grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr); align-items: start">
+    <div class="section">
+      <h2>Progress</h2>
+      {% set assigned = m.state in ('assigned', 'complete') %}
+      {% set complete = m.state == 'complete' %}
+      {% set polled = complete and card and card.eval.online %}
+      {{ step(1, true, false, 'Found by its code', 'Called home ' ~ m.first_seen.strftime('%Y-%m-%d %H:%M UTC') ~ ' from ' ~ (m.lan_ip or '?')) }}
+      {{ step(2, assigned, m.state == 'waiting', 'Assigned to a building',
+              (m.controller.building.name ~ ' as ' ~ m.controller.name) if m.controller else 'Choose where it belongs, below') }}
+      {{ step(3, complete, m.state == 'assigned', 'Module confirmed',
+              ('Handed over its polling token ' ~ m.completed_at.strftime('%H:%M:%S UTC')) if complete else
+              ('Waiting… the module checks in every 15 seconds. This page refreshes itself.' if m.state == 'assigned' else 'After step 2')) }}
+      {{ step(4, polled, complete and not polled, 'First status received',
+              ('Online. Its card is on the overview.' if polled else ('Polling it… ' ~ ((card.eval.issues[0][1]) if card and card.eval.issues else '')) if complete else 'After step 3')) }}
+      {% if polled %}
+        <p style="margin-top:14px"><a class="btn" href="{{ url_for('admin.fleet_controller', controller_id=m.controller_id) }}">Open its page</a></p>
+      {% endif %}
+      {% if m.state == 'rejected' %}<div class="banner warn" style="margin-top:12px">Dismissed.</div>{% endif %}
+    </div>
+
+    <div class="section">
+      {% if m.state == 'waiting' %}
+        <h2>Where does it go?</h2>
+        {% if buildings %}
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="assign">
+          <label>Building</label>
+          <select name="building_id" required>
+            <option value="">Select…</option>
+            {% for b in buildings %}<option value="{{ b.id }}">{{ b.property.client.name }} · {{ b.property.name }} · {{ b.name }}</option>{% endfor %}
+          </select>
+          <label>Controller name</label>
+          <input name="name" value="{{ m.hostname or '' }}" maxlength="200" required>
+          <label>How</label>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+            <label style="font-weight:400"><input type="radio" name="mode" value="new" checked style="width:auto;margin:0 6px 0 0">A new controller for this building</label>
+            <label style="font-weight:400;color:var(--muted)"><input type="radio" name="mode" value="restore" disabled style="width:auto;margin:0 6px 0 0">Restore an existing site onto it
+              <span class="card-sub">— next: needs the master-key decision</span></label>
+          </div>
+          <button class="btn" type="submit">Adopt</button>
+        </form>
+        {% else %}
+          <div class="empty">You have no building you may add a controller to. An operator role on a building, property or client is needed.</div>
+        {% endif %}
+        <form method="post" style="margin-top:14px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="dismiss">
+          <button class="btn danger" type="submit">Not ours: dismiss</button>
+        </form>
+      {% else %}
+        <h2>The module</h2>
+      {% endif %}
+      <div class="kv" style="margin-top:12px">
+        <div class="k">Hostname</div><div class="v">{{ m.hostname or '—' }}</div>
+        <div class="k">Model</div><div class="v">{{ m.model or '—' }}</div>
+        <div class="k">Serial</div><div class="v">{{ m.serial or '—' }}</div>
+        <div class="k">Software</div><div class="v">{{ m.ems_version or '—' }}</div>
+        <div class="k">Its address</div><div class="v">{{ m.lan_ip or '—' }}</div>
+        <div class="k">Called from</div><div class="v">{{ m.remote_ip or '—' }}</div>
+        <div class="k">Own public key</div><div class="v" style="word-break:break-all">{{ m.age_recipient or '—' }}</div>
+        <div class="k">Last heard</div><div class="v">{{ m.last_seen.strftime('%Y-%m-%d %H:%M:%S UTC') }}</div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

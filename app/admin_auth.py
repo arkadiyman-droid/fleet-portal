@@ -8,7 +8,10 @@ from app.permissions import load_identity
 
 auth_bp = Blueprint("auth", __name__)
 
-_EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static", "admin.stripe_webhook"}
+# The enroll.* endpoints are where a blank controller calls home; a machine
+# calls them, so no login. Their own secret check stands in (enroll_api.py).
+_EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static", "admin.stripe_webhook",
+                     "enroll.hello", "enroll.status", "enroll.complete"}
 
 
 def _safe_next(target: str) -> str:

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Adopt a module — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>Adopt a module</h1></div>
+
+  <div class="sections" style="grid-template-columns: minmax(300px, 420px) 1fr; align-items: start">
+    <div class="section">
+      <h2>Type the code on the module's screen</h2>
+      <p class="card-sub" style="margin-top:0">A new controller shows a <b>PAIR</b> code at the top of its touchscreen,
+        like <span class="chip info" style="font-family:monospace">K7P-4QX</span>, once it is powered and online.
+        Typing it here proves you are looking at that box.</p>
+      <form method="post" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input name="code" placeholder="ABC-DEF" maxlength="9" autofocus
+               style="font: 600 28px/1.2 ui-monospace, Consolas, monospace; letter-spacing: 4px; text-transform: uppercase; text-align: center">
+        <button class="btn" type="submit" style="width:100%">Find module</button>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2>Seen in the last {{ 7 }} days, not yet adopted</h2>
+      {% if waiting %}
+      <table>
+        <thead><tr><th>Module</th><th>Address</th><th>Software</th><th>Last heard</th></tr></thead>
+        <tbody>
+        {% for m in waiting %}
+          <tr>
+            <td><b>{{ m.hostname or '—' }}</b><div class="card-sub">{{ m.model or '' }}{% if m.serial %} · serial {{ m.serial }}{% endif %}</div></td>
+            <td>{{ m.lan_ip or '—' }}<div class="card-sub">from {{ m.remote_ip or '—' }}</div></td>
+            <td>{{ m.ems_version or '—' }}</td>
+            <td>{{ m.last_seen.strftime('%Y-%m-%d %H:%M UTC') }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="card-sub">Codes are not shown here on purpose: read it off the module itself.</p>
+      {% else %}
+        <div class="empty">No new modules have called home. A module calls home when it was flashed with the golden image,
+          knows this portal's address, and has not been restored from a site bundle.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -114,6 +114,11 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
     out = {"issues": issues, "online": None, "seen": None, "heating": None,
            "health": None, "backup": None, "software": None, "alarms": [], "restored": None}
 
+    enr = getattr(ctrl, "enrollment", None)
+    if enr is not None and getattr(enr, "state", None) == "assigned":
+        issues.append(("unknown", "Adopted: waiting for the module to confirm (it checks in every 15 s)"))
+        out["level"] = "unknown"
+        return out
     if not getattr(ctrl, "tailscale_ip", None) or not getattr(ctrl, "fleet_api_token", None):
         issues.append(("unknown", "Not configured: no address or token"))
         out["level"] = "unknown"

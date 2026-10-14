@@ -80,6 +80,15 @@ Override the hostname with `FLEET_HOSTNAME=... sudo -E bash ...`; the default is
 - **Cloudflare Access.** Add an application for the hostname in the Cloudflare
   dashboard, as was done for the other hostnames on this tunnel. Until then the
   portal's own login page is the only thing in front of it, on a public name.
+- **Let blank controllers call home.** Access in front of the whole hostname
+  would also stop new modules reaching `/api/enroll/hello`, `/status` and
+  `/complete`, and nothing could ever be adopted. Add a **Bypass** policy for
+  the path `/api/enroll/*` only (an Access application on
+  `fleet.echothermcontrols.com/api/enroll/*` with action *Bypass*, Everyone).
+  Those three endpoints are built to be open: every call carries the module's
+  own secret, they are rate-limited, and they return nothing an operator has
+  not chosen to give that module (`app/enroll_api.py`). Everything else stays
+  behind Access.
 
 ## Order matters
 
