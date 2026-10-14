@@ -95,6 +95,13 @@
       {% set sw = e.software or {} %}
       {{ row('Version', sw.version) }}
       {{ row('Update', ('available: ' ~ sw.availableSha) if sw.updateAvailable else ('confirming' if sw.pending else 'up to date')) }}
+      {% if sw.updateAvailable %}<div class="k"></div><div class="v">
+        <form method="post" action="{{ url_for('admin.fleet_update_one', controller_id=c.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="next" value="{{ request.path }}">
+          <button class="btn plain" type="submit">Update this controller now</button>
+        </form>
+        <span class="card-sub">or roll it out to many from <a href="{{ url_for('admin.updates_page') }}">Updates</a></span></div>{% endif %}
       {{ row('Address', c.tailscale_ip) }}{{ row('Hostname (Tailscale)', c.tailscale_hostname) }}
       {{ row('Last poll', status.polled_at.strftime('%Y-%m-%d %H:%M:%S UTC') if status else none) }}
       {{ row('Response', (status.response_ms ~ ' ms') if status and status.response_ms is not none else none) }}

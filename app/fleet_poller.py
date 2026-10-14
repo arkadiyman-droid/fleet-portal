@@ -81,6 +81,13 @@ class FleetPoller:
                 except Exception as e:
                     db.session.rollback()
                     log.warning("Alert check failed: %s", e)
+                # Software rollouts next, same lock (app/rollouts.py).
+                try:
+                    from app import rollouts
+                    rollouts.step(app)
+                except Exception as e:
+                    db.session.rollback()
+                    log.warning("Rollout step failed: %s", e)
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ADVISORY_LOCK_KEY})
                 conn.close()

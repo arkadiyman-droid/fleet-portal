@@ -128,6 +128,35 @@ real one-time key but never uses it (it would join the laptop to the fleet);
 it reports 127.0.0.1 as its Tailscale address so the portal keeps polling it.
 
 
+### Software updates
+
+The **Updates** page shows which release each controller runs and the
+newest one its release branch offers, and rolls a release out:
+
+1. pick the release, one **test controller**, a batch size and how long to
+   watch each batch (defaults 10 and 30 minutes);
+2. the test controller is asked first, alone (`POST /api/fleet/software` on
+   the controller with the polling token: EMS `fleet/software.py`). It
+   fetches the release itself from the official release branch with its own
+   read-only key, installs it, and proves it for 10 minutes, rolling itself
+   back if it crash-loops. The portal follows it through the controller's
+   own report (`fleetHealth.ota`);
+3. only when the whole batch is updated, confirmed and still out of the red
+   after the watch time does the next batch start.
+
+Any failed or rolled-back update, one that does not finish in 30 minutes,
+a release branch that moved, or a controller turning red after updating
+**halts** the rollout and sends an alert: a bad release reaches nobody else.
+Offline controllers are retried for an hour and then skipped, as are sites
+with remote updates switched off (`fleet.remote_update`) and controllers
+too old to accept them (update those once by hand). Pause, resume and
+cancel are on the page; a single controller updates from its own page.
+The portal never rolls a fleet back by itself: that is putting the
+previous release back on the release branch, deliberately.
+`app/rollouts.py` (driven after each poll cycle, under the poller's lock),
+models `Rollout`, `RolloutTarget` (migration `d9a1c7e3b5f2`), tests
+`tests/test_rollouts_db.py`.
+
 ### Alerts
 
 When a controller turns **red** on the Fleet Overview (the same rules:

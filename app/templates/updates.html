@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Updates — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}{% if active %}<meta http-equiv="refresh" content="30">{% endif %}{% endblock %}
+
+{% set tstate = {'pending': ('info', 'waiting'), 'requested': ('info', 'installing'), 'confirming': ('info', 'proving itself'),
+                 'done': ('ok', 'done'), 'failed': ('crit', 'failed'), 'skipped': ('warn', 'skipped')} %}
+{% set rstate = {'running': ('info', 'running'), 'paused': ('warn', 'paused'), 'done': ('ok', 'complete'),
+                 'halted': ('crit', 'halted'), 'cancelled': ('warn', 'cancelled')} %}
+
+{% macro rollout_block(r) %}
+  {% set waves = r.targets|map(attribute='wave')|unique|list %}
+  <div class="section" style="margin-bottom:14px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <h2 style="margin:0">Release {{ r.target_sha[:7] }}</h2>
+      <span class="chip {{ rstate[r.state][0] }}">{{ rstate[r.state][1] }}</span>
+      <span class="card-sub">started {{ r.created_at.strftime('%Y-%m-%d %H:%M UTC') }}{% if r.created_by %} by {{ r.created_by }}{% endif %}
+        · batches of {{ r.batch_size }} · {{ r.soak_minutes }} min watch between batches</span>
+      {% if g.is_superuser and r.state in ('running', 'paused') %}
+      <span style="margin-left:auto;display:flex;gap:6px">
+        {% for act, label in ([('pause', 'Pause')] if r.state == 'running' else [('resume', 'Resume')]) + [('cancel', 'Cancel')] %}
+        <form method="post" action="{{ url_for('admin.updates_control', rollout_id=r.id, action=act) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn {{ 'danger' if act == 'cancel' else 'plain' }}" type="submit">{{ label }}</button>
+        </form>
+        {% endfor %}
+      </span>
+      {% endif %}
+    </div>
+    {% if r.reason %}<div class="banner {{ 'crit' if r.state == 'halted' else 'warn' }}" style="margin-top:10px">{{ r.reason }}</div>{% endif %}
+    {% if r.state == 'running' and r.wave_done_at %}
+      <p class="card-sub" style="margin:8px 0 0">Batch {{ r.wave }} finished {{ r.wave_done_at.strftime('%H:%M UTC') }}; watching it for {{ r.soak_minutes }} minutes before the next.</p>
+    {% endif %}
+    <table style="margin-top:10px">
+      <thead><tr><th>Batch</th><th>Controller</th><th>From</th><th>State</th><th>Detail</th></tr></thead>
+      <tbody>
+      {% for t in r.targets %}
+        <tr{% if r.state == 'running' and t.wave == r.wave %} style="background:var(--info-bg)"{% endif %}>
+          <td>{{ 'test' if t.wave == 0 else t.wave }}</td>
+          <td><a href="{{ url_for('admin.fleet_controller', controller_id=t.controller_id) }}">{{ t.controller.name }}</a></td>
+          <td class="card-sub">{{ (t.from_sha or '?')[:7] }}</td>
+          <td><span class="chip {{ tstate[t.state][0] }}">{{ tstate[t.state][1] }}</span></td>
+          <td class="card-sub">{{ t.detail or '' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endmacro %}
+
+{% block content %}
+  <div class="page-head"><h1>Software updates</h1>
+    {% if g.is_superuser %}
+    <form method="post" action="{{ url_for('admin.updates_check') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn plain" type="submit" title="Controllers look by themselves once a day">Check for a new release</button>
+    </form>
+    {% endif %}
+  </div>
+  <p class="card-sub" style="margin:0 0 14px">
+    A release goes to one test controller first, then to the rest in batches. Each controller fetches the release
+    itself from the official release branch, installs it, and proves it for 10 minutes; if it crash-loops it rolls
+    itself back. A failed or rolled-back update, or a controller turning red after updating, halts the rollout and
+    sends an alert, so a bad release reaches no one else.
+  </p>
+
+  {% for r in active %}{{ rollout_block(r) }}{% endfor %}
+
+  <div class="sections">
+    <div class="section">
+      <h2>What the fleet runs</h2>
+      <table>
+        <thead><tr><th>Release</th><th>Controllers</th></tr></thead>
+        <tbody>
+        {% for sha, cs in versions.items() %}
+          <tr><td>{{ sha[:7] if sha else 'not reported' }}{% if sha and sha == newest %} <span class="chip ok">newest</span>{% endif %}</td>
+              <td>{{ cs|length }}: {% for c in cs[:6] %}<a href="{{ url_for('admin.fleet_controller', controller_id=c.id) }}">{{ c.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if cs|length > 6 %} …{% endif %}</td></tr>
+        {% else %}
+          <tr><td colspan="2" class="card-sub">No controllers polled yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if releases %}<p class="card-sub" style="margin-top:8px">Newest release on the release branch, as the controllers see it:
+        <b>{{ newest[:7] }}</b>{% if need %} · {{ need|length }} controller{{ 's need' if need|length != 1 else ' needs' }} it{% else %} · everyone has it{% endif %}.</p>{% endif %}
+      {% if unknown %}<p class="card-sub">Not reporting their software, so left out of rollouts: {% for c in unknown[:6] %}{{ c.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% if unknown|length > 6 %} …{% endif %}.</p>{% endif %}
+    </div>
+
+    {% if g.is_superuser %}
+    <div class="section">
+      <h2>Start a rollout</h2>
+      {% if not newest %}
+        <div class="card-sub">No controller has reported the release branch yet.</div>
+      {% elif not need %}
+        <div class="all-good">Every controller is on {{ newest[:7] }}.</div>
+      {% else %}
+      <form method="post" action="{{ url_for('admin.updates_start') }}" class="kv" style="row-gap:10px">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="k">Release</div>
+        <div class="v"><select name="sha">{% for sha, n in releases.items() %}<option value="{{ sha }}">{{ sha[:7] }} (seen by {{ n }})</option>{% endfor %}</select></div>
+        <div class="k">Test controller</div>
+        <div class="v"><select name="test_controller_id">{% for c in test_choices %}<option value="{{ c.id }}">{{ c.name }}{% if c.building %} ({{ c.building.name }}){% endif %}</option>{% endfor %}</select>
+          <div class="card-sub">Goes first, alone. Pick one you can check on.</div></div>
+        <div class="k">Then batches of</div>
+        <div class="v"><input type="number" name="batch_size" value="10" min="1" max="200" style="width:80px"> controllers</div>
+        <div class="k">Watch each batch for</div>
+        <div class="v"><input type="number" name="soak_minutes" value="30" min="0" max="1440" style="width:80px"> minutes before the next</div>
+        <div class="k"></div>
+        <div class="v"><button class="btn" type="submit">Start rollout to {{ need|length }} controller{{ 's' if need|length != 1 }}</button></div>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  {% if past %}
+  <h2 style="margin:18px 0 10px">Earlier rollouts</h2>
+  {% for r in past %}{{ rollout_block(r) }}{% endfor %}
+  {% endif %}
+{% endblock %}

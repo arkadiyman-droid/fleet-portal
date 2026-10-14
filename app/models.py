@@ -426,3 +426,46 @@ class AlertEvent(db.Model):
     text = db.Column(db.String(1000))
     delivered = db.Column(db.String(300))                              # what each channel answered
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+
+class Rollout(db.Model):
+    """A software release going out to controllers, batch by batch
+    (app/rollouts.py). Wave 0 is the test controller; a wave starts only
+    when the previous one has updated, confirmed and stayed out of the red
+    for soak_minutes. Anything failing halts it."""
+    __tablename__ = "rollouts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    target_sha = db.Column(db.String(40), nullable=False)
+    state = db.Column(db.String(12), nullable=False, default="running")   # running|paused|done|halted|cancelled
+    wave = db.Column(db.Integer, nullable=False, default=0)                # the wave in progress
+    wave_done_at = db.Column(db.DateTime)                                  # when the current wave finished (soak starts)
+    batch_size = db.Column(db.Integer, nullable=False, default=10)
+    soak_minutes = db.Column(db.Integer, nullable=False, default=30)
+    reason = db.Column(db.String(300))                                     # why it halted / was cancelled
+    created_by = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    finished_at = db.Column(db.DateTime)
+
+    targets = db.relationship("RolloutTarget", back_populates="rollout", cascade="all, delete-orphan",
+                              order_by="(RolloutTarget.wave, RolloutTarget.id)")
+
+
+class RolloutTarget(db.Model):
+    """One controller in a rollout."""
+    __tablename__ = "rollout_targets"
+    __table_args__ = (db.UniqueConstraint("rollout_id", "controller_id", name="uq_rollout_target"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    rollout_id = db.Column(db.Integer, db.ForeignKey("rollouts.id", ondelete="CASCADE"), nullable=False, index=True)
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="CASCADE"), nullable=False, index=True)
+    wave = db.Column(db.Integer, nullable=False, default=0)
+    state = db.Column(db.String(12), nullable=False, default="pending")   # pending|requested|confirming|done|failed|skipped
+    from_sha = db.Column(db.String(40))
+    first_try_at = db.Column(db.DateTime)
+    requested_at = db.Column(db.DateTime)
+    finished_at = db.Column(db.DateTime)
+    detail = db.Column(db.String(300))
+
+    rollout = db.relationship("Rollout", back_populates="targets")
+    controller = db.relationship("Controller")

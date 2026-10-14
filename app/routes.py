@@ -10,7 +10,7 @@ from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
 from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
-                        Permission, Property, User)
+                        Permission, Property, Rollout, RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -774,6 +774,114 @@ def fleet_mute(controller_id):
                               title=msg[:200], text=f"by {who}", delivered="not sent", created_at=datetime.utcnow()))
     db.session.commit()
     flash(msg, "success")
+    return redirect(_local_next(url_for("admin.fleet_controller", controller_id=ctrl.id)))
+
+
+# ─── Software updates (app/rollouts.py) ─────────────────────────────────
+
+def _who():
+    u = current_user()
+    return "the administrator" if is_superuser() else (u.login if u else "?")
+
+
+def _polled_controllers():
+    base = Controller.query if is_superuser() else visible_controller_query(current_user().id)
+    return [c for c in base.filter_by(is_active=True).order_by(Controller.name).all()
+            if c.tailscale_ip and c.fleet_api_token]
+
+
+@admin_bp.route("/updates")
+def updates_page():
+    from app import rollouts
+    ctrls = _polled_controllers()
+    versions = {}
+    for c in ctrls:
+        versions.setdefault(rollouts.current_sha(c) or "", []).append(c)
+    releases = rollouts.releases_seen(ctrls)
+    newest = next(iter(releases), None)
+    ids = {c.id for c in ctrls}
+    rs = Rollout.query.order_by(Rollout.id.desc()).limit(15).all()
+    if not is_superuser():
+        rs = [r for r in rs if any(t.controller_id in ids for t in r.targets)]
+    need = [c for c in ctrls if newest and rollouts.current_sha(c) and rollouts.current_sha(c) != newest]
+    unknown = [c for c in ctrls if not rollouts.current_sha(c)]
+
+    def _health_first(c):            # the test controller should be one that is up and well
+        e = fleet_health.evaluate(c, c.status)
+        return (e["online"] is not True, {"ok": 0, "info": 1, "unknown": 2, "warn": 3, "crit": 4}.get(e["level"], 5), c.name)
+    test_choices = sorted(need, key=_health_first)
+    return render_template("updates.html", title="Updates", versions=versions, releases=releases, newest=newest,
+                           need=need, unknown=unknown, test_choices=test_choices, rollouts=rs,
+                           active=[r for r in rs if r.state in ("running", "paused")],
+                           past=[r for r in rs if r.state not in ("running", "paused")])
+
+
+@admin_bp.route("/updates/start", methods=["POST"])
+def updates_start():
+    if not is_superuser():
+        abort(403)
+    from app import rollouts
+    try:
+        r = rollouts.create(request.form.get("sha"), _polled_controllers(),
+                            _parse_int(request.form.get("test_controller_id")) or 0,
+                            batch_size=_parse_int(request.form.get("batch_size")) or 10,
+                            soak_minutes=_parse_int(request.form.get("soak_minutes")) or 0, by=_who())
+    except ValueError as e:
+        flash(f"Not started: {e}.", "error")
+        return redirect(url_for("admin.updates_page"))
+    flash(f"Rollout of {r.target_sha[:7]} started: the test controller goes first, within a minute.", "success")
+    return redirect(url_for("admin.updates_page"))
+
+
+@admin_bp.route("/updates/check", methods=["POST"])
+def updates_check():
+    if not is_superuser():
+        abort(403)
+    from app import rollouts
+    res = rollouts.ask_to_check(current_app._get_current_object(), _polled_controllers())
+    seen = ", ".join(f"{sha[:7]} ({n})" for sha, n in res["seen"].items()) or "nothing"
+    flash(f"Asked {res['asked']} controller(s); {res['answered']} answered. Their release branch shows: {seen}. "
+          "The page catches up within a minute, on their next status poll.",
+          "success" if res["answered"] else "error")
+    return redirect(url_for("admin.updates_page"))
+
+
+@admin_bp.route("/updates/<int:rollout_id>/<action>", methods=["POST"])
+def updates_control(rollout_id, action):
+    if not is_superuser():
+        abort(403)
+    r = Rollout.query.get_or_404(rollout_id)
+    if action == "pause" and r.state == "running":
+        r.state = "paused"
+    elif action == "resume" and r.state == "paused":
+        r.state = "running"
+    elif action == "cancel" and r.state in ("running", "paused"):
+        r.state, r.reason, r.finished_at = "cancelled", f"cancelled by {_who()}", datetime.utcnow()
+        for t in r.targets:
+            if t.state == "pending":
+                t.state, t.detail, t.finished_at = "skipped", "rollout cancelled", datetime.utcnow()
+    else:
+        abort(400)
+    db.session.commit()
+    flash({"pause": "Paused: nothing new starts; updates already running finish by themselves.",
+           "resume": "Resumed.", "cancel": "Cancelled. Controllers already updated keep the release."}[action],
+          "success")
+    return redirect(url_for("admin.updates_page"))
+
+
+@admin_bp.route("/fleet/<int:controller_id>/update", methods=["POST"])
+def fleet_update_one(controller_id):
+    from app import rollouts
+    ctrl = Controller.query.get_or_404(controller_id)
+    require_role("operator", ctrl)
+    sha = rollouts.ota(ctrl).get("availableSha")
+    try:
+        r = rollouts.create(sha, [ctrl], ctrl.id, batch_size=1, soak_minutes=0, by=_who())
+    except ValueError as e:
+        flash(f"Not started: {e}.", "error")
+    else:
+        flash(f"Updating {ctrl.name!r} to {r.target_sha[:7]}: it starts within a minute, then proves itself "
+              "for 10 minutes. Follow it on the Updates page.", "success")
     return redirect(_local_next(url_for("admin.fleet_controller", controller_id=ctrl.id)))
 
 
