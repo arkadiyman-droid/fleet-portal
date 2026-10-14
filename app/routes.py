@@ -728,7 +728,13 @@ def alerts_page():
     waiting = [s for s in states if not s.alerting and s.first_bad_at]
     muted = [s for s in states if s.muted_until and s.muted_until > now]
     cfg = current_app.config
-    return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted,
+    ntfy_qr = None
+    if is_superuser() and cfg.get("ALERT_NTFY_TOPIC"):
+        import segno
+        from markupsafe import Markup
+        url = f"{cfg.get('ALERT_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{cfg['ALERT_NTFY_TOPIC']}"
+        ntfy_qr = Markup(segno.make(url, error="m").svg_inline(scale=4, border=2))
+    return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted, ntfy_qr=ntfy_qr,
                            events=events.order_by(AlertEvent.created_at.desc()).limit(100).all(),
                            channels=notify.channels(), now=now,
                            after_min=round(cfg.get("ALERT_AFTER_SECONDS", 300) / 60),

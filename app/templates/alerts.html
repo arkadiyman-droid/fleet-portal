@@ -58,9 +58,15 @@
       </div>
       {% if g.is_superuser and ntfy_topic %}
       <p class="card-sub" style="margin-top:12px">To get alerts on a phone: install the free <b>ntfy</b> app
-        (App Store or Google Play), tap <b>+</b>, and subscribe to the topic below{% if ntfy_server != 'https://ntfy.sh' %} on server {{ ntfy_server }}{% endif %}.
-        Anyone with this topic name receives the alerts, so share it only with people who should.</p>
-      <div style="font-family:ui-monospace,monospace;font-size:13px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;word-break:break-all">{{ ntfy_topic }}</div>
+        (App Store or Google Play), tap <b>+</b>, and subscribe to this topic{% if ntfy_server != 'https://ntfy.sh' %} on server {{ ntfy_server }}{% endif %}.
+        It is all small letters and digits; one wrong letter is a different, empty topic.
+        Then press <b>Send a test alert</b>.</p>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div style="font-family:ui-monospace,monospace;font-size:15px;letter-spacing:.5px;padding:8px 10px;background:var(--bg);border:1px solid var(--border);border-radius:6px;word-break:break-all">{{ ntfy_topic }}</div>
+        {% if ntfy_qr %}<div style="text-align:center"><div style="background:#fff;display:inline-block">{{ ntfy_qr }}</div>
+          <div class="card-sub">or scan with the phone's camera:<br>it opens this topic's page</div></div>{% endif %}
+      </div>
+      <p class="card-sub" style="margin-top:8px">Anyone with this topic name receives the alerts, so share it only with people who should.</p>
       {% endif %}
     </div>
   </div>

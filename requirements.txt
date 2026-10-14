@@ -7,3 +7,4 @@ python-dotenv>=1.0.0
 cryptography>=42.0.0
 requests>=2.31.0
 stripe>=7.0.0,<8.0.0
+segno>=1.6.0

@@ -121,3 +121,20 @@ class Paging:
         for minute in range(0, 30, 5):
             _tick(app, session, ctrl, minute, ok=False)
         assert sent == []
+
+
+class Setup:
+
+    def test_the_alerts_page_shows_the_topic_and_a_qr_code_to_the_administrator(self, app, client):
+        app.config["ALERT_NTFY_TOPIC"] = "echotherm-abc123def456ghi7"
+        page = client.get("/alerts").data
+        assert b"echotherm-abc123def456ghi7" in page and b"<svg" in page
+
+    def test_an_expired_button_says_so_instead_of_400(self, app, session):
+        app.config["WTF_CSRF_ENABLED"] = True
+        c = app.test_client()
+        with c.session_transaction() as s:
+            s["superuser"] = True
+        r = c.post("/alerts/test", headers={"Referer": "http://localhost/alerts"})
+        assert r.status_code == 302 and r.headers["Location"].endswith("/alerts")
+        assert b"open too long" in c.get("/alerts").data

@@ -32,6 +32,21 @@ def create_app():
     def _forbidden(e):
         return render_template("403.html"), 403
 
+    from flask_wtf.csrf import CSRFError
+
+    @app.errorhandler(CSRFError)
+    def _stale_form(e):
+        # A page left open longer than the form token lives (an hour): say
+        # so in plain words and put the person back on the page, rather than
+        # a bare "400 Bad Request". The action was NOT done.
+        from flask import flash, redirect, request
+        from urllib.parse import urlparse
+        ref = urlparse(request.referrer or "")
+        back = ref.path if ref.netloc == request.host and ref.path.startswith("/") else "/"
+        flash("That page was open too long, so its buttons expired and nothing was done. "
+              "The page is fresh now: press the button again.", "error")
+        return redirect(back + (("?" + ref.query) if ref.query and back != "/" else ""))
+
     from app.fleet_poller import fleet_poller
     fleet_poller.start(app)
 
