@@ -3,7 +3,8 @@
 # deploy/setup-beverly-pi.sh — the privileged half of a beverly-pi deploy.
 #
 # Everything in here needs root: creating the Postgres role and database,
-# installing the systemd unit, and adding the tunnel hostname. The
+# installing the systemd units (portal + nightly backup), and adding the
+# tunnel hostname. The
 # unprivileged half (code, virtualenv, .env, migrations) is done
 # separately and is assumed to have run already — see deploy/README.md.
 #
@@ -75,6 +76,11 @@ install -m 0644 "$APP_DIR/deploy/fleet-portal.service" /etc/systemd/system/fleet
 systemctl daemon-reload
 systemctl enable fleet-portal.service >/dev/null
 echo "    installed and enabled fleet-portal.service"
+install -m 0644 "$APP_DIR/deploy/fleet-portal-backup.service" /etc/systemd/system/fleet-portal-backup.service
+install -m 0644 "$APP_DIR/deploy/fleet-portal-backup.timer" /etc/systemd/system/fleet-portal-backup.timer
+systemctl daemon-reload
+systemctl enable --now fleet-portal-backup.timer >/dev/null
+echo "    nightly backup at 03:30 -> ~pi/fleet-portal-backups (keeps 14)"
 
 echo "==> 3/4  Cloudflare tunnel ingress"
 if [[ -n "$SKIP_TUNNEL" ]]; then

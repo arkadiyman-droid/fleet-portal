@@ -106,6 +106,15 @@ The database must exist before `flask db upgrade`, and `.env` must be complete
 before the service starts. So: unprivileged half (minus `db upgrade`) → privileged
 half → `db upgrade` → `sudo systemctl restart fleet-portal`.
 
+## Backups
+
+The privileged half also installs `fleet-portal-backup.timer`: every night at
+03:30 (after Beverly's 03:15) `deploy/backup-db.sh` writes a `pg_dump` to
+`~/fleet-portal-backups` (chmod 600) and keeps the newest 14. Run one now with
+`bash ~/fleet-portal/deploy/backup-db.sh`. These copies live on the same SD
+card as the database; an off-site copy is still to be decided. A dump plus
+`.env` is enough to poll every controller, so keep both private.
+
 ## Checks
 
 ```bash
