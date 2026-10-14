@@ -72,11 +72,28 @@ def setup():
     print(f"Saved (only pi can read it). Testing {host}:{port} now.\n")
 
 
+_SESSION = None
+PAUSE = 2.0          # these 2010 gateways reset the connection on back-to-back requests
+
+
 def fetch(box, path, auth_kind="digest"):
-    auth = HTTPDigestAuth(box["user"], box["password"])
-    t = time.monotonic()
-    r = requests.get(f"{box['url']}/{path}", auth=auth, timeout=TIMEOUT)
-    return r, int((time.monotonic() - t) * 1000)
+    """One GET with Digest, on a single session so the login handshake is
+    done once and reused (the gateway is slow: every extra round trip
+    costs seconds). A short pause first, and one retry after a reset."""
+    global _SESSION
+    if _SESSION is None:
+        _SESSION = requests.Session()
+        _SESSION.auth = HTTPDigestAuth(box["user"], box["password"])
+    for attempt in (1, 2):
+        time.sleep(PAUSE)
+        t = time.monotonic()
+        try:
+            r = _SESSION.get(f"{box['url']}/{path}", timeout=TIMEOUT + 15)
+            return r, int((time.monotonic() - t) * 1000)
+        except requests.ConnectionError:
+            if attempt == 2:
+                raise
+            time.sleep(5)
 
 
 def values(xml):
@@ -151,8 +168,11 @@ def main():
     apts = [st[k][0] for k in st if k.startswith("apartmentTemperature")]
     if apts:
         print(f"  apartment temperatures: {', '.join(a for a in apts if a not in ('', '0'))[:200]}")
-    r, ms = fetch(box, "obix/alarm", auth_kind)
-    print(f"\nobix/alarm: HTTP {r.status_code} in {ms} ms, {r.text.count('<obj')} object(s)")
+    try:
+        r, ms = fetch(box, "obix/alarm", auth_kind)
+        print(f"\nobix/alarm: HTTP {r.status_code} in {ms} ms, {r.text.count('<obj')} object(s)")
+    except requests.RequestException as e:
+        print(f"\nobix/alarm: the box dropped the connection twice ({type(e).__name__})")
     print("\nOK: the portal can read this box from beverly-pi.")
 
 
