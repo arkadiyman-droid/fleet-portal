@@ -127,7 +127,15 @@ the tailnet by itself:
    `kill -HUP $(systemctl show -p MainPID --value fleet-portal)`: the new
    workers read the new settings from `.env`).
 
-Run it again to replace them, or with `--off` to remove them. The OAuth secret can
+Run it again to replace them, or with `--off` to remove them. It accepts
+whatever you paste and then asks Tailscale whether the credentials work,
+which is the only check that means anything. To re-verify later without
+changing anything (no auth key is minted):
+
+```bash
+bash ~/fleet-portal/deploy/check-tailscale.sh
+```
+ The OAuth secret can
 mint keys that join the fleet's tailnet; it lives only in `.env` (chmod 600).
 
 ## Rotating the database password
