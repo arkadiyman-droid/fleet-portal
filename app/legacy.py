@@ -83,13 +83,54 @@ def values(xml: str) -> dict:
 
 
 def parse_alarm(xml: str):
-    """The latest alarm the box reports: {name, at, active} or None."""
+    """The latest alarm the box reports: {name, at, active} or None. A box
+    with no alarms answers an object with no display name, stamped with the
+    current time: that is not an alarm (seen on 13 boxes, 2026-10-14)."""
     if not xml or "<obj" not in xml:
         return None
     m = re.search(r'display\s*=\s*"([^"]*)"', xml)
+    if not m or not m.group(1).strip():
+        return None
     v = values(xml)
-    return {"name": (m.group(1) if m else "") or v.get("source", "alarm"),
-            "at": v.get("timestamp", ""), "active": not v.get("normalTimestamp")}
+    return {"name": m.group(1).strip(), "at": v.get("timestamp", ""), "active": not v.get("normalTimestamp")}
+
+
+# The alarm names the gateways send, how they read, and how much they matter
+# (only 'crit' and 'warn' make a box a "problem"; a restart is information).
+ALARMS = {
+    "safetyActive": ("Safety", "crit"),
+    "ignitionFail": ("Ignition failure", "crit"),
+    "noAptSensorsReporting": ("No apartment sensors reporting", "warn"),
+    "emsRestart": ("Controller restarted", "info"),
+    "bypassChange": ("Bypass changed", "info"),
+}
+try:
+    from zoneinfo import ZoneInfo
+    LOCAL = ZoneInfo("America/New_York")
+except Exception:                      # no tz database: show UTC
+    LOCAL = _dt.timezone.utc
+
+
+def alarm_info(alarm, now=None):
+    """Display form of a box alarm: {words, level, when, recent, active} or
+    None. Times arrive in each box's own offset (some clocks are an hour
+    off), so they are put through UTC and shown in New York time."""
+    if not alarm:
+        return None
+    now = now or _dt.datetime.utcnow()
+    words, level = ALARMS.get(alarm.get("name"), (alarm.get("name") or "Alarm", "warn"))
+    when, recent, utc = alarm.get("at") or "", False, None
+    try:
+        at = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=LOCAL)
+        utc = at.astimezone(_dt.timezone.utc).replace(tzinfo=None)
+        recent = _dt.timedelta(0) <= now - utc < _dt.timedelta(hours=24) or _dt.timedelta(0) < utc - now < _dt.timedelta(hours=2)
+        when = at.astimezone(LOCAL).strftime("%b %d %I:%M %p").replace(" 0", " ")
+    except ValueError:
+        pass
+    return {"words": words, "level": level, "when": when, "recent": recent, "utc": utc,
+            "active": bool(alarm.get("active"))}
 
 
 def _int(v):

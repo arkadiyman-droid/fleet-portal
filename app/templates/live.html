@@ -38,7 +38,7 @@
     <span class="card-sub">{{ summary.live }} of {{ summary.total }} reading now · {{ summary.calling }} calling for heat ·
       {{ summary.dark }} dark{% if summary.login %} · {{ summary.login }} login refused{% endif %}</span></div>
 
-  {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.at[11:16] }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.name }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
+  {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.when }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
 
   <div class="lv-bar">
     {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login))] %}
@@ -68,7 +68,7 @@
         <td>{{ hhmm(c.heat_rt) }}</td><td>{{ hhmm(c.hw_rt) }}</td><td>{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
-        <td>{% if r.recent_alarm %}<span style="color:#b91c1c">{{ r.recent_alarm.name }}</span>{% endif %}</td>
+        <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody></table></div>
@@ -77,7 +77,7 @@
   {% for r in rows %}{% set c = r.c or {} %}
     <div class="lv-card {{ 'dark' if r.state != 'live' }}">
       <div class="lv-head">
-        {% if r.state == 'live' %}<span class="lv-badge {{ 'alarm' if r.recent_alarm }}">{{ '!' if r.recent_alarm else 'Ok' }}</span>
+        {% if r.state == 'live' %}{% set bad = r.recent_alarm and r.recent_alarm.level != 'info' %}<span class="lv-badge {{ 'alarm' if bad }}">{{ '!' if bad else 'Ok' }}</span>
         {% else %}<span class="lv-badge {{ r.state }}">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</span>{% endif %}
         <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
       </div>
@@ -101,7 +101,7 @@
         {% if c.oil_pct is not none %}<div class="lv-oil" title="Oil {{ c.oil_pct }}%"><div style="width:{{ [c.oil_pct, 100]|min }}%"></div></div>{% endif %}
       {% endif %}
       {% if r.state != 'live' %}<div class="lv-foot alarm">{{ r.why }}</div>
-      {% elif r.recent_alarm %}<div class="lv-foot alarm">{{ r.recent_alarm.at[11:16] }}: {{ r.recent_alarm.name }}{% if r.recent_alarm.active %} (active){% endif %}</div>
+      {% elif r.recent_alarm %}<div class="lv-foot {{ 'alarm' if r.recent_alarm.level != 'info' }}">{{ r.recent_alarm.when }}: {{ r.recent_alarm.words }}{% if r.recent_alarm.active and r.recent_alarm.level != 'info' %} (active){% endif %}</div>
       {% else %}<div class="lv-foot">read {{ r.age }}</div>{% endif %}
     </div>
   {% endfor %}

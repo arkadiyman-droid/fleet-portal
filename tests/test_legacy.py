@@ -71,6 +71,23 @@ def test_the_card_matches_what_anagha_showed_for_the_same_box():
     assert (c["supp"], c["retn"], c["risr"]) == (83, 83, 0)
     assert c["oil_pct"] is None and c["apartments"] == [75]
     assert c["alarm"] == {"name": "ignitionFail", "at": "2026-09-23T08:02:00-04:00", "active": True}
+    a = legacy.alarm_info(c["alarm"], now=__import__("datetime").datetime(2026, 9, 23, 13, 0))
+    assert (a["words"], a["level"], a["recent"], a["when"]) == ("Ignition failure", "crit", True, "Sep 23 8:02 AM")
+
+
+def test_an_empty_alarm_list_is_not_an_alarm():
+    empty = ('<obj href="x/obix/alarm" is="obix:StatefulAlarm">' + chr(10) +
+             '<abstime name="timestamp" val="2026-10-14T21:27:52Z"/>' + chr(10) + '</obj>')
+    assert legacy.parse_alarm(empty) is None
+
+
+def test_alarm_times_are_shown_in_new_york_time_whatever_the_box_offset():
+    import datetime as dt
+    now = dt.datetime(2026, 10, 14, 21, 30)
+    a = legacy.alarm_info({"name": "emsRestart", "at": "2026-10-14T15:02:00-05:00", "active": True}, now=now)
+    assert (a["words"], a["level"], a["when"], a["recent"]) == ("Controller restarted", "info", "Oct 14 4:02 PM", True)
+    old = legacy.alarm_info({"name": "safetyActive", "at": "2026-10-07T18:49:00-03:00", "active": True}, now=now)
+    assert old["recent"] is False and old["words"] == "Safety"
 
 
 def test_other_boxes_name_their_sensors_differently():

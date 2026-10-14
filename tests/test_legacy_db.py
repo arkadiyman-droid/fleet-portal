@@ -70,7 +70,7 @@ def test_a_cycle_then_the_live_page(app, session, boxes, client):
     probs = client.get("/live?show=problems").data.decode()
     assert "Dark Building" in probs and "Other Login Bldg" in probs
     box = client.get(f"/live/{boxes[0].id}").data.decode()
-    assert "Aqu1" in box and "ignitionFail" in box and "192.0.2.7:8060" in box
+    assert "Aqu1" in box and "Ignition failure" in box and "192.0.2.7:8060" in box
 
 
 def test_names_are_fetched_once_a_day(app, session, boxes):

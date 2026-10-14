@@ -907,20 +907,12 @@ def _legacy_rows(now):
                 f"not read for {fleet_health.ago((now - last_ok).total_seconds())[:-4]}" + (f": {st.error}" if st and st.error else "")
         else:
             state, why = "live", None
-        alarm = (c or {}).get("alarm")
-        recent_alarm = None
-        if alarm and alarm.get("at"):
-            try:
-                at = datetime.fromisoformat(alarm["at"])
-                if at.tzinfo is not None:                     # the box sends local time with its offset
-                    at = at.astimezone(timezone.utc).replace(tzinfo=None)
-                if now - at < timedelta(hours=24):
-                    recent_alarm = alarm
-            except ValueError:
-                pass
-        problem = state in ("dark", "login", "other") or (c and c["tone"] == "crit") or bool(recent_alarm)
+        alarm = legacy.alarm_info((c or {}).get("alarm"), now)
+        recent_alarm = alarm if alarm and alarm["recent"] else None
+        problem = (state in ("dark", "login", "other") or bool(c and c["tone"] == "crit")
+                   or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")))
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
-                     "recent_alarm": recent_alarm, "problem": problem,
+                     "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
     return rows
 
@@ -945,7 +937,8 @@ def live_page():
                "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                "problems": sum(r["problem"] for r in rows)}
-    newest = max((r for r in rows if r["recent_alarm"]), key=lambda r: r["recent_alarm"]["at"], default=None)
+    newest = max((r for r in rows if r["recent_alarm"] and r["recent_alarm"]["level"] in ("crit", "warn")
+                  and r["recent_alarm"]["utc"]), key=lambda r: r["recent_alarm"]["utc"], default=None)
     show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
     if show == "problems":
         rows = [r for r in rows if r["problem"]]

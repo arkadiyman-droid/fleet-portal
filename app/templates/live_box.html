@@ -33,7 +33,7 @@
       {{ row('Box clock', c.box_time) }}
       {{ row('Response', (r.st.response_ms ~ ' ms') if r.st and r.st.response_ms else none) }}
       {% if r.st and r.st.error %}{{ row('Last error', r.st.error) }}{% endif %}
-      {{ row('Latest box alarm', (c.alarm.name ~ ' at ' ~ c.alarm.at ~ (' (active)' if c.alarm.active else '')) if c.alarm else none) }}
+      {{ row('Latest box alarm', (r.alarm.words ~ ', ' ~ r.alarm.when ~ (' (active)' if r.alarm.active and r.alarm.level != 'info' else '')) if r.alarm else none) }}
     </div></div>
   </div>
 
