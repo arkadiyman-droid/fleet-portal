@@ -143,12 +143,58 @@ command line, which sudo wrote into the system journal; it now uses stdin.)
 
 ## Backups
 
-The privileged half also installs `fleet-portal-backup.timer`: every night at
-03:30 (after Beverly's 03:15) `deploy/backup-db.sh` writes a `pg_dump` to
-`~/fleet-portal-backups` (chmod 600) and keeps the newest 14. Run one now with
-`bash ~/fleet-portal/deploy/backup-db.sh`. These copies live on the same SD
-card as the database; an off-site copy is still to be decided. A dump plus
-`.env` is enough to poll every controller, so keep both private.
+The privileged half installs `fleet-portal-backup.timer`: every night at 03:30
+(after Beverly's 03:15) `deploy/backup-db.sh` runs as pi and
+
+1. **locally** writes a `pg_dump` to `~/fleet-portal-backups` (chmod 600) and
+   keeps the newest 14;
+2. **off-site**, once configured, tars that dump together with `.env`,
+   encrypts it to the fleet's **master age public key**
+   (`deploy/age_encrypt.py`, standard age v1, checked against the real age
+   tool) and pushes it to a private GitHub repository with a deploy key that
+   can write to that one repository only. The newest 30 stay in its file
+   list; git history keeps every night.
+
+`.env` goes with the dump because a restored database is useless without
+`FLEET_TOKEN_ENCRYPTION_KEY` (every controller's polling token is encrypted
+with it). Encrypted to the master key, a copy is readable only with the
+master private key from the vault: GitHub, the repository and a stolen Pi
+see ciphertext.
+
+Off-site settings in `.env`:
+
+```
+FLEET_OFFSITE_REPO=git@github.com:<owner>/echotherm-portal-backups.git
+FLEET_OFFSITE_RECIPIENT=age1...        # the master PUBLIC key
+# FLEET_OFFSITE_SSH_KEY=~/.ssh/fleet_portal_backup   (default)
+```
+
+The deploy key is `~/.ssh/fleet_portal_backup` on beverly-pi (its `.pub` is
+added to the repository as a deploy key **with write access**). Run one now
+with `bash ~/fleet-portal/deploy/backup-db.sh`.
+
+## Restoring the portal
+
+On a machine that has the master key (never copy it onto a Pi):
+
+```bash
+git clone git@github.com:<owner>/echotherm-portal-backups.git
+age -d -i master.key echotherm-portal-backups/backups/fleetportal_<date>.tar.age | tar -xz
+# -> fleetportal.dump, env, MANIFEST
+```
+
+On the new host: install the portal as above (unprivileged half, then the
+privileged half, which creates an empty `fleetportal` database), then copy
+the restored `env` over `.env` **keeping the new host's `DATABASE_URL`**
+line, and load the dump:
+
+```bash
+pg_restore --clean --if-exists --no-owner -d "postgresql://fleetportal@127.0.0.1/fleetportal" fleetportal.dump
+sudo systemctl restart fleet-portal
+```
+
+Every controller's token decrypts again because `FLEET_TOKEN_ENCRYPTION_KEY`
+came back with `env`. Shred the plaintext `env` and dump afterwards.
 
 ## Checks
 
