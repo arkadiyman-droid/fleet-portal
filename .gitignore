@@ -16,3 +16,6 @@ instance/
 *secret*
 *.age
 !tests/fixtures/**
+
+# deploy/obix-probe.py keeps one test box login here (pi-only)
+.obix_test.json
