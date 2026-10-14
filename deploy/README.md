@@ -106,6 +106,30 @@ The database must exist before `flask db upgrade`, and `.env` must be complete
 before the service starts. So: unprivileged half (minus `db upgrade`) → privileged
 half → `db upgrade` → `sudo systemctl restart fleet-portal`.
 
+## Tailscale for adopted modules
+
+The portal polls controllers over Tailscale, so beverly-pi itself is on the
+tailnet (`tailscale up --hostname=beverly-pi --accept-dns=false`, key expiry
+off in the admin console). To have every module adopted as a new site join
+the tailnet by itself:
+
+1. Tailscale admin console → **Access controls**: add
+   `"tagOwners": {"tag:controller": ["autogroup:admin"]}` to the policy.
+2. **Settings → OAuth clients → Generate OAuth client**: scope **Auth Keys**
+   with **Write**, tag `tag:controller`. Tailscale shows the secret once.
+3. On beverly-pi, paste the id and the secret (nothing is echoed):
+
+   ```bash
+   bash ~/fleet-portal/deploy/set-tailscale-oauth.sh
+   ```
+
+   then reload the portal: `sudo systemctl restart fleet-portal` (or, as pi,
+   `kill -HUP $(systemctl show -p MainPID --value fleet-portal)`: the new
+   workers read the new settings from `.env`).
+
+Run the helper again with an empty id to switch it off. The OAuth secret can
+mint keys that join the fleet's tailnet; it lives only in `.env` (chmod 600).
+
 ## Rotating the database password
 
 ```bash

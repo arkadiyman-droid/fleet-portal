@@ -332,7 +332,8 @@ class Enrollment(db.Model):
 
     state: waiting   -> said hello, nobody has adopted it
            assigned  -> an operator adopted it; mode "new": a Controller row
-                        exists with no token yet; mode "restore": a site
+                        exists with no token yet (with Tailscale settings,
+                        the module first joins the tailnet with ts_key); mode "restore": a site
                         bundle, encrypted to THIS module's own key in the
                         operator's browser, waits for it in bundle_ct
            restoring -> (restore) the module took the bundle and is
@@ -376,6 +377,14 @@ class Enrollment(db.Model):
     fetched_at = db.Column(db.DateTime)
     restoring_at = db.Column(db.DateTime)
     module_error = db.Column(db.String(300))                                 # the module's own last error, as it reports it
+
+    # New-site adoptions onto the fleet's tailnet (app/tailscale_api.py): the
+    # one-time key minted for this module (encrypted at rest, dropped once the
+    # module reports its Tailscale address), when it was minted or last tried,
+    # and why it could not be, in plain words, for the adopt page.
+    ts_key = db.Column(EncryptedString)
+    ts_key_made = db.Column(db.DateTime)
+    ts_error = db.Column(db.String(300))
 
     controller = db.relationship("Controller", backref=db.backref("enrollment", uselist=False))
 

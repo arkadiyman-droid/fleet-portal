@@ -78,6 +78,28 @@ page opens only after its code was typed in this session, and calls are
 rate-limited. Behind Cloudflare Access those paths need a bypass policy:
 see `deploy/README.md`. Tests: `tests/test_enroll_db.py`.
 
+**Onto the fleet's Tailscale network, by itself.** With Tailscale settings
+(`TAILSCALE_OAUTH_CLIENT_ID` / `_SECRET`, set with
+`deploy/set-tailscale-oauth.sh`), adopting a module as a new site also puts
+it on the tailnet: on the module's next check-in the portal asks Tailscale
+for a one-time key for it (`app/tailscale_api.py`: single use,
+pre-approved, tagged `tag:controller`, one hour if unused) and hands it over
+in the `/api/enroll/status` answer. The module joins with a root helper (EMS
+`tools/tailscale_join.sh`, key on stdin), reports its Tailscale address with
+`/complete`, and the portal polls it there from then on, wherever the
+building is. Tagged devices belong to the tag, not a person, so their keys
+never expire and nobody turns expiry off by hand. If the portal cannot get a
+key, the adopt page says why in one sentence and the module waits; a
+restore needs none (the site's own Tailscale identity is in its bundle).
+Without the settings, adoption polls the module's LAN address as before.
+The key is stored encrypted until the module reports its address, then
+dropped. Migration `a7c3e9d21f04`. Tests: `tests/test_enroll_tailscale_db.py`,
+`tests/test_tailscale_api.py`.
+
+Tailscale side, once: the tailnet policy lists `"tagOwners": {"tag:controller":
+["autogroup:admin"]}`, and an OAuth client (Settings → OAuth clients) has the
+**Auth Keys: Write** scope for `tag:controller` only.
+
 **Restore an existing site onto the module** (the other choice on the same
 page): pick the site being replaced (offline ones first), the site's bundle
 file and the master key file. The page decrypts the bundle **in the
@@ -101,7 +123,9 @@ code encrypted.
 
 For development without hardware: EMS `tools/simulate_blank_module.py
 --portal http://127.0.0.1:5050` runs the real enrollment code as a pretend
-module and answers this portal's polls.
+module and answers this portal's polls. With Tailscale settings it receives a
+real one-time key but never uses it (it would join the laptop to the fleet);
+it reports 127.0.0.1 as its Tailscale address so the portal keeps polling it.
 
 
 **Not built, beyond Phase 6:** utility-data ingestion (ConEd / National Grid /

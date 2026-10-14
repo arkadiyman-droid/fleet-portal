@@ -19,6 +19,14 @@ class Config:
         self.FLEET_OBIX_PORT = int(os.environ.get("FLEET_OBIX_PORT", "8061"))
         self.FLEET_POLLER_ENABLED = os.environ.get("FLEET_POLLER_ENABLED", "1") not in ("0", "false", "False")
 
+        # Tailscale for adopted modules — optional; see app/tailscale_api.py.
+        # Unset = adoption polls the module's LAN address, as before.
+        self.TAILSCALE_OAUTH_CLIENT_ID = os.environ.get("TAILSCALE_OAUTH_CLIENT_ID", "")
+        self.TAILSCALE_OAUTH_CLIENT_SECRET = os.environ.get("TAILSCALE_OAUTH_CLIENT_SECRET", "")
+        self.TAILSCALE_TAGS = os.environ.get("TAILSCALE_TAGS", "tag:controller")
+        self.TAILSCALE_KEY_TTL_SECONDS = int(os.environ.get("TAILSCALE_KEY_TTL_SECONDS", "3600"))
+        self.TAILSCALE_API_URL = os.environ.get("TAILSCALE_API_URL", "https://api.tailscale.com")
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

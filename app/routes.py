@@ -785,6 +785,7 @@ def adopt_module(eid):
         row.bundle_ct = row.bundle_site = row.bundle_made = None
         row.fetched_at = row.assigned_at = row.assigned_by = None
         row.module_error = None
+        row.ts_key = row.ts_key_made = row.ts_error = None
         db.session.commit()
         flash("Cancelled. The module is waiting again; choose what it is.", "success")
         return redirect(url_for("admin.adopt_module", eid=eid))
@@ -792,6 +793,7 @@ def adopt_module(eid):
     if request.method == "POST" and request.form.get("action") == "dismiss":
         if row.state == "waiting":
             row.state = "rejected"
+            row.ts_key = None
             db.session.commit()
             flash("Dismissed. The module stops showing up here; it keeps its code until it is reflashed.", "success")
         return redirect(url_for("admin.adopt"))

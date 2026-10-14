@@ -17,24 +17,32 @@ What stands in for a login:
   * a per-address rate limit and a cap on waiting enrollments, so the open
     door cannot be used to fill the database.
 
+With Tailscale settings (app/tailscale_api.py), /status also hands an
+assigned new module a one-time auth key for the fleet's tailnet, and
+/complete takes the Tailscale address it joined with; the poller uses that.
+
 Behind Cloudflare Access (the beverly-pi pilot), /api/enroll/* must be given
 a bypass policy, or modules can never reach it. See deploy/README.md.
 """
 import hashlib
 import hmac
+import ipaddress
 import re
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, Response, jsonify, request
 
+from app import tailscale_api
 from app.extensions import csrf, db
 from app.models import Controller, Enrollment
 
 enroll_bp = Blueprint("enroll", __name__)
 
 RATE_PER_MINUTE = 30          # per calling address; a module makes ~4/min
+TS_RETRY_SECS = 60            # a failed key request is retried at most this often
+TS_REFRESH_MARGIN = 600       # re-mint an unused key this long before it expires
 MAX_WAITING = 500             # open door, bounded
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _SECRET = re.compile(r"^[0-9a-f]{64}$")
@@ -100,6 +108,37 @@ def _clip(v, n):
     return None if v is None else str(v)[:n]
 
 
+def _ip(v):
+    """A syntactically valid IP address, or None."""
+    try:
+        return str(ipaddress.ip_address(str(v or "").strip()))
+    except ValueError:
+        return None
+
+
+def _tailscale_for(row):
+    """What an assigned new module is told about joining the tailnet:
+    {key, hostname} or {pending: true}. Mints a key when there is none, or
+    the unused one is about to expire; a failure is kept for the adopt page
+    and retried at most every TS_RETRY_SECS."""
+    ctrl = row.controller
+    now = datetime.utcnow()
+    ttl = int(tailscale_api._cfg("TAILSCALE_KEY_TTL_SECONDS", 3600))
+    made = row.ts_key_made
+    fresh = row.ts_key and made and now - made < timedelta(seconds=max(60, ttl - TS_REFRESH_MARGIN))
+    tried_lately = not row.ts_key and made and now - made < timedelta(seconds=TS_RETRY_SECS)
+    if not fresh and not tried_lately and ctrl is not None:
+        row.ts_key_made = now
+        try:
+            row.ts_key = tailscale_api.mint_auth_key(f"EchoTherm adopt {ctrl.name}")
+            row.ts_error = None
+        except tailscale_api.TailscaleError as e:
+            row.ts_key, row.ts_error = None, str(e)[:300]
+    if row.ts_key and ctrl is not None:
+        return {"key": row.ts_key, "hostname": tailscale_api.node_name(ctrl.name, "echotherm-" + row.id[:8])}
+    return {"pending": True}
+
+
 def _assignment(row):
     c = row.controller
     if not c:
@@ -158,8 +197,13 @@ def status():
     row.last_seen = datetime.utcnow()
     if "lastError" in b:                       # the module's own view, for the adopt page
         row.module_error = _clip(b.get("lastError"), 300)
+    ts = None
+    if row.state == "assigned" and row.mode != "restore" and tailscale_api.configured():
+        ts = _tailscale_for(row)
     db.session.commit()
     out = {"state": row.state, "mode": row.mode}
+    if ts is not None:
+        out["tailscale"] = ts
     if row.state in ("assigned", "restoring", "complete"):
         out["assignment"] = _assignment(row)
         out["controllerId"] = row.controller_id
@@ -229,9 +273,16 @@ def complete():
     if row.state != "assigned" or ctrl is None:
         return _err("not assigned to a controller", 409)
     ctrl.fleet_api_token = tok
-    lan = _clip(b.get("lanIp"), 50) or row.lan_ip
-    if lan and not ctrl.tailscale_ip:
-        ctrl.tailscale_ip = lan
+    ts_ip = _ip(b.get("tailscaleIp"))
+    if ts_ip:
+        # it joined the fleet's tailnet: poll it there, wherever it is
+        ctrl.tailscale_ip = ts_ip
+        ctrl.tailscale_hostname = tailscale_api.node_name(ctrl.name, "echotherm-" + row.id[:8])
+    else:
+        lan = _clip(b.get("lanIp"), 50) or row.lan_ip
+        if lan and not ctrl.tailscale_ip:
+            ctrl.tailscale_ip = lan
+    row.ts_key = None                           # single use, and used (or not needed)
     row.state = "complete"
     row.completed_at = datetime.utcnow()
     row.last_seen = row.completed_at

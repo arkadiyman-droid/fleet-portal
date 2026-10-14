@@ -36,13 +36,18 @@
         {{ step(2, m.state in ('assigned', 'complete'), m.state == 'waiting', 'Assigned to a building',
                 (m.controller.building.name ~ ' as ' ~ m.controller.name) if m.controller else 'Choose where it belongs, below') }}
         {{ step(3, complete, m.state == 'assigned', 'Module confirmed',
-                ('Handed over its polling token ' ~ m.completed_at.strftime('%H:%M:%S UTC')) if complete else
+                ('Handed over its polling token ' ~ m.completed_at.strftime('%H:%M:%S UTC')
+                 ~ ((' and joined Tailscale as ' ~ m.controller.tailscale_ip) if m.controller and m.controller.tailscale_ip and m.controller.tailscale_ip.startswith('100.') else '')) if complete else
                 ('Waiting… the module checks in every 15 seconds. This page refreshes itself.' if m.state == 'assigned' else 'After step 2')) }}
         {{ step(4, polled, complete and not polled, 'First status received',
                 ('Online. Its card is on the overview.' if polled else ('Polling it… ' ~ ((card.eval.issues[0][1]) if card and card.eval.issues else '')) if complete else 'After step 3')) }}
       {% endif %}
       {% if polled %}
         <p style="margin-top:14px"><a class="btn" href="{{ url_for('admin.fleet_controller', controller_id=m.controller_id) }}">Open its page</a></p>
+      {% endif %}
+      {% if m.ts_error and m.state == 'assigned' and m.mode != 'restore' %}
+        <div class="banner warn" style="margin-top:12px">The portal could not get a Tailscale key for this module: {{ m.ts_error }}.
+          The module waits, and carries on by itself once the portal's Tailscale settings work.</div>
       {% endif %}
       {% if m.module_error and m.state in ('assigned', 'restoring') %}
         <div class="banner warn" style="margin-top:12px">The module reports: {{ m.module_error }}</div>
