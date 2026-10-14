@@ -117,7 +117,7 @@ the tailnet by itself:
    `"tagOwners": {"tag:controller": ["autogroup:admin"]}` to the policy.
 2. **Settings → OAuth clients → Generate OAuth client**: scope **Auth Keys**
    with **Write**, tag `tag:controller`. Tailscale shows the secret once.
-3. On beverly-pi, paste the id and the secret (nothing is echoed):
+3. On beverly-pi, paste the id (shown) and the secret (hidden; the helper confirms how many characters arrived):
 
    ```bash
    bash ~/fleet-portal/deploy/set-tailscale-oauth.sh
@@ -127,7 +127,7 @@ the tailnet by itself:
    `kill -HUP $(systemctl show -p MainPID --value fleet-portal)`: the new
    workers read the new settings from `.env`).
 
-Run the helper again with an empty id to switch it off. The OAuth secret can
+Run it again to replace them, or with `--off` to remove them. The OAuth secret can
 mint keys that join the fleet's tailnet; it lives only in `.env` (chmod 600).
 
 ## Rotating the database password
