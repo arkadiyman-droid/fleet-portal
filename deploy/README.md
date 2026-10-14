@@ -45,12 +45,15 @@ FLASK_APP=wsgi.py
 EOF
 ```
 
-**Set the admin password yourself** — nobody else should know it:
+**Set the admin password yourself** — nobody else should know it. The helper
+asks twice, echoes nothing, and writes only the hash into `.env`:
 
 ```bash
-cd ~/fleet-portal && FLASK_APP=wsgi.py .venv/bin/flask hash-password
-# paste the output after ADMIN_PASSWORD_HASH= in .env
+bash ~/fleet-portal/deploy/set-admin-password.sh
 ```
+
+Run it again any time to change the password, then
+`sudo systemctl restart fleet-portal`.
 
 Then, **after** the privileged half has created the database and written
 `DATABASE_URL`:
@@ -72,6 +75,13 @@ installs and enables `fleet-portal.service`, adds the tunnel ingress entry
 
 Override the hostname with `FLEET_HOSTNAME=... sudo -E bash ...`; the default is
 `fleet.echothermcontrols.com`.
+
+**Local only first.** `sudo SKIP_TUNNEL=1 bash ~/fleet-portal/deploy/setup-beverly-pi.sh`
+does everything except the tunnel: `config.yml` and `cloudflared` are left
+alone, so the Beverly, PATHSCO and TurboGen hostnames do not blip, and the
+portal is reachable only on the Pi itself (or through an SSH tunnel:
+`ssh -N -L 8090:127.0.0.1:8090 pi@192.168.1.99`, then http://localhost:8090).
+Re-run without `SKIP_TUNNEL` when DNS and Cloudflare Access are ready.
 
 ## 3. What the script cannot do
 

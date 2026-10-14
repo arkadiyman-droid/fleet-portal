@@ -20,6 +20,12 @@ DB_NAME=fleetportal
 DB_USER=fleetportal
 PORT=8090
 HOSTNAME_FQDN="${FLEET_HOSTNAME:-fleet.echothermcontrols.com}"
+# SKIP_TUNNEL=1: install and start the portal on 127.0.0.1 only, leave the
+# Cloudflare tunnel config and the cloudflared service untouched. Publish
+# later, once Cloudflare Access (and its /api/enroll/* bypass) is ready:
+# re-run without it. Restarting cloudflared also blips every other hostname
+# on this tunnel, so it is worth doing once, deliberately.
+SKIP_TUNNEL="${SKIP_TUNNEL:-}"
 CF_CONFIG=/etc/cloudflared/config.yml
 
 if [[ $EUID -ne 0 ]]; then
@@ -71,7 +77,9 @@ systemctl enable fleet-portal.service >/dev/null
 echo "    installed and enabled fleet-portal.service"
 
 echo "==> 3/4  Cloudflare tunnel ingress"
-if grep -q "$HOSTNAME_FQDN" "$CF_CONFIG"; then
+if [[ -n "$SKIP_TUNNEL" ]]; then
+  echo "    SKIP_TUNNEL set: tunnel config and cloudflared left untouched (local only)"
+elif grep -q "$HOSTNAME_FQDN" "$CF_CONFIG"; then
   echo "    $HOSTNAME_FQDN already present in $CF_CONFIG"
 else
   BACKUP="$CF_CONFIG.bak.$(date +%Y%m%d%H%M%S)"
@@ -99,13 +107,14 @@ fi
 
 echo "==> 4/4  start"
 systemctl restart fleet-portal.service
-systemctl restart cloudflared.service
+[[ -n "$SKIP_TUNNEL" ]] || systemctl restart cloudflared.service
 sleep 3
 systemctl --no-pager --lines=0 status fleet-portal.service | head -4 || true
 
 cat <<EOF
 
-Done on the host. Two things remain and neither can be scripted here:
+Done on the host.${SKIP_TUNNEL:+ LOCAL ONLY (SKIP_TUNNEL): nothing is published yet; to publish, re-run without SKIP_TUNNEL.}
+Two things remain and neither can be scripted here:
 
   1. DNS — point the hostname at this tunnel, as the pi user:
          cloudflared tunnel route dns 97f95f60-3dee-4861-aaee-70d7cb5f8afb $HOSTNAME_FQDN
