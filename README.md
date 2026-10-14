@@ -128,6 +128,34 @@ real one-time key but never uses it (it would join the laptop to the fleet);
 it reports 127.0.0.1 as its Tailscale address so the portal keeps polling it.
 
 
+### Alerts
+
+When a controller turns **red** on the Fleet Overview (the same rules:
+offline, an active heating alarm, power failing, overheating, disk nearly
+full, a backup failing) and **stays red for 5 minutes**, the portal sends an
+**ALERT**; a **reminder** every 24 hours while it stays red; and
+**RECOVERED**, with how long it lasted, when it is no longer red. Yellow
+never pages anyone, and a single missed poll or a reboot never does either.
+`app/alerts.py` decides (right after each poll cycle, inside the poller's
+advisory lock, so nothing is sent twice); `app/notify.py` sends.
+
+Channels, both optional: **phone push through ntfy** (the free ntfy app,
+subscribed to the portal's private topic; no account) and **email** through
+any SMTP account. Every decision is also kept on the **Alerts** page (menu,
+with a red count while anything is in alarm), sent or not, with what each
+channel answered, so nothing is lost before a channel is set up. **Send a
+test alert** is on that page (administrator).
+
+A technician on site mutes a controller from its own page for 4 hours, 24
+hours or 3 days; an alert that recovers during a mute closes quietly.
+
+Settings: `ALERT_AFTER_SECONDS` (300), `ALERT_REPEAT_HOURS` (24, 0 = never),
+`ALERT_NTFY_TOPIC`, `ALERT_NTFY_SERVER` (https://ntfy.sh), `ALERT_NTFY_TOKEN`,
+`ALERT_EMAIL_TO`, `SMTP_HOST`/`PORT`/`USER`/`PASSWORD`/`FROM`,
+`PORTAL_PUBLIC_URL` (the link in each message), `ALERTS_ENABLED`.
+Models `AlertState`, `AlertEvent` (migration `c4e8b2f9a1d7`). Tests:
+`tests/test_alerts.py` (rules and channels), `tests/test_alerts_db.py`.
+
 **Not built, beyond Phase 6:** utility-data ingestion (ConEd / National Grid /
 DEP Green Button). See `UTILITY_DATA_INTEGRATION.md` in the EMS repo for the
 research, endpoints and constraints — the conclusion there is that this pull

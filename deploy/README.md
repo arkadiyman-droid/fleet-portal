@@ -138,6 +138,22 @@ bash ~/fleet-portal/deploy/check-tailscale.sh
  The OAuth secret can
 mint keys that join the fleet's tailnet; it lives only in `.env` (chmod 600).
 
+## Alerts
+
+Alerts are always decided and listed on the portal's Alerts page; they are
+sent only where a channel is set in `.env` (reload the portal afterwards:
+`kill -HUP` the gunicorn master as pi, or restart the service).
+
+- **Phone (ntfy):** `ALERT_NTFY_TOPIC=<a long random name>` (and
+  `PORTAL_PUBLIC_URL=https://fleet.echothermcontrols.com` for the link). On
+  each phone: install the free ntfy app, tap +, subscribe to that topic. The
+  topic name is the only secret; the Alerts page shows it to the
+  administrator.
+- **Email:** `SMTP_HOST`, `SMTP_PORT` (587 STARTTLS or 465 TLS), `SMTP_USER`,
+  `SMTP_PASSWORD`, `SMTP_FROM`, `ALERT_EMAIL_TO` (comma list).
+
+Check with **Send a test alert** on the Alerts page.
+
 ## Rotating the database password
 
 ```bash

@@ -73,6 +73,14 @@ class FleetPoller:
                         poll_controller(app, ctrl)
                     except Exception as e:
                         log.warning("Poll failed for controller %s (%s): %s", ctrl.id, ctrl.name, e)
+                # Alerts right after the cycle, still under the lock, so one
+                # process decides and nothing is sent twice (app/alerts.py).
+                try:
+                    from app import alerts
+                    alerts.check_all(app)
+                except Exception as e:
+                    db.session.rollback()
+                    log.warning("Alert check failed: %s", e)
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ADVISORY_LOCK_KEY})
                 conn.close()

@@ -30,6 +30,29 @@
   </div>
   {% endif %}
 
+  {% set a = c.alert_state %}
+  <div class="section" style="margin-bottom:14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+    <h2 style="margin:0">Alerts</h2>
+    <span class="card-sub">
+      {% if a and a.muted_until and a.muted_until > now_utc %}Muted until {{ a.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if a.muted_by %} by {{ a.muted_by }}{% endif %}.
+      {% elif a and a.alerting %}<span style="color:var(--crit);font-weight:600">In alarm</span> since {{ a.opened_at.strftime('%Y-%m-%d %H:%M UTC') if a.opened_at else '?' }}: an alert went out.
+      {% elif a and a.first_bad_at %}Red since {{ a.first_bad_at.strftime('%H:%M UTC') }}: an alert goes out if it stays red.
+      {% else %}On: an alert goes out if this controller stays red.{% endif %}
+      <a href="{{ url_for('admin.alerts_page') }}">All alerts</a></span>
+    <form method="post" action="{{ url_for('admin.fleet_mute', controller_id=c.id) }}" style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.path }}">
+      {% if a and a.muted_until and a.muted_until > now_utc %}
+        <button class="btn plain" name="hours" value="0" type="submit">Turn alerts back on</button>
+      {% else %}
+        <span class="card-sub" style="align-self:center">Service visit? Mute for</span>
+        <button class="btn plain" name="hours" value="4" type="submit">4 h</button>
+        <button class="btn plain" name="hours" value="24" type="submit">24 h</button>
+        <button class="btn plain" name="hours" value="72" type="submit">3 days</button>
+      {% endif %}
+    </form>
+  </div>
+
   <div class="sections">
     {% if e.heating %}{% set h = e.heating %}
     <div class="section"><h2>Heating</h2><div class="kv">

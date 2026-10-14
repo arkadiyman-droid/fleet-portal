@@ -395,3 +395,34 @@ class Enrollment(db.Model):
 
     def __repr__(self):
         return f"<Enrollment {self.id} {self.state} {self.hostname}>"
+
+
+class AlertState(db.Model):
+    """Where each controller stands for alerting (app/alerts.py): one row per
+    controller, kept across restarts so an open alert is not sent twice."""
+    __tablename__ = "alert_states"
+
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="CASCADE"), primary_key=True)
+    alerting = db.Column(db.Boolean, nullable=False, default=False)   # an ALERT went out and has not recovered
+    first_bad_at = db.Column(db.DateTime)                              # red since (for the ALERT_AFTER_SECONDS wait)
+    opened_at = db.Column(db.DateTime)
+    notified_at = db.Column(db.DateTime)                               # last ALERT or REMINDER
+    issue = db.Column(db.String(300))                                  # the first red issue, for the Alerts page
+    muted_until = db.Column(db.DateTime)
+    muted_by = db.Column(db.String(120))
+
+    controller = db.relationship("Controller", backref=db.backref("alert_state", uselist=False))
+
+
+class AlertEvent(db.Model):
+    """Every alert decision, sent or not: the Alerts page's history."""
+    __tablename__ = "alert_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="SET NULL"), index=True)
+    controller_name = db.Column(db.String(200))                        # kept if the controller is deleted
+    kind = db.Column(db.String(12), nullable=False)                    # open | reminder | recovered | test | mute
+    title = db.Column(db.String(200))
+    text = db.Column(db.String(1000))
+    delivered = db.Column(db.String(300))                              # what each channel answered
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)

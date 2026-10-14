@@ -27,6 +27,22 @@ class Config:
         self.TAILSCALE_KEY_TTL_SECONDS = int(os.environ.get("TAILSCALE_KEY_TTL_SECONDS", "3600"))
         self.TAILSCALE_API_URL = os.environ.get("TAILSCALE_API_URL", "https://api.tailscale.com")
 
+        # Fleet alerts — see app/alerts.py and app/notify.py. Alerts are always
+        # decided and recorded; they are only SENT where a channel is set.
+        self.ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "1") not in ("0", "false", "False")
+        self.ALERT_AFTER_SECONDS = int(os.environ.get("ALERT_AFTER_SECONDS", "300"))
+        self.ALERT_REPEAT_HOURS = float(os.environ.get("ALERT_REPEAT_HOURS", "24"))
+        self.ALERT_NTFY_SERVER = os.environ.get("ALERT_NTFY_SERVER", "https://ntfy.sh")
+        self.ALERT_NTFY_TOPIC = os.environ.get("ALERT_NTFY_TOPIC", "")
+        self.ALERT_NTFY_TOKEN = os.environ.get("ALERT_NTFY_TOKEN", "")
+        self.ALERT_EMAIL_TO = os.environ.get("ALERT_EMAIL_TO", "")
+        self.SMTP_HOST = os.environ.get("SMTP_HOST", "")
+        self.SMTP_PORT = os.environ.get("SMTP_PORT", "587")
+        self.SMTP_USER = os.environ.get("SMTP_USER", "")
+        self.SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+        self.SMTP_FROM = os.environ.get("SMTP_FROM", "")
+        self.PORTAL_PUBLIC_URL = os.environ.get("PORTAL_PUBLIC_URL", "")
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

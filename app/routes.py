@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
@@ -9,7 +9,8 @@ from app.extensions import csrf, db
 from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
-from app.models import Building, Client, Contract, Controller, Enrollment, Invoice, Permission, Property, User
+from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
+                        Permission, Property, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -683,7 +684,91 @@ def fleet_controller(controller_id):
     ctrl = Controller.query.get_or_404(controller_id)
     require_role("viewer", ctrl)
     return render_template("fleet_controller.html", title=ctrl.name, card=_card(ctrl), status=ctrl.status,
-                           raw=(ctrl.status.raw_json if ctrl.status else None) or {})
+                           raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow())
+
+
+# ─── Alerts (app/alerts.py decides, app/notify.py sends) ────────────────
+
+MUTE_CHOICES = {"4": 4, "24": 24, "72": 72}
+
+
+def _visible_controller_ids():
+    if is_superuser():
+        return None                                   # all of them
+    return [c.id for c in visible_controller_query(current_user().id).all()]
+
+
+@admin_bp.app_context_processor
+def _alert_badge():
+    """The red count next to "Alerts" in the menu: open alerts this person can see."""
+    try:
+        if not getattr(g, "is_superuser", False) and not getattr(g, "user", None):
+            return {"open_alerts": 0}
+        q = AlertState.query.filter(AlertState.alerting.is_(True))
+        ids = _visible_controller_ids()
+        if ids is not None:
+            q = q.filter(AlertState.controller_id.in_(ids or [-1]))
+        return {"open_alerts": q.count()}
+    except Exception:
+        return {"open_alerts": 0}
+
+
+@admin_bp.route("/alerts")
+def alerts_page():
+    from app import notify
+    ids = _visible_controller_ids()
+    states = AlertState.query.join(Controller).filter(Controller.is_active.is_(True))
+    events = AlertEvent.query
+    if ids is not None:
+        states = states.filter(AlertState.controller_id.in_(ids or [-1]))
+        events = events.filter(AlertEvent.controller_id.in_(ids or [-1]))
+    states = states.all()
+    now = datetime.utcnow()
+    open_ = sorted([s for s in states if s.alerting], key=lambda s: s.opened_at or now)
+    waiting = [s for s in states if not s.alerting and s.first_bad_at]
+    muted = [s for s in states if s.muted_until and s.muted_until > now]
+    cfg = current_app.config
+    return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted,
+                           events=events.order_by(AlertEvent.created_at.desc()).limit(100).all(),
+                           channels=notify.channels(), now=now,
+                           after_min=round(cfg.get("ALERT_AFTER_SECONDS", 300) / 60),
+                           repeat_h=cfg.get("ALERT_REPEAT_HOURS", 24),
+                           ntfy_server=cfg.get("ALERT_NTFY_SERVER", "https://ntfy.sh"),
+                           ntfy_topic=cfg.get("ALERT_NTFY_TOPIC", "") if is_superuser() else "",
+                           email_to=cfg.get("ALERT_EMAIL_TO", "") if is_superuser() else "")
+
+
+@admin_bp.route("/alerts/test", methods=["POST"])
+def alerts_test():
+    if not is_superuser():
+        abort(403)
+    from app import alerts
+    result = alerts.send_test("the administrator")
+    flash(f"Test alert: {result}", "success" if " ok" in result and "failed" not in result else "error")
+    return redirect(url_for("admin.alerts_page"))
+
+
+@admin_bp.route("/fleet/<int:controller_id>/mute", methods=["POST"])
+def fleet_mute(controller_id):
+    ctrl = Controller.query.get_or_404(controller_id)
+    require_role("operator", ctrl)
+    row = db.session.get(AlertState, ctrl.id) or AlertState(controller_id=ctrl.id, alerting=False)
+    hours = MUTE_CHOICES.get(request.form.get("hours", ""))
+    u = current_user()
+    who = "the administrator" if is_superuser() else (u.login if u else "?")
+    if hours:
+        row.muted_until = datetime.utcnow() + timedelta(hours=hours)
+        row.muted_by = who
+        msg = f"Alerts for {ctrl.name!r} muted for {hours} hours."
+    else:
+        row.muted_until, row.muted_by = None, None
+        msg = f"Alerts for {ctrl.name!r} are on again."
+    db.session.add(row)
+    db.session.add(AlertEvent(controller_id=ctrl.id, controller_name=ctrl.name[:200], kind="mute",
+                              title=msg[:200], text=f"by {who}", delivered="not sent", created_at=datetime.utcnow()))
+    db.session.commit()
+    flash(msg, "success")
+    return redirect(_local_next(url_for("admin.fleet_controller", controller_id=ctrl.id)))
 
 
 # ─── Adopt a blank module (EMS fleet/enroll.py ↔ app/enroll_api.py) ─────
