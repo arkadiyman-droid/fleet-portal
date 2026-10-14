@@ -11,7 +11,7 @@ auth_bp = Blueprint("auth", __name__)
 # The enroll.* endpoints are where a blank controller calls home; a machine
 # calls them, so no login. Their own secret check stands in (enroll_api.py).
 _EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static", "admin.stripe_webhook",
-                     "enroll.hello", "enroll.status", "enroll.complete"}
+                     "enroll.hello", "enroll.status", "enroll.complete", "enroll.bundle"}
 
 
 def _safe_next(target: str) -> str:

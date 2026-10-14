@@ -78,11 +78,26 @@ page opens only after its code was typed in this session, and calls are
 rate-limited. Behind Cloudflare Access those paths need a bypass policy:
 see `deploy/README.md`. Tests: `tests/test_enroll_db.py`.
 
-Not yet: **restore an existing site onto the module** instead of adding a
-new controller. Each module already sends its own public key (`age`) when it
-calls home, so a site bundle can be re-encrypted to that module alone; what
-remains open is where the master key is used to decrypt it (the operator's
-browser, so the server never holds it, is the recommendation).
+**Restore an existing site onto the module** (the other choice on the same
+page): pick the site being replaced (offline ones first), the site's bundle
+file and the master key file. The page decrypts the bundle **in the
+operator's browser**, shows the same checklist as EMS `restore_site.bat`,
+re-encrypts it to the module's own age key and posts only that ciphertext
+(`/adopt/<id>/restore`). The module takes it on its next check-in
+(`/api/enroll/bundle`, after which the portal deletes its copy), stages it
+with a root helper, reboots, and comes back as the site with that site's own
+token, so the first good poll completes it. Until the module acts, **Cancel
+and start over** undoes the choice. The master key never reaches the server.
+
+The browser's age implementation is `app/static/js/agecrypt.js` (WebCrypto
+for X25519, HKDF and HMAC; ChaCha20-Poly1305 written from RFC 8439, so no
+third-party script runs next to the master key) and the bundle inspector is
+`app/static/js/sitebundle.js`. `tests/js/agecrypt.test.mjs` checks the RFC
+vectors, opens files made by the real age tool, refuses tampering, and reads
+a bundle made by real GNU tar; `tests/test_agecrypt_js.py` runs it under
+pytest (needs Node) and compares the AEAD with Python's on random inputs.
+Checked once by hand: the real age 1.2.1 on a controller opened what this
+code encrypted.
 
 For development without hardware: EMS `tools/simulate_blank_module.py
 --portal http://127.0.0.1:5050` runs the real enrollment code as a pretend

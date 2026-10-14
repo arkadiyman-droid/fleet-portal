@@ -768,6 +768,27 @@ def adopt_module(eid):
         flash(f"Adopted into {building.name}. Waiting for the module to confirm; it checks in every 15 seconds.", "success")
         return redirect(url_for("admin.adopt_module", eid=eid))
 
+    if request.method == "POST" and request.form.get("action") == "cancel":
+        # Wrong building, wrong site, wrong bundle: start over, as long as
+        # the module has not yet acted on it (a restore it has taken is
+        # past undoing from here).
+        if row.state != "assigned":
+            flash("Too late to cancel: the module has already acted on it.", "error")
+            return redirect(url_for("admin.adopt_module", eid=eid))
+        ctrl = row.controller
+        if ctrl is not None:
+            require_role("operator", ctrl)
+        if row.mode == "new" and ctrl is not None and not ctrl.fleet_api_token and ctrl.status is None:
+            db.session.delete(ctrl)                 # the empty record this adoption made
+        row.controller_id = None
+        row.mode, row.state = "new", "waiting"
+        row.bundle_ct = row.bundle_site = row.bundle_made = None
+        row.fetched_at = row.assigned_at = row.assigned_by = None
+        row.module_error = None
+        db.session.commit()
+        flash("Cancelled. The module is waiting again; choose what it is.", "success")
+        return redirect(url_for("admin.adopt_module", eid=eid))
+
     if request.method == "POST" and request.form.get("action") == "dismiss":
         if row.state == "waiting":
             row.state = "rejected"
@@ -784,7 +805,66 @@ def adopt_module(eid):
             db.session.rollback()
     return render_template("adopt_module.html", title="Adopt a module", m=row,
                            buildings=_adopt_buildings() if row.state == "waiting" else [],
+                           restore_targets=_restore_targets() if row.state == "waiting" else [],
                            card=_card(row.controller) if row.controller else None)
+
+
+def _restore_targets():
+    """Sites this operator may restore onto a new module: existing controllers
+    in buildings they can operate, worst first, so the dead one is on top."""
+    q = Controller.query.filter_by(is_active=True)
+    if not is_superuser():
+        q = q.filter(Controller.building_id.in_(creatable_controller_building_query(current_user().id)))
+    cards = [_card(c) for c in q.all()]
+    cards.sort(key=lambda k: (_LEVEL_ORDER.get(k["eval"]["level"], 9), k["ctrl"].name))
+    return cards
+
+
+MAX_BUNDLE_BYTES = 2 * 1024 * 1024
+AGE_INTRO = b"age-encryption.org/v1\n"
+
+
+@admin_bp.route("/adopt/<eid>/restore", methods=["POST"])
+def adopt_restore(eid):
+    """The operator's browser posts the site bundle it re-encrypted to this
+    module's own key (app/static/js/agecrypt.js). The portal never sees the
+    master key or the plaintext: it checks the shape of what it got, keeps
+    it for the module, and points the module at the existing Controller."""
+    if not _can_adopt():
+        abort(403)
+    row = Enrollment.query.get_or_404(eid)
+    if not _opened(eid):
+        return {"error": "type the module's code first"}, 403
+    if row.state != "waiting":
+        return {"error": "this module is already being adopted"}, 409
+    if not row.age_recipient:
+        return {"error": "this module sent no public key, so nothing can be encrypted to it"}, 409
+    ctrl = Controller.query.get_or_404(_parse_int(request.form.get("controller_id")) or 0)
+    require_role("operator", ctrl)
+    f = request.files.get("bundle")
+    data = f.read(MAX_BUNDLE_BYTES + 1) if f else b""
+    if not data.startswith(AGE_INTRO) or len(data) > MAX_BUNDLE_BYTES:
+        return {"error": "that is not an encrypted bundle (or it is over 2 MB)"}, 400
+    header = data[:data.find(b"\n---")] if b"\n---" in data else b""
+    if header.count(b"\n-> ") != 1 or b"\n-> X25519 " not in header:
+        return {"error": "the bundle must be encrypted to exactly one key: this module's"}, 400
+
+    # One module per site: an older adoption pointing at this controller lets go.
+    for old in Enrollment.query.filter(Enrollment.controller_id == ctrl.id, Enrollment.id != row.id).all():
+        old.controller_id = None
+    row.mode = "restore"
+    row.controller_id = ctrl.id
+    row.bundle_ct = data
+    row.bundle_site = (request.form.get("site") or "")[:100] or None
+    row.bundle_made = (request.form.get("made") or "")[:40] or None
+    row.state = "assigned"
+    row.assigned_at = datetime.utcnow()
+    u = current_user()
+    row.assigned_by = "superuser" if is_superuser() else (u.login if u else None)
+    db.session.commit()
+    flash(f"Restoring {ctrl.name!r} onto this module. It collects the bundle on its next check-in (about 15 s), "
+          "reboots into the site and comes back as it.", "success")
+    return {"ok": True, "redirect": url_for("admin.adopt_module", eid=eid)}
 
 
 # ─── Users & Permissions (Phase 3 — Superuser-only) ──────────────────────

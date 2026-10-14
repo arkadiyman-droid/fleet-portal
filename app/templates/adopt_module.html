@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Adopt {{ m.hostname or 'module' }} — Fleet Portal{% endblock %}
 {% block main_class %}wide{% endblock %}
-{% block head %}{% if m.state == 'assigned' %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block head %}{% if m.state in ('assigned', 'restoring') %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 
 {% macro step(n, done, active, title, text) -%}
   <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">
@@ -19,26 +19,54 @@
   <div class="sections" style="grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr); align-items: start">
     <div class="section">
       <h2>Progress</h2>
-      {% set assigned = m.state in ('assigned', 'complete') %}
       {% set complete = m.state == 'complete' %}
       {% set polled = complete and card and card.eval.online %}
       {{ step(1, true, false, 'Found by its code', 'Called home ' ~ m.first_seen.strftime('%Y-%m-%d %H:%M UTC') ~ ' from ' ~ (m.lan_ip or '?')) }}
-      {{ step(2, assigned, m.state == 'waiting', 'Assigned to a building',
-              (m.controller.building.name ~ ' as ' ~ m.controller.name) if m.controller else 'Choose where it belongs, below') }}
-      {{ step(3, complete, m.state == 'assigned', 'Module confirmed',
-              ('Handed over its polling token ' ~ m.completed_at.strftime('%H:%M:%S UTC')) if complete else
-              ('Waiting… the module checks in every 15 seconds. This page refreshes itself.' if m.state == 'assigned' else 'After step 2')) }}
-      {{ step(4, polled, complete and not polled, 'First status received',
-              ('Online. Its card is on the overview.' if polled else ('Polling it… ' ~ ((card.eval.issues[0][1]) if card and card.eval.issues else '')) if complete else 'After step 3')) }}
+      {% if m.mode == 'restore' and m.state != 'waiting' %}
+        {{ step(2, true, false, 'Site bundle sent, encrypted to this module',
+                (m.bundle_site or 'a site') ~ (', bundle from ' ~ m.bundle_made[:16]|replace('T', ' ') if m.bundle_made else '') ~ ' → ' ~ (m.controller.name if m.controller else '?')) }}
+        {{ step(3, m.state in ('restoring', 'complete'), m.state == 'assigned', 'Module took it and is rebooting into the site',
+                ('Took it ' ~ m.fetched_at.strftime('%H:%M:%S UTC') ~ '; the restore runs at boot, before anything else starts.') if m.state in ('restoring', 'complete') else
+                (('Fetched it ' ~ m.fetched_at.strftime('%H:%M:%S UTC') ~ ' but has not staged it yet; it retries every 15 seconds.') if m.fetched_at else
+                 'Waiting… the module checks in every 15 seconds. This page refreshes itself.')) }}
+        {{ step(4, polled, m.state == 'restoring', 'Back as ' ~ (m.controller.name if m.controller else 'the site'),
+                'Online as the site. Its card is on the overview.' if polled else
+                ('Usually 1 to 3 minutes: reboot, restore, then the site\'s own Tailscale and token come back.' if m.state == 'restoring' else 'After step 3')) }}
+      {% else %}
+        {{ step(2, m.state in ('assigned', 'complete'), m.state == 'waiting', 'Assigned to a building',
+                (m.controller.building.name ~ ' as ' ~ m.controller.name) if m.controller else 'Choose where it belongs, below') }}
+        {{ step(3, complete, m.state == 'assigned', 'Module confirmed',
+                ('Handed over its polling token ' ~ m.completed_at.strftime('%H:%M:%S UTC')) if complete else
+                ('Waiting… the module checks in every 15 seconds. This page refreshes itself.' if m.state == 'assigned' else 'After step 2')) }}
+        {{ step(4, polled, complete and not polled, 'First status received',
+                ('Online. Its card is on the overview.' if polled else ('Polling it… ' ~ ((card.eval.issues[0][1]) if card and card.eval.issues else '')) if complete else 'After step 3')) }}
+      {% endif %}
       {% if polled %}
         <p style="margin-top:14px"><a class="btn" href="{{ url_for('admin.fleet_controller', controller_id=m.controller_id) }}">Open its page</a></p>
+      {% endif %}
+      {% if m.module_error and m.state in ('assigned', 'restoring') %}
+        <div class="banner warn" style="margin-top:12px">The module reports: {{ m.module_error }}</div>
+      {% endif %}
+      {% if m.state == 'assigned' %}
+        <form method="post" style="margin-top:12px">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="cancel">
+          <button class="btn plain" type="submit">Cancel and start over</button>
+          <span class="card-sub">until the module acts on it</span>
+        </form>
       {% endif %}
       {% if m.state == 'rejected' %}<div class="banner warn" style="margin-top:12px">Dismissed.</div>{% endif %}
     </div>
 
     <div class="section">
       {% if m.state == 'waiting' %}
-        <h2>Where does it go?</h2>
+        <h2>What is this module?</h2>
+        <div class="filters" style="margin-bottom:12px">
+          <a class="chip-link sel" href="#" data-mode="new">A new controller</a>
+          <a class="chip-link" href="#" data-mode="restore">Restore an existing site onto it</a>
+        </div>
+
+        <div data-panel="new">
         {% if buildings %}
         <form method="post">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -50,17 +78,43 @@
           </select>
           <label>Controller name</label>
           <input name="name" value="{{ m.hostname or '' }}" maxlength="200" required>
-          <label>How</label>
-          <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
-            <label style="font-weight:400"><input type="radio" name="mode" value="new" checked style="width:auto;margin:0 6px 0 0">A new controller for this building</label>
-            <label style="font-weight:400;color:var(--muted)"><input type="radio" name="mode" value="restore" disabled style="width:auto;margin:0 6px 0 0">Restore an existing site onto it
-              <span class="card-sub">— next: needs the master-key decision</span></label>
-          </div>
-          <button class="btn" type="submit">Adopt</button>
+          <button class="btn" type="submit">Adopt as a new controller</button>
         </form>
         {% else %}
           <div class="empty">You have no building you may add a controller to. An operator role on a building, property or client is needed.</div>
         {% endif %}
+        </div>
+
+        <div data-panel="restore" hidden>
+        {% if not m.age_recipient %}
+          <div class="banner warn">This module sent no public key, so a bundle cannot be encrypted to it. It needs the golden image's software.</div>
+        {% elif not restore_targets %}
+          <div class="empty">You have no site you may restore. An operator role on its building is needed.</div>
+        {% else %}
+          <p class="card-sub" style="margin-top:0">The bundle is opened <b>in this browser</b> with the master key and
+            re-encrypted to this module's own key. The master key and the opened bundle never leave this computer;
+            the portal only ever holds what only this module can open.</p>
+          <label>Which site is this module replacing?</label>
+          <select id="rsTarget">
+            {% for k in restore_targets %}
+              <option value="{{ k.ctrl.id }}">{{ k.building.name if k.building else '' }} · {{ k.ctrl.name }} —
+                {{ 'offline' if k.eval.online == false else ('online' if k.eval.online else 'no status') }}</option>
+            {% endfor %}
+          </select>
+          <label>The site's bundle (<code>.tar.age</code>, from <code>site-bundles\&lt;site&gt;\</code>)</label>
+          <input type="file" id="rsBundle" accept=".age">
+          <label>Master key (<code>site-bundle-master.key</code>, exported from the vault)</label>
+          <input type="file" id="rsKey" accept=".key,.txt">
+          <button class="btn" type="button" id="rsOpen">Open the bundle</button>
+          <div id="rsMsg" class="card-sub" style="margin-top:10px"></div>
+          <div id="rsInfo" hidden style="margin-top:10px">
+            <div class="kv" id="rsKv"></div>
+            <ul class="issues" id="rsChecks" style="margin:8px 0 12px"></ul>
+            <button class="btn" type="button" id="rsSend">Send to this module and restore</button>
+          </div>
+        {% endif %}
+        </div>
+
         <form method="post" style="margin-top:14px">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="action" value="dismiss">
@@ -81,4 +135,89 @@
       </div>
     </div>
   </div>
+
+{% if m.state == 'waiting' %}
+<script type="module">
+  import { decrypt, encrypt, loadIdentities } from "{{ url_for('static', filename='js/agecrypt.js') }}";
+  import { inspect } from "{{ url_for('static', filename='js/sitebundle.js') }}";
+
+  // mode switch
+  for (const a of document.querySelectorAll("[data-mode]")) {
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      for (const b of document.querySelectorAll("[data-mode]")) b.classList.toggle("sel", b === a);
+      for (const p of document.querySelectorAll("[data-panel]")) p.hidden = p.dataset.panel !== a.dataset.mode;
+    });
+  }
+
+  const RECIPIENT = {{ (m.age_recipient or '')|tojson }};
+  const $ = (id) => document.getElementById(id);
+  const msg = (text, bad) => { const el = $("rsMsg"); if (el) { el.textContent = text; el.style.color = bad ? "var(--crit)" : ""; } };
+  let opened = null;   // {plain, manifest} — kept only until sent, then wiped
+
+  function wipe() {
+    if (opened && opened.plain) opened.plain.fill(0);
+    opened = null;
+    if ($("rsKey")) $("rsKey").value = "";        // the key file is never kept
+  }
+
+  $("rsOpen")?.addEventListener("click", async () => {
+    // drop a previously opened bundle, but NOT the key just chosen
+    if (opened && opened.plain) opened.plain.fill(0);
+    opened = null;
+    $("rsInfo").hidden = true;
+    const bf = $("rsBundle").files[0], kf = $("rsKey").files[0];
+    if (!bf || !kf) return msg("Choose the bundle file and the master key file.", true);
+    msg("Opening…");
+    try {
+      const ids = await loadIdentities(await kf.text());
+      const plain = await decrypt(new Uint8Array(await bf.arrayBuffer()), ids);
+      const info = await inspect(plain);
+      opened = { plain, manifest: info.manifest };
+      $("rsKey").value = "";                         // done with the key
+      const kv = $("rsKv"); kv.innerHTML = "";
+      for (const [k, v] of [["Site", info.manifest.hostname], ["Bundle made", (info.manifest.created || "").replace("T", " ").slice(0, 16) + " UTC"],
+                            ["Software then", (info.manifest.ems_sha || "").slice(0, 7)], ["Hardware", info.manifest.model]]) {
+        const a = document.createElement("div"); a.className = "k"; a.textContent = k;
+        const b = document.createElement("div"); b.className = "v"; b.textContent = v || "—";
+        kv.append(a, b);
+      }
+      const ul = $("rsChecks"); ul.innerHTML = "";
+      for (const [label, ok] of info.checks) {
+        const li = document.createElement("li"); li.className = ok ? "" : "warn";
+        li.textContent = (ok ? "yes  " : "NO   ") + label; ul.append(li);
+      }
+      $("rsInfo").hidden = false;
+      msg("Opened in this browser. Nothing has been sent yet.");
+    } catch (e) {
+      wipe();
+      msg(e.message || String(e), true);
+    }
+  });
+
+  $("rsSend")?.addEventListener("click", async () => {
+    if (!opened) return msg("Open the bundle first.", true);
+    $("rsSend").disabled = true;
+    msg("Encrypting to this module's own key…");
+    try {
+      const ct = await encrypt(opened.plain, RECIPIENT);
+      const fd = new FormData();
+      fd.append("controller_id", $("rsTarget").value);
+      fd.append("site", opened.manifest.hostname || "");
+      fd.append("made", opened.manifest.created || "");
+      fd.append("bundle", new Blob([ct], { type: "application/octet-stream" }), "bundle.age");
+      wipe();                                        // plaintext gone before anything leaves
+      const r = await fetch({{ url_for('admin.adopt_restore', eid=m.id)|tojson }}, {
+        method: "POST", body: fd, headers: { "X-CSRFToken": {{ csrf_token()|tojson }} } });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || ("the portal said " + r.status));
+      location.href = j.redirect;
+    } catch (e) {
+      $("rsSend").disabled = false;
+      $("rsInfo").hidden = true;
+      msg((e.message || String(e)) + " The opened bundle was wiped from this page: open it again to retry.", true);
+    }
+  });
+</script>
+{% endif %}
 {% endblock %}

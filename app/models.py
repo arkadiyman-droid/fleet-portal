@@ -330,11 +330,21 @@ class Enrollment(db.Model):
     display. The module proves it is the same box on every call with a
     secret; only hashes of the secret and the code are kept here.
 
-    state: waiting  -> said hello, nobody has adopted it
-           assigned -> an operator adopted it; a Controller row exists with no
-                       token yet; the module has not confirmed
-           complete -> the module handed over its polling token
-           rejected -> an operator dismissed it
+    state: waiting   -> said hello, nobody has adopted it
+           assigned  -> an operator adopted it; mode "new": a Controller row
+                        exists with no token yet; mode "restore": a site
+                        bundle, encrypted to THIS module's own key in the
+                        operator's browser, waits for it in bundle_ct
+           restoring -> (restore) the module took the bundle and is
+                        rebooting into that site
+           complete  -> the module handed over its polling token (new), or
+                        the restored site answered its first poll (restore)
+           rejected  -> an operator dismissed it
+
+    The bundle is only ever ciphertext here: the operator's browser
+    decrypted it with the master key and re-encrypted it to age_recipient
+    (app/static/js/agecrypt.js), so only the module's own private key opens
+    it. It is deleted the moment the module takes it.
     """
     __tablename__ = "enrollments"
 
@@ -359,10 +369,19 @@ class Enrollment(db.Model):
     assigned_at = db.Column(db.DateTime)
     completed_at = db.Column(db.DateTime)
 
+    mode = db.Column(db.String(10), nullable=False, default="new")          # new | restore
+    bundle_ct = db.Column(db.LargeBinary)                                    # ciphertext, until fetched
+    bundle_site = db.Column(db.String(100))                                  # what the operator's browser read from it
+    bundle_made = db.Column(db.String(40))
+    fetched_at = db.Column(db.DateTime)
+    restoring_at = db.Column(db.DateTime)
+    module_error = db.Column(db.String(300))                                 # the module's own last error, as it reports it
+
     controller = db.relationship("Controller", backref=db.backref("enrollment", uselist=False))
 
     __table_args__ = (
-        CheckConstraint("state IN ('waiting','assigned','complete','rejected')", name="ck_enrollments_state"),
+        CheckConstraint("state IN ('waiting','assigned','restoring','complete','rejected')", name="ck_enrollments_state"),
+        CheckConstraint("mode IN ('new','restore')", name="ck_enrollments_mode"),
     )
 
     def __repr__(self):

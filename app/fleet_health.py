@@ -115,10 +115,13 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
            "health": None, "backup": None, "software": None, "alarms": [], "restored": None}
 
     enr = getattr(ctrl, "enrollment", None)
-    if enr is not None and getattr(enr, "state", None) == "assigned":
+    enr_state = getattr(enr, "state", None)
+    enr_mode = getattr(enr, "mode", "new")
+    if enr_state == "assigned" and enr_mode != "restore":
         issues.append(("unknown", "Adopted: waiting for the module to confirm (it checks in every 15 s)"))
         out["level"] = "unknown"
         return out
+    restoring = enr_state == "restoring" or (enr_state == "assigned" and enr_mode == "restore")
     if not getattr(ctrl, "tailscale_ip", None) or not getattr(ctrl, "fleet_api_token", None):
         issues.append(("unknown", "Not configured: no address or token"))
         out["level"] = "unknown"
@@ -136,7 +139,11 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
         out["seen"] = "never answered" if last_ok_age is None else f"last seen {ago(last_ok_age)}"
         out["errorPlain"] = plain_error(getattr(status, "http_status", None), status.error)
         since = f", last seen {ago(last_ok_age)}" if last_ok_age is not None else ""
-        issues.append(("crit", f"Offline{since}: {out['errorPlain']}"))
+        if restoring:
+            # expected to be dark while the new module reboots into this site
+            issues.append(("info", f"Being restored onto a new module{since}"))
+        else:
+            issues.append(("crit", f"Offline{since}: {out['errorPlain']}"))
     elif polled_age is not None and polled_age > STATUS_STALE_SECS:
         issues.append(("warn", f"Status not refreshed for {ago(polled_age)[:-4]}: is the poller running?"))
 

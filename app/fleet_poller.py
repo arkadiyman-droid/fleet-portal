@@ -116,6 +116,8 @@ def poll_controller(app, ctrl: Controller) -> ControllerStatus:
             setattr(row, k, v)
         db.session.add(row)
         try:
+            if result.get("ok"):
+                _finish_restore(ctrl)
             db.session.commit()
             return row
         except IntegrityError:
@@ -123,6 +125,15 @@ def poll_controller(app, ctrl: Controller) -> ControllerStatus:
             if attempt == 2:
                 raise
     return row
+
+
+def _finish_restore(ctrl) -> None:
+    """A module restoring onto this controller's site has come back as that
+    site: its first good poll completes the adoption (app/enroll_api.py)."""
+    enr = getattr(ctrl, "enrollment", None)
+    if enr is not None and enr.state == "restoring":
+        enr.state = "complete"
+        enr.completed_at = datetime.datetime.utcnow()
 
 
 fleet_poller = FleetPoller()

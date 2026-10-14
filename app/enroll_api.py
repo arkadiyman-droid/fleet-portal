@@ -27,7 +27,7 @@ import threading
 import time
 from datetime import datetime
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from app.extensions import csrf, db
 from app.models import Controller, Enrollment
@@ -156,12 +156,39 @@ def status():
     if err:
         return err
     row.last_seen = datetime.utcnow()
+    if "lastError" in b:                       # the module's own view, for the adopt page
+        row.module_error = _clip(b.get("lastError"), 300)
     db.session.commit()
-    out = {"state": row.state}
-    if row.state in ("assigned", "complete"):
+    out = {"state": row.state, "mode": row.mode}
+    if row.state in ("assigned", "restoring", "complete"):
         out["assignment"] = _assignment(row)
         out["controllerId"] = row.controller_id
+    if row.state == "assigned" and row.mode == "restore":
+        out["bundleReady"] = row.bundle_ct is not None
     return jsonify(out)
+
+
+@enroll_bp.route("/api/enroll/bundle", methods=["POST"])
+@csrf.exempt
+def bundle():
+    """Restore mode: the site bundle, encrypted in the operator's browser to
+    this module's own key. Handed over as long as the module has not yet
+    said it is restoring (so a dropped download can be retried), then
+    deleted by /complete."""
+    if not _rate_ok():
+        return _err("too many requests", 429)
+    b = _body()
+    if b is None:
+        return _err("expected a JSON object", 400)
+    row, err = _auth(b)
+    if err:
+        return err
+    if row.state != "assigned" or row.mode != "restore" or row.bundle_ct is None:
+        return _err("no bundle waiting for this module", 409)
+    row.fetched_at = datetime.utcnow()
+    row.last_seen = row.fetched_at
+    db.session.commit()
+    return Response(bytes(row.bundle_ct), mimetype="application/octet-stream")
 
 
 @enroll_bp.route("/api/enroll/complete", methods=["POST"])
@@ -175,10 +202,25 @@ def complete():
     row, err = _auth(b)
     if err:
         return err
+    ctrl = row.controller
+    if row.mode == "restore":
+        # "I have the bundle and am rebooting into the site." No token: the
+        # restored site brings its own, which the portal already holds for
+        # this Controller. The portal marks it complete on the first good
+        # poll (fleet_poller).
+        if row.state == "restoring":
+            return jsonify({"ok": True, "controllerId": row.controller_id})
+        if row.state != "assigned" or ctrl is None or row.fetched_at is None:
+            return _err("not assigned, or the bundle was never fetched", 409)
+        row.state = "restoring"
+        row.restoring_at = datetime.utcnow()
+        row.bundle_ct = None                    # the module has it; the portal keeps no copy
+        row.last_seen = row.restoring_at
+        db.session.commit()
+        return jsonify({"ok": True, "controllerId": ctrl.id})
     tok = str(b.get("fleetToken") or "")
     if not _SECRET.match(tok):
         return _err("malformed fleetToken", 400)
-    ctrl = row.controller
     if row.state == "complete":
         # A retry after a lost reply: fine if it is the same token, never a swap.
         if ctrl and ctrl.fleet_api_token and hmac.compare_digest(ctrl.fleet_api_token, tok):
