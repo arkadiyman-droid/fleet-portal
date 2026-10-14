@@ -4,3 +4,15 @@ __pycache__/
 .venv/
 venv/
 instance/
+
+# Secrets must never be sweepable by `git add -A`. A Tailscale OAuth
+# secret was found sitting untracked in the working tree on 2026-10-14;
+# nothing but habit was keeping it out of a commit.
+# Test fixtures under tests/fixtures/ are deliberately committed throwaway
+# keys for the age round-trip tests, so they are re-included below.
+*.key
+*.pem
+*key*.txt
+*secret*
+*.age
+!tests/fixtures/**
