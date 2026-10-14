@@ -20,6 +20,30 @@
     {% if r.state == 'live' %}{{ c.status }} · read {{ r.age }}{% else %}{{ r.why }}{% endif %}
   </div>
 
+  {% if b.is_active %}{% set a = b.alert_state %}
+  <div class="section" style="margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
+    <h2 style="margin:0">Alerts</h2>
+    <span class="card-sub">
+      {% if a and a.muted_until and a.muted_until > now_utc %}Muted until {{ a.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if a.muted_by %} by {{ a.muted_by }}{% endif %}.
+      {% elif a and a.alerting %}<span style="color:var(--crit);font-weight:600">In alarm</span> since {{ a.opened_at.strftime('%Y-%m-%d %H:%M UTC') if a.opened_at else '?' }}: {{ a.issue or 'an alert went out' }}
+      {% elif a and a.first_bad_at %}Red since {{ a.first_bad_at.strftime('%H:%M UTC') }}: an alert goes out if it is still red at the next read.
+      {% else %}On: Safety or Ignition Failure, a new safety/ignition alarm, or not answering for {{ dark_min }} minutes sends an alert.{% endif %}
+      <a href="{{ url_for('admin.alerts_page') }}">All alerts</a></span>
+    <form method="post" action="{{ url_for('admin.live_mute', box_id=b.id) }}" style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ request.path }}">
+      {% if a and a.muted_until and a.muted_until > now_utc %}
+        <button class="btn plain" name="hours" value="0" type="submit">Turn alerts back on</button>
+      {% else %}
+        <span class="card-sub" style="align-self:center">Service visit? Mute for</span>
+        <button class="btn plain" name="hours" value="4" type="submit">4 h</button>
+        <button class="btn plain" name="hours" value="24" type="submit">24 h</button>
+        <button class="btn plain" name="hours" value="72" type="submit">3 days</button>
+      {% endif %}
+    </form>
+  </div>
+  {% endif %}
+
   <div class="sections" style="margin-top:14px">
     <div class="section"><h2>Building</h2><div class="kv">
       {{ row('Outside', c.out) }}{{ row('Inside average', c.inside) }}{{ row('Desired inside (DIT)', c.dit) }}

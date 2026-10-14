@@ -10,7 +10,7 @@ from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
 from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
-                        LegacyBox, Permission, Property, Rollout, RolloutTarget, User)
+                        LegacyAlertState, LegacyBox, Permission, Property, Rollout, RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -708,9 +708,17 @@ def _alert_badge():
         ids = _visible_controller_ids()
         if ids is not None:
             q = q.filter(AlertState.controller_id.in_(ids or [-1]))
-        return {"open_alerts": q.count()}
+        n = q.count()
+        if ids is None:                               # the 2010 boxes are the administrator's for now
+            n += _legacy_alert_states().filter(LegacyAlertState.alerting.is_(True)).count()
+        return {"open_alerts": n}
     except Exception:
         return {"open_alerts": 0}
+
+
+def _legacy_alert_states():
+    return LegacyAlertState.query.join(LegacyBox, LegacyBox.id == LegacyAlertState.box_id) \
+        .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None))
 
 
 @admin_bp.route("/alerts")
@@ -727,6 +735,10 @@ def alerts_page():
     open_ = sorted([s for s in states if s.alerting], key=lambda s: s.opened_at or now)
     waiting = [s for s in states if not s.alerting and s.first_bad_at]
     muted = [s for s in states if s.muted_until and s.muted_until > now]
+    lstates = _legacy_alert_states().all() if ids is None else []
+    l_open = sorted([s for s in lstates if s.alerting], key=lambda s: s.opened_at or now)
+    l_waiting = [s for s in lstates if not s.alerting and s.first_bad_at]
+    l_muted = [s for s in lstates if s.muted_until and s.muted_until > now]
     cfg = current_app.config
     ntfy_qr = None
     if is_superuser() and cfg.get("ALERT_NTFY_TOPIC"):
@@ -735,6 +747,8 @@ def alerts_page():
         url = f"{cfg.get('ALERT_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{cfg['ALERT_NTFY_TOPIC']}"
         ntfy_qr = Markup(segno.make(url, error="m").svg_inline(scale=4, border=2))
     return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted, ntfy_qr=ntfy_qr,
+                           l_open=l_open, l_waiting=l_waiting, l_muted=l_muted, show_legacy=ids is None,
+                           legacy_dark_min=cfg.get("LEGACY_DARK_MINUTES", 30),
                            events=events.order_by(AlertEvent.created_at.desc()).limit(100).all(),
                            channels=notify.channels(), now=now,
                            after_min=round(cfg.get("ALERT_AFTER_SECONDS", 300) / 60),
@@ -775,6 +789,30 @@ def fleet_mute(controller_id):
     db.session.commit()
     flash(msg, "success")
     return redirect(_local_next(url_for("admin.fleet_controller", controller_id=ctrl.id)))
+
+
+@admin_bp.route("/live/<int:box_id>/mute", methods=["POST"])
+def live_mute(box_id):
+    if not is_superuser():
+        abort(403)
+    b = LegacyBox.query.get_or_404(box_id)
+    if b.deleted_at:
+        abort(404)
+    row = db.session.get(LegacyAlertState, b.id) or LegacyAlertState(box_id=b.id, alerting=False)
+    hours = MUTE_CHOICES.get(request.form.get("hours", ""))
+    who = _who()
+    if hours:
+        row.muted_until, row.muted_by = datetime.utcnow() + timedelta(hours=hours), who
+        msg = f"Alerts for {b.name!r} muted for {hours} hours."
+    else:
+        row.muted_until, row.muted_by = None, None
+        msg = f"Alerts for {b.name!r} are on again."
+    db.session.add(row)
+    db.session.add(AlertEvent(legacy_box_id=b.id, controller_name=b.name[:200], kind="mute",
+                              title=msg[:200], text=f"by {who}", delivered="not sent", created_at=datetime.utcnow()))
+    db.session.commit()
+    flash(msg, "success")
+    return redirect(_local_next(url_for("admin.live_box", box_id=b.id)))
 
 
 # ─── Software updates (app/rollouts.py) ─────────────────────────────────
@@ -976,7 +1014,8 @@ def live_box(box_id):
         abort(404)
     row = _legacy_rows(datetime.utcnow(), [b])[0]
     from app import legacy
-    return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm)
+    return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm, now_utc=datetime.utcnow(),
+                           dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30))
 
 
 @admin_bp.route("/live/action", methods=["POST"])

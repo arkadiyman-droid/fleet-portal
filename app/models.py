@@ -421,7 +421,9 @@ class AlertEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="SET NULL"), index=True)
     controller_name = db.Column(db.String(200))                        # kept if the controller is deleted
-    kind = db.Column(db.String(12), nullable=False)                    # open | reminder | recovered | test | mute
+    # or one of the installed 2010 boxes (/live); controller_name then holds the box's name
+    legacy_box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="SET NULL"), index=True)
+    kind = db.Column(db.String(12), nullable=False)                    # open | reminder | recovered | test | mute | outage | outage-end
     title = db.Column(db.String(200))
     text = db.Column(db.String(1000))
     delivered = db.Column(db.String(300))                              # what each channel answered
@@ -528,3 +530,23 @@ class LegacyStatus(db.Model):
     data = db.Column(JSONB)                                         # {status:{...}, names:{...}, alarm:{...}}
 
     box = db.relationship("LegacyBox", back_populates="status")
+
+
+class LegacyAlertState(db.Model):
+    """Where each 2010 box stands for alerting (app/alerts.py check_legacy):
+    the AlertState of a box, plus the latest box alarm already seen, so a
+    NEW safety or ignition alarm is sent once and an old one never is."""
+    __tablename__ = "legacy_alert_states"
+
+    box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="CASCADE"), primary_key=True)
+    alerting = db.Column(db.Boolean, nullable=False, default=False)
+    first_bad_at = db.Column(db.DateTime)
+    opened_at = db.Column(db.DateTime)
+    notified_at = db.Column(db.DateTime)
+    issue = db.Column(db.String(300))
+    muted_until = db.Column(db.DateTime)
+    muted_by = db.Column(db.String(120))
+    last_alarm = db.Column(db.String(120))                             # "name@timestamp" of the alarm last seen
+
+    box = db.relationship("LegacyBox", backref=db.backref("alert_state", uselist=False,
+                                                          cascade="all, delete-orphan"))

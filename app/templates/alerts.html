@@ -16,6 +16,9 @@
   <p class="card-sub" style="margin:0 0 14px">
     A controller that stays red for {{ after_min }} minutes sends an alert{% if repeat_h %}, a reminder every {{ repeat_h|int }} hours while it stays red,{% endif %}
     and an all-clear when it recovers. Yellow never pages anyone. Mute a controller from its own page during a service visit.
+    {% if show_legacy %}<br>The 2010 boxes on <a href="{{ url_for('admin.live_page') }}">Live</a> alert when their status reads Safety or Ignition Failure
+    on two reads in a row, at once on a new safety or ignition alarm, and when one that was reading stops answering for {{ legacy_dark_min }} minutes.
+    If many stop together you get one message about the connection instead. Boxes that never answered, and hidden ones, never alert.{% endif %}
   </p>
 
   {% if not channels.ntfy and not channels.email %}
@@ -25,23 +28,30 @@
   <div class="sections">
     <div class="section">
       <h2>In alarm now</h2>
-      {% if open_ %}
+      {% if open_ or l_open %}
       <ul class="issues">
+        {% for s in l_open %}<li class="crit"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a>
+          <span class="chip info">2010 box</span>: {{ s.issue or 'red' }}
+          <span class="card-sub">since {{ s.opened_at.strftime('%Y-%m-%d %H:%M UTC') if s.opened_at else '?' }}</span></li>{% endfor %}
         {% for s in open_ %}<li class="crit"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a>
           {% if s.controller.building %}({{ s.controller.building.name }}){% endif %}: {{ s.issue or 'red' }}
           <span class="card-sub">since {{ s.opened_at.strftime('%Y-%m-%d %H:%M UTC') if s.opened_at else '?' }}</span></li>{% endfor %}
       </ul>
       {% else %}<div class="all-good">Nothing in alarm.</div>{% endif %}
-      {% if waiting %}
+      {% if waiting or l_waiting %}
       <h2 style="margin-top:12px">Red, not alerted yet</h2>
       <ul class="issues">
+        {% for s in l_waiting %}<li class="warn"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a>
+          <span class="chip info">2010 box</span>: {{ s.issue or 'red' }} <span class="card-sub">red since {{ s.first_bad_at.strftime('%H:%M UTC') }}</span></li>{% endfor %}
         {% for s in waiting %}<li class="warn"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a>:
           {{ s.issue or 'red' }} <span class="card-sub">red since {{ s.first_bad_at.strftime('%H:%M UTC') }}</span></li>{% endfor %}
       </ul>
       {% endif %}
-      {% if muted %}
+      {% if muted or l_muted %}
       <h2 style="margin-top:12px">Muted</h2>
       <ul class="issues">
+        {% for s in l_muted %}<li class="info"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a>
+          <span class="chip info">2010 box</span> until {{ s.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if s.muted_by %}, by {{ s.muted_by }}{% endif %}</li>{% endfor %}
         {% for s in muted %}<li class="info"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a>
           until {{ s.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if s.muted_by %}, by {{ s.muted_by }}{% endif %}</li>{% endfor %}
       </ul>
@@ -80,9 +90,9 @@
       {% for ev in events %}
         <tr>
           <td style="white-space:nowrap">{{ ev.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td><span class="chip {{ {'open':'crit','reminder':'crit','recovered':'ok','test':'info','mute':'info'}.get(ev.kind, 'info') }}">{{ {'open':'Alert','reminder':'Reminder','recovered':'Recovered','test':'Test','mute':'Mute'}.get(ev.kind, ev.kind) }}</span></td>
-          <td>{% if ev.controller_id %}<a href="{{ url_for('admin.fleet_controller', controller_id=ev.controller_id) }}">{{ ev.controller_name }}</a>{% else %}{{ ev.controller_name or '—' }}{% endif %}</td>
-          <td style="white-space:pre-line">{{ ev.title }}{% if ev.kind in ('open', 'reminder', 'recovered') %}
+          <td><span class="chip {{ {'open':'crit','reminder':'crit','recovered':'ok','test':'info','mute':'info','outage':'crit','outage-end':'ok'}.get(ev.kind, 'info') }}">{{ {'open':'Alert','reminder':'Reminder','recovered':'Recovered','test':'Test','mute':'Mute','outage':'Outage','outage-end':'Back'}.get(ev.kind, ev.kind) }}</span></td>
+          <td>{% if ev.legacy_box_id %}<a href="{{ url_for('admin.live_box', box_id=ev.legacy_box_id) }}">{{ ev.controller_name }}</a> <span class="chip info">2010 box</span>{% elif ev.controller_id %}<a href="{{ url_for('admin.fleet_controller', controller_id=ev.controller_id) }}">{{ ev.controller_name }}</a>{% else %}{{ ev.controller_name or '—' }}{% endif %}</td>
+          <td style="white-space:pre-line">{{ ev.title }}{% if ev.kind in ('open', 'reminder', 'recovered', 'outage', 'outage-end') %}
 {{ ev.text }}{% endif %}</td>
           <td class="card-sub">{{ ev.delivered }}</td>
         </tr>

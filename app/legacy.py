@@ -349,6 +349,14 @@ class LegacyPoller:
                                 if last is None or _dt.datetime.utcnow() - last > _dt.timedelta(seconds=interval * 0.8):
                                     n = poll_all(app)
                                     log.info("Legacy boxes: %d answered", n)
+                                    # Alerts right after the cycle, under the same lock
+                                    # (app/alerts.py check_legacy).
+                                    try:
+                                        from app import alerts
+                                        alerts.check_legacy(app)
+                                    except Exception as e:
+                                        db.session.rollback()
+                                        log.warning("Legacy alert check failed: %s", e)
                             finally:
                                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
                     finally:
