@@ -1,4 +1,5 @@
 import getpass
+import os
 
 import click
 from dotenv import load_dotenv
@@ -8,8 +9,23 @@ from werkzeug.security import generate_password_hash
 from app.extensions import csrf, db, migrate
 
 
+def load_env(path=None) -> None:
+    """Read .env into the environment.
+
+    Normally a value already in the environment wins (tests and the shell
+    set their own). With FLEET_ENV_FILE_WINS=1 -- set in .env on the server
+    -- the FILE wins: systemd hands the service .env as it was at the last
+    full restart, and a reload (kill -HUP) re-runs this but cannot change
+    that environment, so without this an edited .env was silently ignored
+    until the next restart (found 2026-10-14: a changed alert topic kept
+    the old value after a reload)."""
+    load_dotenv(path)
+    if os.environ.get("FLEET_ENV_FILE_WINS") == "1":
+        load_dotenv(path, override=True)
+
+
 def create_app():
-    load_dotenv()
+    load_env()
 
     from config import Config
 

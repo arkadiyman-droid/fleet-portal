@@ -138,6 +138,15 @@ bash ~/fleet-portal/deploy/check-tailscale.sh
  The OAuth secret can
 mint keys that join the fleet's tailnet; it lives only in `.env` (chmod 600).
 
+## Changing a setting in .env
+
+Edit `.env`, then either restart the service or, as pi without sudo, reload
+it: `kill -HUP $(systemctl show -p MainPID --value fleet-portal)`. A reload
+only picks up a changed value because `.env` on the server has
+`FLEET_ENV_FILE_WINS=1`: systemd hands the service `.env` as it was at the
+last full restart, and without that line those older values win over the
+file (`app/__init__.py` `load_env`). Keep the line.
+
 ## Alerts
 
 Alerts are always decided and listed on the portal's Alerts page; they are
