@@ -34,20 +34,39 @@ TIMEOUT = 15
 _PAIR = re.compile(r'<(\w+)\s+name\s*=\s*"([^"]*)"\s*(?:val\s*=\s*"([^"]*)")?[^>]*?(?:displayName\s*=\s*"([^"]*)")?')
 
 
+_ESC = re.compile(r"\x1b\[[0-9;?]*[A-Za-z~]|\x1b.|[\x00-\x1f\x7f]")
+
+
+def ask(prompt, check, why, tries=4):
+    """Read a line, drop stray key codes (an arrow key pressed while typing
+    arrives as ESC [ C), and ask again instead of giving up."""
+    for _ in range(tries):
+        v = _ESC.sub("", input(prompt)).strip()
+        if check(v):
+            return v
+        print(f"  {why} Try again.")
+    sys.exit("Giving up. Nothing saved.")
+
+
 def setup():
-    print("One installed box, to test from beverly-pi. Nothing typed here is shown back,")
-    print("and the password is not echoed.")
-    host = input("Address (IP or name, e.g. 96.81.94.225): ").strip()
+    print("One installed box, to test from beverly-pi. The password is not echoed.")
+    host = ask("Address (IP or name, e.g. 96.81.94.225, or 1.2.3.4:8060): ",
+               lambda v: bool(re.fullmatch(r"(https?://)?[A-Za-z0-9.\-]+(:\d{1,5})?/?", v)),
+               "That does not look like an address.")
     host = re.sub(r"^https?://", "", host).rstrip("/")
-    port = input("Port (Enter for 80): ").strip() or "80"
     if ":" in host:
         host, port = host.rsplit(":", 1)
-    if not re.fullmatch(r"[A-Za-z0-9.\-]+", host) or not port.isdigit():
-        sys.exit("That address or port does not look right. Nothing saved.")
-    user = input("User name: ").strip()
-    pw = getpass.getpass("Password (hidden): ")
-    if not user or not pw:
-        sys.exit("User name and password are both needed. Nothing saved.")
+    else:
+        port = ask("Port (Enter for 80): ", lambda v: v == "" or (v.isdigit() and 0 < int(v) < 65536),
+                   "A port is a number, like 8060.") or "80"
+    user = ask("User name: ", lambda v: bool(v), "The user name cannot be empty.")
+    for _ in range(4):
+        pw = getpass.getpass("Password (hidden): ")
+        if pw:
+            break
+        print("  The password cannot be empty. Try again.")
+    else:
+        sys.exit("Giving up. Nothing saved.")
     SAVED.write_text(json.dumps({"url": f"http://{host}:{port}", "user": user, "password": pw}))
     os.chmod(SAVED, 0o600)
     print(f"Saved (only pi can read it). Testing {host}:{port} now.\n")
@@ -70,8 +89,10 @@ def values(xml):
 
 
 def main():
-    if "--setup" in sys.argv or not SAVED.exists():
+    if "--setup" in sys.argv:
         setup()
+    elif not SAVED.exists():
+        sys.exit("No box saved yet. Run it with --setup first.")
     box = json.loads(SAVED.read_text())
     print(f"Box: {box['url']}  (user {box['user']})")
 
