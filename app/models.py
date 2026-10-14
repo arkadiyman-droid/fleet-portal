@@ -496,7 +496,12 @@ class LegacyBox(db.Model):
     identity = db.Column(db.String(12), nullable=False, default="unknown")
     login_id = db.Column(db.Integer, db.ForeignKey("legacy_logins.id", ondelete="SET NULL"))
     building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
+    # Hidden (is_active False): not polled, listed under Live's "Hidden", one
+    # click brings it back. Deleted (deleted_at set): gone from the portal;
+    # the row stays only so a re-run of import-legacy-boxes.py skips it.
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    deleted_at = db.Column(db.DateTime)
+    hidden_by = db.Column(db.String(120))
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     login = db.relationship("LegacyLogin")

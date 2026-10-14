@@ -284,7 +284,8 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
     from app.extensions import db
     from app.models import LegacyBox, LegacyStatus
     now = now or _dt.datetime.utcnow()
-    boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.identity != "other").all()
+    boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None),
+                                   LegacyBox.identity != "other").all()
     jobs = []
     for b in boxes:
         if b.login is None:

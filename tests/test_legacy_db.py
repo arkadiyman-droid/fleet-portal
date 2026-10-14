@@ -92,3 +92,55 @@ def test_logins_are_encrypted_at_rest(app, session, boxes):
 def test_only_the_administrator_sees_it(app, session, boxes):
     c = app.test_client()
     assert c.get("/live").status_code in (302, 403)
+
+
+def test_hide_show_and_delete(app, session, boxes, client):
+    import app.models as m
+    from app import legacy
+    app.config["WTF_CSRF_ENABLED"] = False
+    dark, other = boxes[1], boxes[2]
+
+    r = client.post("/live/action", data={"action": "hide", "box_id": [str(dark.id), str(other.id)]})
+    assert r.status_code == 302
+    session.expire_all()
+    assert not session.get(m.LegacyBox, dark.id).is_active
+    seen = []
+    legacy.poll_all(app, poll=lambda j, now: seen.append(j["url"][-4:]) or fake_poll(j, now))
+    assert sorted(seen) == ["8060"]                                    # hidden boxes are not read
+    page = client.get("/live").data.decode()
+    assert "Dark Building" not in page and "Hidden 2" in page
+    hidden = client.get("/live?show=hidden").data.decode()
+    assert "Dark Building" in hidden and "Other Login Bldg" in hidden and "Show again" in hidden
+
+    client.post("/live/action", data={"action": "show", "box_id": str(other.id)})
+    client.post("/live/action", data={"action": "delete", "box_id": str(dark.id)})
+    session.expire_all()
+    assert session.get(m.LegacyBox, other.id).is_active
+    gone = session.get(m.LegacyBox, dark.id)
+    assert gone.deleted_at is not None and not gone.is_active          # kept as a marker for re-imports
+    assert client.get(f"/live/{dark.id}").status_code == 404
+    page = client.get("/live?show=hidden").data.decode()
+    assert "Dark Building" not in page
+    seen.clear()
+    legacy.poll_all(app, now=dt.datetime.utcnow() + dt.timedelta(minutes=5),
+                    poll=lambda j, now: seen.append(j["url"][-4:]) or fake_poll(j, now))
+    assert sorted(seen) == ["8060", "8062"]
+
+
+def test_delete_confirm_is_safe_for_any_name(app, session, boxes, client):
+    import app.models as m
+    b = boxes[1]
+    b.name, b.is_active = "O'Brien \"Court\"", False
+    session.commit()
+    for page in (client.get("/live?view=cards&show=hidden").data.decode(), client.get(f"/live/{b.id}").data.decode()):
+        onclick = page[page.index("return confirm("):].split(">")[0]
+        assert "O\\u0027Brien" in onclick and "O" + chr(39) + "Brien" not in onclick
+
+
+def test_actions_need_the_administrator(app, session, boxes):
+    app.config["WTF_CSRF_ENABLED"] = False
+    c = app.test_client()
+    assert c.post("/live/action", data={"action": "delete", "box_id": str(boxes[1].id)}).status_code in (302, 403)
+    session.expire_all()
+    import app.models as m
+    assert session.get(m.LegacyBox, boxes[1].id).deleted_at is None

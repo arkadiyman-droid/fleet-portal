@@ -890,10 +890,13 @@ def fleet_update_one(controller_id):
 _TONE_ORDER = {"crit": 0, "warn": 1, "heat": 2, "ok": 3, "idle": 4}
 
 
-def _legacy_rows(now):
+def _legacy_rows(now, boxes=None):
     from app import legacy
     rows = []
-    for b in LegacyBox.query.filter_by(is_active=True).order_by(LegacyBox.name).all():
+    if boxes is None:
+        boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
+            .order_by(LegacyBox.name).all()
+    for b in boxes:
         st = b.status
         c = legacy.card(st.data) if st and st.data else None
         last_ok = st.last_ok_at if st else None
@@ -934,7 +937,9 @@ def live_page():
         abort(403)
     now = datetime.utcnow()
     rows = _legacy_rows(now)
-    summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows),
+    hidden = LegacyBox.query.filter(LegacyBox.is_active.is_(False), LegacyBox.deleted_at.is_(None)) \
+        .order_by(LegacyBox.name).all()
+    summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows), "hidden": len(hidden),
                "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                "problems": sum(r["problem"] for r in rows)}
@@ -947,6 +952,8 @@ def live_page():
         rows = [r for r in rows if r["state"] in ("dark", "login", "other")]
     elif show == "calling":
         rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"]
+    elif show == "hidden":
+        rows = _legacy_rows(now, hidden)
     else:
         show = "all"
     if q:
@@ -965,9 +972,45 @@ def live_box(box_id):
     if not is_superuser():
         abort(403)
     b = LegacyBox.query.get_or_404(box_id)
-    row = next(r for r in _legacy_rows(datetime.utcnow()) if r["box"].id == b.id)
+    if b.deleted_at:
+        abort(404)
+    row = _legacy_rows(datetime.utcnow(), [b])[0]
     from app import legacy
     return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm)
+
+
+@admin_bp.route("/live/action", methods=["POST"])
+def live_action():
+    """Hide, show again or delete one box or several (the table's checkboxes).
+    Hidden: not polled, listed under Hidden. Deleted: gone from the portal;
+    the row is kept only so a re-import does not bring it back."""
+    if not is_superuser():
+        abort(403)
+    action = request.form.get("action")
+    if action not in ("hide", "show", "delete"):
+        abort(400)
+    ids = [i for i in (_parse_int(v) for v in request.form.getlist("box_id")) if i]
+    boxes = LegacyBox.query.filter(LegacyBox.id.in_(ids or [-1]), LegacyBox.deleted_at.is_(None)).all()
+    if not boxes:
+        flash("Nothing selected.", "error")
+        return redirect(_local_next(url_for("admin.live_page")))
+    now = datetime.utcnow()
+    for b in boxes:
+        if action == "hide":
+            b.is_active, b.hidden_by = False, _who()
+        elif action == "show":
+            b.is_active, b.hidden_by = True, None
+        else:
+            b.is_active, b.deleted_at = False, now
+    db.session.commit()
+    n = len(boxes)
+    words = {"hide": "hidden: no longer read, listed under Hidden",
+             "show": "back on the Live page: read from the next poll",
+             "delete": "deleted"}[action]
+    flash(f"{n} box{'es' if n != 1 else ''} {words}.", "success")
+    if action == "delete" or (action == "hide" and request.form.get("from_box")):
+        return redirect(url_for("admin.live_page", show="dark"))
+    return redirect(_local_next(url_for("admin.live_page")))
 
 
 # ─── Adopt a blank module (EMS fleet/enroll.py ↔ app/enroll_api.py) ─────

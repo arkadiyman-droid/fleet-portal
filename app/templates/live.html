@@ -41,7 +41,7 @@
   {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.when }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
 
   <div class="lv-bar">
-    {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login))] %}
+    {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login))] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
       <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="card-sub" style="margin-left:8px">Sort:</span>
@@ -53,15 +53,27 @@
       <input name="q" value="{{ q }}" placeholder="Search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px"></form>
   </div>
 
+  {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
+  {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
   {% if not rows %}<div class="card-sub">Nothing to show{% if q or show != 'all' %} for this filter{% endif %}.</div>{% endif %}
 
   {% if view == 'table' %}
+  <form method="post" action="{{ url_for('admin.live_action') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+  {% if rows %}<div style="display:flex;gap:6px;align-items:center;margin:0 0 8px">
+    <span class="card-sub">With the ticked boxes:</span>
+    {% if show == 'hidden' %}<button class="btn plain" name="action" value="show" type="submit">Show again</button>
+    {% else %}<button class="btn plain" name="action" value="hide" type="submit">Hide</button>{% endif %}
+    <button class="btn danger" name="action" value="delete" type="submit" onclick="return confirm('Delete the selected boxes from the portal? They stop being read, disappear from Live, and a re-import will not bring them back.')">Delete</button>
+  </div>{% endif %}
   <div style="overflow-x:auto"><table class="lv-table">
-    <thead><tr><th>Building</th><th>Status</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
+    <thead><tr><th><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th>Building</th><th>Status</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
       <th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
+        <td><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
         <td><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a></td>
         <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
         <td>{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
@@ -72,6 +84,7 @@
       </tr>
     {% endfor %}
     </tbody></table></div>
+  </form>
   {% else %}
   <div class="lv-grid">
   {% for r in rows %}{% set c = r.c or {} %}
@@ -100,7 +113,16 @@
           <div><div class="k">Risr</div><div class="v">{{ t(c.risr) }}</div></div></div>
         {% if c.oil_pct is not none %}<div class="lv-oil" title="Oil {{ c.oil_pct }}%"><div style="width:{{ [c.oil_pct, 100]|min }}%"></div></div>{% endif %}
       {% endif %}
-      {% if r.state != 'live' %}<div class="lv-foot alarm">{{ r.why }}</div>
+      {% if show == 'hidden' %}<div class="lv-foot" style="display:flex;gap:6px;align-items:center">
+        <span style="flex:1">hidden{% if r.box.hidden_by %} by {{ r.box.hidden_by }}{% endif %}</span>
+        <form method="post" action="{{ url_for('admin.live_action') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="box_id" value="{{ r.box.id }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn plain" name="action" value="show" type="submit" style="padding:2px 8px;font-size:12px">Show again</button>
+          <button class="btn danger" name="action" value="delete" type="submit" style="padding:2px 8px;font-size:12px" onclick='return confirm({{ ("Delete " ~ r.box.name ~ " from the portal for good?")|tojson }})'>Delete</button></form></div>
+      {% elif r.state != 'live' %}<div class="lv-foot alarm" style="display:flex;gap:6px;align-items:center"><span style="flex:1">{{ r.why }}</span>
+        <form method="post" action="{{ url_for('admin.live_action') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="box_id" value="{{ r.box.id }}"><input type="hidden" name="next" value="{{ request.full_path }}">
+          <button class="btn plain" name="action" value="hide" type="submit" style="padding:2px 8px;font-size:12px" title="Stop reading it and move it to Hidden">Hide</button></form></div>
       {% elif r.recent_alarm %}<div class="lv-foot {{ 'alarm' if r.recent_alarm.level != 'info' }}">{{ r.recent_alarm.when }}: {{ r.recent_alarm.words }}{% if r.recent_alarm.active and r.recent_alarm.level != 'info' %} (active){% endif %}</div>
       {% else %}<div class="lv-foot">read {{ r.age }}</div>{% endif %}
     </div>
