@@ -210,7 +210,9 @@ _sessions_lock = threading.Lock()
 def _session(box_id, user, password):
     with _sessions_lock:
         s = _sessions.get(box_id)
-        if s is None or s.auth.username != user:
+        # A new session whenever the login changes at all: two logins can
+        # share a user name and differ only in the password (2026-10-14).
+        if s is None or (s.auth.username, s.auth.password) != (user, password):
             s = requests.Session()
             s.auth = HTTPDigestAuth(user, password)
             _sessions[box_id] = s
@@ -254,6 +256,8 @@ def poll_one(box: dict, now=None) -> dict:
                 time.sleep(PAUSE)
             r = s.get(f"{box['url']}/{path}", timeout=TIMEOUT)
             if r.status_code == 401:
+                with _sessions_lock:
+                    _sessions.pop(box["id"], None)       # never retry a refused session
                 out["error"], out["auth_failed"] = "the box refused the login", True
                 return out
             if r.status_code != 200:

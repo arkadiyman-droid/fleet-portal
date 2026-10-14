@@ -187,3 +187,21 @@ def test_a_box_clock_an_hour_fast_is_corrected():
     assert a["when"] == "Oct 14 5:09 PM" and a["recent"] is True
     assert legacy.clock_drift({"status": {"serverTime": "2026-10-14T21:30:00Z"}, "read_at": "2026-10-14T21:28:00"}).total_seconds() == 0
     assert legacy.clock_drift({}).total_seconds() == 0
+
+
+def test_a_changed_password_gets_a_new_session_even_with_the_same_user_name():
+    legacy._sessions.clear()
+    a = legacy._session(7, "USEAdmin", "first-password")
+    assert legacy._session(7, "USEAdmin", "first-password") is a
+    b = legacy._session(7, "USEAdmin", "second-password")
+    assert b is not a and b.auth.password == "second-password"
+    legacy._sessions.clear()
+
+
+def test_a_refused_login_drops_the_session(monkeypatch):
+    s = mock.Mock()
+    s.get.return_value = resp(401)
+    legacy._sessions[1] = s
+    monkeypatch.setattr(legacy, "_session", lambda *a: s)
+    legacy.poll_one(dict(BOX, verified=True))
+    assert 1 not in legacy._sessions
