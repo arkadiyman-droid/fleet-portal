@@ -42,23 +42,53 @@ def shown_input(prompt):
         out.write(prompt); out.flush()
         return inp.readline()
 
+def shape(v):
+    """The non-secret part of a credential: everything up to the last
+    prefix dash, plus a length. Enough to tell tskey-client- from
+    tskey-app- without printing any of the secret itself."""
+    m = re.match(r"(tskey-[a-z]+-)", v)
+    return f"starts {m.group(1)!r}, {len(v)} characters" if m else            f"starts {v[:4]!r}..., {len(v)} characters"
+
+
+def confirm(prompt):
+    with open("/dev/tty", "w") as out, open("/dev/tty") as inp:
+        out.write(prompt); out.flush()
+        return inp.readline().strip().lower().startswith("y")
+
+
 def ask(prompt, check, hidden, what):
-    for _ in range(5):
+    for attempt in range(5):
         v = (getpass.getpass(prompt) if hidden else shown_input(prompt)).strip()
         if not v:
             print("  Nothing arrived. Copy it again in Tailscale, click here, paste (Ctrl+V or right-click), then Enter.")
             continue
         if not check(v):
-            print(f"  That does not look like the {what} ({len(v)} characters received). Try again.")
+            # Say WHAT arrived, not just that it was wrong. The old message
+            # looped five times and exited "Nothing changed" without ever
+            # revealing that the value had simply come from the wrong kind
+            # of Tailscale credential.
+            print(f"  That does not look like the {what}: {shape(v)}.")
+            if attempt >= 1 and " " not in v and len(v) >= 12:
+                if confirm("  Use it anyway? Tailscale may have changed the format. [y/N]: "):
+                    print(f"  Accepted as given ({len(v)} characters).")
+                    return v
             continue
         print(f"  Got it ({len(v)} characters).")
         return v
-    sys.exit("Giving up after 5 tries. Nothing changed.")
+    sys.exit("Giving up after 5 tries. Nothing changed. "
+             "If the value looked right, re-run and answer y when asked to use it anyway.")
 
 cid = ask("OAuth client ID (paste, then Enter): ",
           lambda v: re.fullmatch(r"[A-Za-z0-9_-]{4,100}", v), False, "client ID")
+# Two different Tailscale credentials both land here. An OAuth client
+# ("Trust credentials") issues tskey-client-...; an OAuth app (device
+# provisioning) issues tskey-app-<clientID>-<secret>. Only the first was
+# accepted before, so anyone who made an app got five rejections and no
+# explanation. Both are allowed now, and anything else can be forced
+# through after a warning rather than silently refused.
 sec = ask("OAuth client secret (hidden; paste, then Enter): ",
-          lambda v: re.fullmatch(r"tskey-client-[A-Za-z0-9_-]{8,200}", v), True, "client secret (tskey-client-...)")
+          lambda v: re.fullmatch(r"tskey-(client|app)-[A-Za-z0-9_-]{8,200}", v),
+          True, "client secret (expected tskey-client-... or tskey-app-...)")
 save(keep + [f"TAILSCALE_OAUTH_CLIENT_ID='{cid}'", f"TAILSCALE_OAUTH_CLIENT_SECRET='{sec}'"])
 print("Saved. The portal picks them up when it is reloaded.")
 PY
