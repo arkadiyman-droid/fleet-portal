@@ -111,10 +111,25 @@ except Exception:                      # no tz database: show UTC
     LOCAL = _dt.timezone.utc
 
 
-def alarm_info(alarm, now=None):
+def clock_drift(data) -> _dt.timedelta:
+    """How far the box's clock is off: its serverTime against when the
+    portal read it. Several boxes run an hour off (a wrong DST or time-zone
+    setting); drifts under 10 minutes are ignored."""
+    try:
+        box = _dt.datetime.fromisoformat(((data or {}).get("status") or {}).get("serverTime", "").replace("Z", "+00:00"))
+        read = _dt.datetime.fromisoformat((data or {}).get("read_at", ""))
+        d = box.astimezone(_dt.timezone.utc).replace(tzinfo=None) - read
+        d = _dt.timedelta(minutes=round(d.total_seconds() / 60))       # whole minutes
+        return d if abs(d) >= _dt.timedelta(minutes=10) else _dt.timedelta(0)
+    except (ValueError, TypeError, AttributeError):
+        return _dt.timedelta(0)
+
+
+def alarm_info(alarm, now=None, drift=_dt.timedelta(0)):
     """Display form of a box alarm: {words, level, when, recent, active} or
-    None. Times arrive in each box's own offset (some clocks are an hour
-    off), so they are put through UTC and shown in New York time."""
+    None. Times arrive in each box's own offset, and some clocks are an hour
+    off, so they are corrected by the box's drift, put through UTC and shown
+    in New York time."""
     if not alarm:
         return None
     now = now or _dt.datetime.utcnow()
@@ -124,8 +139,9 @@ def alarm_info(alarm, now=None):
         at = _dt.datetime.fromisoformat(when.replace("Z", "+00:00"))
         if at.tzinfo is None:
             at = at.replace(tzinfo=LOCAL)
+        at = at - drift
         utc = at.astimezone(_dt.timezone.utc).replace(tzinfo=None)
-        recent = _dt.timedelta(0) <= now - utc < _dt.timedelta(hours=24) or _dt.timedelta(0) < utc - now < _dt.timedelta(hours=2)
+        recent = _dt.timedelta(0) <= now - utc < _dt.timedelta(hours=24) or _dt.timedelta(0) < utc - now < _dt.timedelta(minutes=15)
         when = at.astimezone(LOCAL).strftime("%b %d %I:%M %p").replace(" 0", " ")
     except ValueError:
         pass
@@ -290,6 +306,7 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
             row.last_ok_at = res["polled_at"]
             merged = dict(row.data or {})
             merged.update({k: v for k, v in res["data"].items() if v is not None or k == "alarm"})
+            merged["read_at"] = res["polled_at"].isoformat()      # for the box's clock drift
             if "names" in res["data"]:
                 row.names_at = res["polled_at"]
             row.data = merged

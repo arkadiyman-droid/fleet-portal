@@ -30,7 +30,8 @@
     <div class="section"><h2>Box</h2><div class="kv">
       {{ row('Address', b.host ~ ':' ~ b.port) }}{{ row('Identity', b.identity) }}
       {{ row('Last good read', r.last_ok.strftime('%Y-%m-%d %H:%M UTC') if r.last_ok else none) }}
-      {{ row('Box clock', c.box_time) }}
+      {% set off = (' (' ~ ('+' if r.drift_min > 0 else '') ~ r.drift_min ~ ' min off: alarm times corrected)') if r.drift_min else '' %}
+      {{ row('Box clock', (c.box_time ~ off) if c.box_time else none) }}
       {{ row('Response', (r.st.response_ms ~ ' ms') if r.st and r.st.response_ms else none) }}
       {% if r.st and r.st.error %}{{ row('Last error', r.st.error) }}{% endif %}
       {{ row('Latest box alarm', (r.alarm.words ~ ', ' ~ r.alarm.when ~ (' (active)' if r.alarm.active and r.alarm.level != 'info' else '')) if r.alarm else none) }}

@@ -907,12 +907,13 @@ def _legacy_rows(now):
                 f"not read for {fleet_health.ago((now - last_ok).total_seconds())[:-4]}" + (f": {st.error}" if st and st.error else "")
         else:
             state, why = "live", None
-        alarm = legacy.alarm_info((c or {}).get("alarm"), now)
+        drift = legacy.clock_drift(st.data) if st and st.data else None
+        alarm = legacy.alarm_info((c or {}).get("alarm"), now, drift or timedelta(0))
         recent_alarm = alarm if alarm and alarm["recent"] else None
         problem = (state in ("dark", "login", "other") or bool(c and c["tone"] == "crit")
                    or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")))
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
-                     "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem,
+                     "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
     return rows
 

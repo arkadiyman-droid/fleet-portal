@@ -175,3 +175,15 @@ def test_identify(monkeypatch):
                 "c": mock.Mock(status_code=200, headers={}, text='<obj is="useg:About">')}[url[7]]
     monkeypatch.setattr(legacy.requests, "get", get)
     assert [legacy.identify(f"http://{x}") for x in "abc"] == ["gateway", "other", "open"]
+
+
+def test_a_box_clock_an_hour_fast_is_corrected():
+    import datetime as dt
+    data = {"status": {"serverTime": "2026-10-14T22:28:02Z"}, "read_at": "2026-10-14T21:28:00"}
+    drift = legacy.clock_drift(data)
+    assert round(drift.total_seconds() / 60) == 60
+    a = legacy.alarm_info({"name": "ignitionFail", "at": "2026-10-14T18:09:00-04:00", "active": True},
+                          now=dt.datetime(2026, 10, 14, 21, 45), drift=drift)
+    assert a["when"] == "Oct 14 5:09 PM" and a["recent"] is True
+    assert legacy.clock_drift({"status": {"serverTime": "2026-10-14T21:30:00Z"}, "read_at": "2026-10-14T21:28:00"}).total_seconds() == 0
+    assert legacy.clock_drift({}).total_seconds() == 0
