@@ -18,6 +18,12 @@ KEEP="${FLEET_BACKUP_KEEP:-14}"
 url="$(sed -n "s/^DATABASE_URL=['\"]\{0,1\}\([^'\"]*\)['\"]\{0,1\}$/\1/p" "$APP_DIR/.env" | tail -1)"
 [[ -n "$url" ]] || { echo "no DATABASE_URL in $APP_DIR/.env" >&2; exit 1; }
 url="${url/postgresql+psycopg:/postgresql:}"   # SQLAlchemy dialect -> libpq URL
+# Password out of the URL and into PGPASSWORD: anything on a command line can
+# be read by every local user through /proc, an environment cannot.
+if [[ "$url" =~ ^(postgresql://[^:/@]+):([^@]*)@(.*)$ ]]; then
+  export PGPASSWORD="${BASH_REMATCH[2]}"
+  url="${BASH_REMATCH[1]}@${BASH_REMATCH[3]}"
+fi
 
 umask 077
 mkdir -p "$OUT_DIR"

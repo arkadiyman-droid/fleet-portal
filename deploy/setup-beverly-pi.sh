@@ -47,7 +47,11 @@ if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 
   DB_PASS=""
 else
   DB_PASS="$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 32)"
-  sudo -u postgres psql -qc "CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASS';"
+  # SQL on stdin, not -c: sudo logs every command line it runs, so a
+  # password inside -c would end up in the system journal.
+  sudo -u postgres psql -q -v ON_ERROR_STOP=1 <<SQL
+CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASS';
+SQL
   echo "    created role $DB_USER"
 fi
 

@@ -106,6 +106,17 @@ The database must exist before `flask db upgrade`, and `.env` must be complete
 before the service starts. So: unprivileged half (minus `db upgrade`) → privileged
 half → `db upgrade` → `sudo systemctl restart fleet-portal`.
 
+## Rotating the database password
+
+```bash
+bash ~/fleet-portal/deploy/rotate-db-password.sh && sudo systemctl restart fleet-portal
+```
+
+The role changes its own password over its existing connection; the new one
+goes only into `.env`. Do this if the password was ever exposed. (Before
+2026-10-14 the privileged half created the role with the password on psql's
+command line, which sudo wrote into the system journal; it now uses stdin.)
+
 ## Backups
 
 The privileged half also installs `fleet-portal-backup.timer`: every night at
