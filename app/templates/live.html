@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Live — Fleet Portal{% endblock %}
-{% block main_class %}wide{% endblock %}
+{% block main_class %}full{% endblock %}
 {% block head %}<meta http-equiv="refresh" content="60">
 <style>
   .lv-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
@@ -27,7 +27,7 @@
   .lv-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
   .lv-oil { height:8px; border-radius:4px; background:#fee2e2; overflow:hidden; margin:4px 10px; } .lv-oil div { height:100%; background:#16a34a; }
-  .lv-table td, .lv-table th { white-space:nowrap; font-size:13px; padding:5px 7px; }
+  .lv-table td, .lv-table th { white-space:nowrap; font-size:13.5px; padding:6px 10px; }
   /* Table view: the table scrolls inside its own box sized to the window, so
      everything above it stays put; the column headings stick to its top and
      the tick + Building columns stick to its left. */
