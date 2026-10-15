@@ -32,6 +32,7 @@
      everything above it stays put; the column headings stick to its top and
      the tick + Building columns stick to its left. */
   .lv-scroll { overflow:auto; border:1px solid var(--border); border-radius:8px; background:#fff; }
+  .lv-scroll-cards { background:transparent; border:none; border-radius:0; padding:2px 6px 10px 2px; }
   .lv-scroll .lv-table { border-radius:0; overflow:visible; }   /* base tables clip (overflow:hidden), which would stop the sticky headings */
   .lv-table thead th { position:sticky; top:0; z-index:2; background:#f3f4f6; box-shadow:inset 0 -1px 0 var(--border); }
   .lv-table .pin1, .lv-table .pin2 { position:sticky; z-index:1; background:#fff; }
@@ -121,26 +122,8 @@
     {% endfor %}
     </tbody></table></div>
   </form>
-  <script>
-  (function () {
-    // Fit the table's box to the rest of the window, so the page itself does not scroll.
-    const box = document.getElementById("lv-scroll");
-    const fit = () => {
-      const top = box.getBoundingClientRect().top + window.scrollY;
-      box.style.maxHeight = Math.max(320, window.innerHeight - top - 14) + "px";
-    };
-    fit();
-    window.addEventListener("resize", fit);
-    // The page reloads every minute: keep the viewer's place in the table.
-    const key = "lv-scroll:" + location.search;
-    try { const p = JSON.parse(sessionStorage.getItem(key) || "null"); if (p) { box.scrollTop = p[0]; box.scrollLeft = p[1]; } } catch (e) {}
-    box.addEventListener("scroll", () => {
-      try { sessionStorage.setItem(key, JSON.stringify([box.scrollTop, box.scrollLeft])); } catch (e) {}
-    }, {passive: true});
-  })();
-  </script>
   {% else %}
-  <div class="lv-grid">
+  <div class="lv-scroll lv-scroll-cards" id="lv-scroll"><div class="lv-grid">
   {% for r in rows %}{% set c = r.c or {} %}
     <div class="lv-card {{ 'dark' if r.state != 'live' }}">
       <div class="lv-head">
@@ -183,6 +166,26 @@
       {% else %}<div class="lv-foot">read {{ r.age }}</div>{% endif %}
     </div>
   {% endfor %}
-  </div>
+  </div></div>
   {% endif %}
+  <script>
+  (function () {
+    // Both views: the table or the cards scroll inside a box fitted to the rest
+    // of the window, so the title, filters and legend above never scroll away.
+    const box = document.getElementById("lv-scroll");
+    if (!box) return;
+    const fit = () => {
+      const top = box.getBoundingClientRect().top + window.scrollY;
+      box.style.maxHeight = Math.max(320, window.innerHeight - top - 14) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    // The page reloads every minute: keep the viewer's place (per view and filter).
+    const key = "lv-scroll:" + location.search;
+    try { const p = JSON.parse(sessionStorage.getItem(key) || "null"); if (p) { box.scrollTop = p[0]; box.scrollLeft = p[1]; } } catch (e) {}
+    box.addEventListener("scroll", () => {
+      try { sessionStorage.setItem(key, JSON.stringify([box.scrollTop, box.scrollLeft])); } catch (e) {}
+    }, {passive: true});
+  })();
+  </script>
 {% endblock %}
