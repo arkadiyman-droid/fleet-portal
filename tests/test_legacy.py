@@ -239,3 +239,23 @@ def test_plant_colours_match_anagha():
 def test_every_colour_says_why():
     why = legacy.tint({"out": 58, "aqua": 84}, 79, 68, 625, [(0, "Out", 58)])
     assert "11 F above the desired 68 F" in why["inside"][1] and "84 F" in why["aqua"][1] and "625" in why["stack"][1]
+
+
+# ── matched against Anagha's Live page (2026-10-15) ─────────────────────────
+
+def test_run_times_add_up_all_boilers():
+    st = {"boiler1HWtrRunMinutes": "121", "boiler2HWtrRunMinutes": "184", "boiler1HeatRunMinutes": "38",
+          "boiler2HeatRunMinutes": "974", "callForHeat": "Outsd Sat"}
+    c = legacy.card({"status": st})
+    assert (c["hw_rt"], c["heat_rt"], c["total_rt"]) == (305, 1012, 1317)        # Anagha: 05:05 and 16:52
+    assert c["boilers"] == [(1, 38, 121), (2, 974, 184)]
+    assert legacy.card({"status": {"callForHeat": "Outsd Sat"}})["heat_rt"] is None
+
+
+def test_a_status_code_missing_its_first_letters():
+    assert legacy.status_code("afety") == "Safety"
+    assert legacy.status_code("tsd Sat") == "Outsd Sat" and legacy.status_code("utsd Sat") == "Outsd Sat"
+    assert legacy.status_code(" Safety ") == "Safety"
+    assert legacy.status_code("Sat") == "Sat"                                    # too short to guess
+    assert legacy.status_code("Byp On") == "Byp On"                              # ends three codes: no guess
+    assert legacy.card({"status": {"callForHeat": "afety"}})["tone"] == "crit"

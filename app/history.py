@@ -92,7 +92,7 @@ def reading(box_id, ts, data) -> dict:
     st = (data or {}).get("status") or {}
     c = legacy.card(data or {})
     return {
-        "box_id": box_id, "ts": ts, "code": (st.get("callForHeat") or "").strip()[:12] or None,
+        "box_id": box_id, "ts": ts, "code": legacy.status_code(st.get("callForHeat"))[:12] or None,
         "out": _small(c["out"]), "inside": _small(c["inside"]), "dit": _small(c["dit"]),
         "aqua": _small(c["aqua"]), "coil": _small(c["coil"]), "mix": _small(c["mix"]),
         "supp": _small(c["supp"]), "retn": _small(c["retn"]), "risr": _small(c["risr"]),
@@ -149,8 +149,8 @@ def changes(box_id, ts, prev_data, ok, data, error=None) -> list:
     from app import legacy
     out = []
     if ok and prev_data and prev_data.get("status"):
-        old = ((prev_data.get("status") or {}).get("callForHeat") or "").strip()
-        new = (((data or {}).get("status") or {}).get("callForHeat") or "").strip()
+        old = legacy.status_code((prev_data.get("status") or {}).get("callForHeat"))
+        new = legacy.status_code(((data or {}).get("status") or {}).get("callForHeat"))
         if old and new and old != new:
             words = lambda code: legacy.STATUS.get(code, (code, ""))[0]
             out.append({"box_id": box_id, "ts": ts, "kind": "status", "code": new[:40],

@@ -74,6 +74,18 @@ ROLES = [("out", ("out",)), ("aqua", ("aqu",)), ("coil", ("coi",)), ("mix", ("mi
          ("supp", ("hwts", "sup")), ("retn", ("hwtr", "ret", "cond")), ("risr", ("rsr", "ris"))]
 
 
+def status_code(raw) -> str:
+    """The box's heat-mode code. Now and then a box drops the first letters
+    of it ("afety", "tsd Sat", "utsd Sat": once each in a night, 2026-10-15),
+    which read as no status, a missed Safety, and false status changes. A
+    code that is the unique ending of a known one is that code."""
+    code = (raw or "").strip()
+    if code in STATUS or len(code) < 4:
+        return code
+    hits = [k for k in STATUS if k.endswith(code)]
+    return hits[0] if len(hits) == 1 else code
+
+
 def values(xml: str) -> dict:
     """{name: val} from an oBIX reply (the gateway's XML is line-oriented and
     not always well-formed, so this is a tolerant scan, not an XML parser)."""
@@ -181,9 +193,13 @@ def card(data: dict) -> dict:
         for _i, nm, val in temps:
             if nm.lower().startswith(prefixes) and key not in role:
                 role[key] = val
-    code = (st.get("callForHeat") or "").strip()
+    code = status_code(st.get("callForHeat"))
     phrase, tone = STATUS.get(code, (code or "No status", "idle"))
-    heat, hw = _int(st.get("boiler1HeatRunMinutes")), _int(st.get("boiler1HWtrRunMinutes"))
+    # Run times are the sum over the box's boilers, as Anagha shows them
+    # (checked 2026-10-15: 101-109 Lowell's hot water 121 + 184 = Anagha's 305).
+    runs = [(i, _int(st.get(f"boiler{i}HeatRunMinutes")), _int(st.get(f"boiler{i}HWtrRunMinutes"))) for i in range(1, 5)]
+    total = lambda k: (sum(r[k] or 0 for r in runs) if any(r[k] is not None for r in runs) else None)
+    heat, hw = total(1), total(2)
     gallons, level = _int(st.get("gallons")), _int(st.get("fuelLevel"))
     apts = [_int(st[k]) for k in sorted(st, key=lambda k: int(k[20:] or 0) if k[20:].isdigit() else 0)
             if k.startswith("apartmentTemperature")]
@@ -196,7 +212,7 @@ def card(data: dict) -> dict:
         "water": _int(st.get("waterMeterCount")),
         "supp": role.get("supp"), "retn": role.get("retn"), "risr": role.get("risr"),
         "oil_pct": level if (gallons or level) else None,
-        "boiler2_heat": _int(st.get("boiler2HeatRunMinutes")),
+        "boilers": [(i, h, w) for i, h, w in runs if h or w],     # per boiler, those that ran today
         "temps": temps, "apartments": [a for a in apts if a],
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
