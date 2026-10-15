@@ -177,7 +177,7 @@
     if (!box) return;
     const fit = () => {
       const top = box.getBoundingClientRect().top + window.scrollY;
-      box.style.maxHeight = Math.max(320, window.innerHeight - top - 14) + "px";
+      box.style.maxHeight = Math.max(320, window.innerHeight - top - 20) + "px";
     };
     fit();
     window.addEventListener("resize", fit);

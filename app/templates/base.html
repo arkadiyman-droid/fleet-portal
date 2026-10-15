@@ -29,7 +29,10 @@
     header form { margin: 0; }
     header button { background: none; border: none; color: var(--muted); cursor: pointer; font: inherit; }
     header button:hover { color: var(--text); }
-    main { max-width: 960px; margin: 32px auto; padding: 0 24px; }
+    /* Every page fills the window, whatever the screen: the grids below add
+       columns as room allows, and the gutter grows a little on big screens.
+       Forms keep their own readable width (.form-panel). */
+    main { max-width: none; margin: 16px 0 16px; padding: 0 clamp(12px, 1.5vw, 32px); }
     .flash { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 13px; }
     .flash-success { background: #ecfdf3; color: var(--success); border: 1px solid #bbf7d0; }
     .flash-error { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; }
@@ -67,8 +70,7 @@
     /* ── Fleet dashboard (overview + controller pages) ─────────────────── */
     :root { --ok: #16a34a; --ok-bg: #ecfdf3; --warn: #b45309; --warn-bg: #fffbeb; --warn-line: #f59e0b;
             --crit: #dc2626; --crit-bg: #fef2f2; --info: #2563eb; --info-bg: #eff6ff; --unk: #6b7280; --unk-bg: #f3f4f6; }
-    main.wide { max-width: 1280px; }
-    main.full { max-width: none; margin: 14px 0 0; padding: 0 18px; }   /* the whole window: Live */
+    main.wide, main.full { max-width: none; }   /* kept for the pages that name them; same as the default now */
     .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
     .tile { display: block; background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
             padding: 12px 14px; text-decoration: none; color: var(--text); }
@@ -127,7 +129,7 @@
     .banner.crit { background: var(--crit-bg); color: var(--crit); } .banner.info { background: var(--info-bg); color: var(--info); }
     .banner.unknown { background: var(--unk-bg); color: var(--unk); }
     @media (max-width: 640px) { header { height: auto; flex-wrap: wrap; padding: 8px 16px; gap: 8px; } nav { flex-wrap: wrap; gap: 10px; }
-      main { padding: 0 16px; margin-top: 16px; } .cards { grid-template-columns: 1fr; }
+      main { padding: 0 12px; margin-top: 12px; } .cards { grid-template-columns: 1fr; }
       .tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; } .tile { padding: 8px 10px; }
       .tile .n { font-size: 20px; } .tile .l { font-size: 10px; } .refresh-note { margin-left: 0; width: 100%; } }
   </style>
