@@ -78,7 +78,9 @@ def main():
                                          identity=kind, login_id=main_login.id))
                 made += 1
             else:
-                box.name = r.get("buildingName") or box.name
+                # The name is only set when a box is first added: names were
+                # matched to Anagha's afterwards (2026-10-15) and a re-run must
+                # not put the old client's spellings back.
                 if box.identity in ("unknown", "unreachable"):
                     box.identity = kind
                 updated += 1
