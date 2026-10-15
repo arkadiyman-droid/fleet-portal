@@ -169,4 +169,6 @@ def test_the_live_pop_up_chart(app, session, two, client):
     r = client.get(f"/live/{cold.id}/series.json?days=7&keys=inside,out")
     assert r.status_code == 200 and r.get_json()["name"] == "Cold Bldg"
     page = client.get("/live?view=table").data.decode()
-    assert 'data-box="%d"' % cold.id in page and "lvx-chart" in page and "http-equiv" not in page
+    assert 'data-box="%d"' % cold.id in page and "sensorchart.js" in page and "http-equiv" not in page
+    box = client.get(f"/live/{cold.id}").data.decode()                       # the box page: same chart, by click
+    assert "sensorchart.js" in box and 'data-k="apt1"' in box and 'data-k="sys0"' in box and 'data-k="inside"' in box

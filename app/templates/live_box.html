@@ -17,8 +17,10 @@
 </style>
 {% endblock %}
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
+{# a temperature that opens its chart when clicked (static/js/sensorchart.js) #}
+{% macro trow(k, v, key) -%}<div class="k">{{ k }}</div>{% if v is not none and v != '' and v != 0 or (key == 'out' and v == 0) %}<div class="v"><span class="lv-t" data-k="{{ key }}" title="Click for the chart">{{ v }}</span></div>{% else %}<div class="v">—</div>{% endif %}{%- endmacro %}
 
-{% block content %}
+{% block content %}<div data-box="{{ r.box.id }}">
   {% set c = r.c or {} %}{% set b = r.box %}
   <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
   <div class="page-head"><h1>{{ b.name }}{% if not b.is_active %} <span class="chip warn">hidden</span>{% endif %}</h1>
@@ -60,16 +62,18 @@
 
   <div class="sections" style="margin-top:14px">
     <div class="section"><h2>Building</h2><div class="kv">
-      {{ row('Outside', c.out) }}{{ row('Inside average', c.inside) }}{{ row('Desired inside (DIT)', c.dit) }}
+      {{ trow('Outside', c.out, 'out') }}{{ trow('Inside average', c.inside, 'inside') }}{{ trow('Desired inside (DIT)', c.dit, 'dit') }}
       {{ row('Status code', c.code) }}
-      {{ row('Apartment sensors', (c.apartments|join(', ')) if c.apartments else none) }}
+      <div class="k">Apartment sensors</div><div class="v">{% for i, v in (c.apt_list or []) %}<span class="lv-t" data-k="apt{{ i }}" title="Apartment sensor #{{ i + 1 }}: click for the chart">{{ v }}</span>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</div>
     </div></div>
     <div class="section"><h2>Run times today</h2><div class="kv">
       {{ row('Heat (all boilers)', hhmm(c.heat_rt)) }}{{ row('Hot water (all boilers)', hhmm(c.hw_rt)) }}{{ row('Total', hhmm(c.total_rt)) }}
       {% if (c.boilers or [])|length > 1 %}{% for i, h, w in c.boilers %}{{ row('Boiler ' ~ i, 'heat ' ~ hhmm(h) ~ ' · hot water ' ~ hhmm(w)) }}{% endfor %}{% endif %}
     </div></div>
     <div class="section"><h2>Plant</h2><div class="kv">
-      {{ row('Stack', c.stack) }}{{ row('High stack', c.hi_stack) }}{{ row('Water meter', c.water) }}
+      {{ trow('Aquastat', c.aqua, 'aqua') }}{{ trow('Supply', c.supp, 'supp') }}{{ trow('Return', c.retn, 'retn') }}
+      {{ trow('Riser', c.risr, 'risr') }}{{ trow('Coil', c.coil, 'coil') }}{{ trow('Mix', c.mix, 'mix') }}
+      {{ trow('Stack', c.stack, 'stack') }}{{ trow('High stack', c.hi_stack, 'hi_stack') }}{{ row('Water meter', c.water) }}
       {% if c.oil_pct is not none %}{{ row('Oil', (c.oil_pct ~ ' %')) }}{% endif %}
     </div></div>
     <div class="section"><h2>Box</h2><div class="kv">
@@ -138,11 +142,12 @@
   {% if c.temps %}
   <div class="section" style="margin-top:14px"><h2>All system temperatures (the box's own sensor names)</h2>
     <table><thead><tr>{% for i, name, val in c.temps %}<th>{{ name }}</th>{% endfor %}</tr></thead>
-      <tbody><tr>{% for i, name, val in c.temps %}<td>{{ '—' if val is none else val }}</td>{% endfor %}</tr></tbody></table>
+      <tbody><tr>{% for i, name, val in c.temps %}<td>{% if val %}<span class="lv-t" data-k="sys{{ i }}" title="{{ name }}: click for the chart">{{ val }}</span>{% else %}{{ '—' if val is none else val }}{% endif %}</td>{% endfor %}</tr></tbody></table>
   </div>
   {% endif %}
 
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sensorchart.js') }}"></script>
 <script>
 (function () {
   const url = {{ url_for('admin.live_history', box_id=b.id)|tojson }};
@@ -200,4 +205,5 @@
   load(["1", "2", "7", "30", "90", "365"].includes(key) ? key : "2");
 })();
 </script>
+</div>
 {% endblock %}

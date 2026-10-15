@@ -237,6 +237,9 @@ def card(data: dict) -> dict:
         "boilers": [(i, h, w) for i, h, w in runs if h or w],     # per boiler, those that ran today
         "n_boilers": boilers(data), "fuel": fuel(data),
         "temps": temps, "apartments": [a for a in apts if a],
+        # (sensor number from 0, reading) of the apartment sensors that read, for the charts
+        "apt_list": sorted((int(k[20:]), _int(v)) for k, v in st.items()
+                           if k.startswith("apartmentTemperature") and k[20:].isdigit() and _int(v)),
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
     } | {"tint": tint(role, _int(st.get("averageTemperature")), _int(st.get("targetInsideTemperature")),

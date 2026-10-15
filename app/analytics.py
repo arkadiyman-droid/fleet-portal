@@ -389,9 +389,9 @@ def sensor_catalog(box):
     st, names = data.get("status") or {}, data.get("names") or {}
     out = [{"key": k, "label": l, "group": "Main"} for k, l in BASE_SENSORS]
     for i in range(16):
-        name = (names.get(f"systemSensorName{i}") or "").strip()
+        name = (names.get(f"systemSensorName{i}") or "").strip() or f"#{i}"
         v = history._num(st.get(f"systemTemperature{i}"))
-        if name and v not in (None, 0):
+        if v not in (None, 0):
             out.append({"key": f"sys{i}", "label": name, "group": "Box sensors"})
     for i in range(32):
         v = history._num(st.get(f"apartmentTemperature{i}"))
