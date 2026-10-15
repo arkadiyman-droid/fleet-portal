@@ -2,7 +2,7 @@
  * app/static/js/sensorchart.js — the "click a temperature" chart window
  * (Live page and a box's page). Needs charts.js first.
  *
- * Any element with class "lv-t" and data-k="<sensor key>" inside an element
+ * Any element with class "lv-t" and data-k="<sensor key>[,<key>...]" inside an element
  * with data-box="<box id>" opens the window: that sensor as a line, chips to
  * add the box's other sensors, and the burner's heat / hot-water minutes per
  * hour as stacked bars under it on the same time axis. Data comes from
@@ -34,7 +34,8 @@
   .lvx-grp b { font-size:12px; color:var(--muted); min-width:96px; }
   .lvx-chip { border:1px solid var(--border); background:#fff; border-radius:14px; padding:2px 10px; font:inherit; font-size:12.5px; cursor:pointer; }
   .lvx-chip.on { color:#fff; border-color:transparent; }
-  .lvx-note { font-size:12px; color:#b45309; margin:6px 0 0; }`;
+  .lvx-note { font-size:12px; color:#b45309; margin:6px 0 0; }
+  .lv-chartbtn { display:inline-block; font-size:11px; font-weight:600; padding:0 7px; border:1px solid #bfdbfe; border-radius:10px; color:#1d4ed8; background:#eff6ff; margin-left:6px; vertical-align:1px; }`;
   document.head.appendChild(css);
 
   const dlg = document.createElement("div");
@@ -54,7 +55,8 @@
   function open(box, key) {
     let days = "1";
     try { days = localStorage.getItem("lvx-days") || "1"; } catch (e) {}
-    cur = {box: String(box), keys: [key], days, catalog: null};
+    const keys = String(key).split(",").map(k => k.trim()).filter(Boolean);
+    cur = {box: String(box), keys, days, catalog: null};
     dlg.hidden = false;
     document.body.style.overflow = "hidden";
     load();

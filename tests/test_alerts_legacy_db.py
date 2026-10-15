@@ -77,6 +77,7 @@ def test_safety_two_reads_then_recovered(app, session, sent, client):
 
     page = client.get("/alerts").data.decode()
     assert "0 Bedell St" in page and "2010 box" in page and "Status: Safety." in page
+    assert 'data-box="%d"' % b.id in page and 'data-k="stack,aqua,inside"' in page and "sensorchart.js" in page
     assert "In alarm" in client.get(f"/live/{b.id}").data.decode()
 
     _read(session, b, T0 + dt.timedelta(minutes=15), code="Safety")
@@ -115,6 +116,11 @@ def test_dark_after_reading_but_never_answered_is_quiet(app, session, sent):
         _read(session, reading, T0 + dt.timedelta(minutes=minute), ok=False)
         _check(app, session, minute)
     assert len(sent) == 1 and sent[0][0] == "ALERT: 0 Bedell St" and "Not answering since" in sent[0][1]
+    from flask import render_template_string
+    with app.test_request_context():
+        macro = render_template_string(open("app/templates/alerts.html", encoding="utf-8").read().split("{% block content %}")[0]
+                                       .split("{% macro ckeys")[1].join(["{% macro ckeys", ""]) + "{{ ckeys('Not answering since 5 PM.') }}")
+    assert macro.strip() == "inside,out"                                      # a quiet box: where its data stops
     _read(session, reading, T0 + dt.timedelta(minutes=45))
     _check(app, session, 45)
     assert sent[-1][0] == "Recovered: 0 Bedell St"
