@@ -112,6 +112,8 @@ def test_analytics_and_pages(app, session, two, client):
         assert "Cold Bldg" in page and "Heat-season minimum" in page and "Every building" in page
         csv = client.get("/analytics.csv?period=7").data.decode()
         assert csv.splitlines()[0].startswith("building,answered_pct") and "Cold Bldg" in csv
+        assert "sensorchart.js" in page and 'data-box="%d"' % cold.id in page             # temperatures open the chart
+        assert 'data-k="inside"' in page and 'data-k="apt1"' in page                       # worst sensor #2 -> apt1
     finally:
         an.portfolio = orig
 
