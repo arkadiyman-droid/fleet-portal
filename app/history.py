@@ -114,6 +114,7 @@ def alarm_key(data):
 
 
 DARK_AFTER_MISSES = 2       # one missed read is a reset connection, not a dark box
+NO_ALARM_AFTER = 12         # empty alarm answers in a row before "this box has no alarm" is believed
 
 
 def remember(prev_data, ok, data):
@@ -125,11 +126,16 @@ def remember(prev_data, ok, data):
         out = dict(data)
         out["fails"] = 0
         if out.get("alarm"):
-            out["last_alarm"] = alarm_key(out)
-        elif "last_alarm" in prev_data:
-            out["last_alarm"] = prev_data["last_alarm"]
+            out["last_alarm"], out["empty_alarms"] = alarm_key(out), 0
         else:
-            out["last_alarm"] = ""
+            # A box that flickers never answers empty for an hour straight, so
+            # its old alarm is never mistaken for a new one when it reappears;
+            # a box that truly has none is believed after NO_ALARM_AFTER reads.
+            out["empty_alarms"] = int(prev_data.get("empty_alarms") or 0) + 1
+            if "last_alarm" in prev_data:
+                out["last_alarm"] = prev_data["last_alarm"]
+            elif out["empty_alarms"] >= NO_ALARM_AFTER:
+                out["last_alarm"] = ""
         return out
     out = dict(prev_data)
     out["fails"] = int(prev_data.get("fails") or 0) + 1

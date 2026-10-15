@@ -69,7 +69,7 @@ def _cycle(prev, ok, data=None, error=None):
 
 def test_events():
     st = lambda code, alarm=None: {"status": {"callForHeat": code}, "alarm": alarm}
-    first, ev = _cycle({}, True, st("Outsd Sat"))
+    first, ev = _cycle({}, True, st("Outsd Sat", {"name": "emsRestart", "at": "2026-01-01T07:00:00-05:00"}))
     assert ev == []                                                           # first read: nothing to compare
     now = history.remember(first, True, st("Safety"))
     ev = history.changes(1, H, first, True, now)
@@ -92,6 +92,19 @@ def test_events():
     assert ev == []
     _a3, ev = _cycle(a2, True, st("Safety", trip))                            # ...and the same alarm again: not news
     assert ev == []
+
+
+def test_an_old_alarm_after_empty_answers_is_not_news():
+    st = lambda alarm=None: {"status": {"callForHeat": "Outsd Sat"}, "alarm": alarm}
+    old = {"name": "ignitionFail", "at": "2026-01-02T07:00:00-05:00"}
+    s, _ = _cycle({}, True, st())                       # the first read happens to answer an empty list
+    s, ev = _cycle(s, True, st(old))                    # then the box's old alarm shows up
+    assert ev == []
+    quiet = {}
+    for _ in range(history.NO_ALARM_AFTER):             # a box that really has no alarm, for an hour
+        quiet, _ = _cycle(quiet, True, st())
+    _q, ev = _cycle(quiet, True, st(old))
+    assert ev == ["alarm"]
 
 
 def test_day_bounds_follow_new_york():
