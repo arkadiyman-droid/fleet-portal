@@ -359,3 +359,104 @@ def box_csv_rows(box_id, res, days, now=None):
         return "" if v is None else v
     header = [{"ts": "time (New York)", "hour": "hour (New York)"}.get(c, c) for c in cols]
     return header, ([cell(c, getattr(r, c)) for c in cols] for r in q.yield_per(2000))
+
+
+# ── one sensor (or several) of one box, for the Live page's pop-up chart ─────
+
+BASE_SENSORS = [("out", "Outside"), ("inside", "Inside average"), ("dit", "Desired inside"), ("aqua", "Aquastat"),
+                ("supp", "Supply"), ("retn", "Return"), ("risr", "Riser"), ("coil", "Coil"), ("mix", "Mix"),
+                ("stack", "Stack"), ("hi_stack", "High stack")]
+_HOURLY_COL = {"out": "out_avg", "inside": "in_avg", "dit": "dit", "aqua": "aqua_avg", "supp": "supp_avg",
+               "retn": "retn_avg", "stack": "stack_avg", "hi_stack": "hi_stack", "coil": "coil_max", "mix": "mix_max"}
+
+
+def _ok_temp(key, v):
+    """A reading worth plotting: 0 is how these boxes say 'no sensor'
+    (except outside, which really can be 0 F); apartments only 35-110 F."""
+    if v is None:
+        return None
+    if key == "out":
+        return v if -40 <= v <= 130 else None
+    if key.startswith("apt"):
+        return v if 35 <= v <= 110 else None
+    return v if v != 0 and -40 <= v <= 1500 else None
+
+
+def sensor_catalog(box):
+    """Every sensor this box can chart: the main ones, its own named system
+    sensors, its apartment sensors."""
+    data = (box.status.data or {}) if box.status else {}
+    st, names = data.get("status") or {}, data.get("names") or {}
+    out = [{"key": k, "label": l, "group": "Main"} for k, l in BASE_SENSORS]
+    for i in range(16):
+        name = (names.get(f"systemSensorName{i}") or "").strip()
+        v = history._num(st.get(f"systemTemperature{i}"))
+        if name and v not in (None, 0):
+            out.append({"key": f"sys{i}", "label": name, "group": "Box sensors"})
+    for i in range(32):
+        v = history._num(st.get(f"apartmentTemperature{i}"))
+        if v and 35 <= v <= 110:
+            out.append({"key": f"apt{i}", "label": f"Apartment #{i + 1}", "group": "Apartments"})
+    return out
+
+
+def box_sensor_series(box, days, keys, now=None) -> dict:
+    """Chart data for the pop-up: the requested sensors' lines (every read up
+    to 7 days, hourly averages beyond), and burner minutes per hour (heat,
+    hot water) on the same time axis. Box sensors are only in the reads."""
+    from app.models import LegacyHourly, LegacyReading
+    now = now or _dt.datetime.utcnow()
+    start = now - _dt.timedelta(days=days)
+    catalog = sensor_catalog(box)
+    labels = {c["key"]: c["label"] for c in catalog}
+    keys = [k for k in keys if k in labels][:12]
+    out = {"range": [_ms(start), _ms(now)], "labels": {k: labels[k] for k in keys}, "catalog": catalog,
+           "series": {}, "days": days, "note": None}
+    hours = {}
+    if days <= 7:
+        rs = LegacyReading.query.filter(LegacyReading.box_id == box.id, LegacyReading.ts >= start - history.LOOKBACK) \
+            .order_by(LegacyReading.ts).all()
+        shown = [r for r in rs if r.ts >= start]
+        out["res"] = "every read"
+        out["t"] = [_ms(r.ts) for r in shown]
+
+        def val(r, k):
+            if k.startswith("sys"):
+                arr, i = r.sys or [], int(k[3:])
+            elif k.startswith("apt"):
+                arr, i = r.apt or [], int(k[3:])
+            else:
+                return _ok_temp(k, getattr(r, k))
+            return _ok_temp(k, arr[i] if i < len(arr) else None)
+        for k in keys:
+            out["series"][k] = [val(r, k) for r in shown]
+        nb = range(1, 5)
+        for a, b in zip(rs, rs[1:]):                  # run minutes per hour, from the counters
+            if b.ts < start:
+                continue
+            h = history.floor_hour(b.ts)
+            heat = sum(history.used([a, b], f"heat{i}") for i in nb)
+            hw = sum(history.used([a, b], f"hw{i}") for i in nb)
+            acc = hours.setdefault(h, [0, 0])
+            acc[0] += heat
+            acc[1] += hw
+    else:
+        hs = LegacyHourly.query.filter(LegacyHourly.box_id == box.id, LegacyHourly.hour >= start) \
+            .order_by(LegacyHourly.hour).all()
+        out["res"] = "hourly averages"
+        out["t"] = [_ms(h.hour) for h in hs]
+        for k in keys:
+            if k.startswith("apt"):
+                i = int(k[3:])
+                out["series"][k] = [(h.apt_avg[i] if h.apt_avg and len(h.apt_avg) > i else None) for h in hs]
+            elif k in _HOURLY_COL:
+                out["series"][k] = [_ok_temp(k, getattr(h, _HOURLY_COL[k])) for h in hs]
+            else:
+                out["series"][k] = [None] * len(hs)
+                out["note"] = "Box sensors and the riser are kept as every read for 90 days, not as hourly summaries: pick 7 days or less for them."
+        for h in hs:
+            hours[h.hour] = [h.heat_min, h.hw_min]
+    hk = sorted(hours)
+    out["bars"] = {"t": [_ms(h) for h in hk], "heat": [min(hours[h][0], 240) for h in hk],
+                   "hw": [min(hours[h][1], 240) for h in hk], "step": "hour"}
+    return out

@@ -1076,6 +1076,19 @@ def live_history(box_id):
     return jsonify(analytics.box_series(b.id, days))
 
 
+@admin_bp.route("/live/<int:box_id>/series.json")
+def live_series(box_id):
+    """The Live page's pop-up chart: chosen sensors + burner minutes per hour."""
+    b = _live_box_or_404(box_id)
+    from app import analytics
+    days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
+    keys = [k for k in request.args.get("keys", "").split(",") if k]
+    data = analytics.box_sensor_series(b, days, keys)
+    data["name"] = b.name
+    data["url"] = url_for("admin.live_box", box_id=b.id)
+    return jsonify(data)
+
+
 def _csv_response(name, header, rows):
     import csv
     import io

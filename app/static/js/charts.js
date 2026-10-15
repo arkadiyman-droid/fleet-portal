@@ -1,7 +1,8 @@
 /*
  * app/static/js/charts.js — small, dependency-free charts for the history pages
  *
- * window.EchoCharts.line(el, {t, series, unit, height})
+ * window.EchoCharts.line(el, {t, series, unit, height, range})
+ *   range: optional [t0, t1] (ms), to line several charts up on one time axis.
  *   t: epoch ms; series: [{name, color, data, hidden}] (null = no value).
  *   Click a legend entry to show/hide it; hover for the values.
  * window.EchoCharts.bars(el, {t, series, unit, height, step})   stacked bars
@@ -125,7 +126,8 @@
       }
       let lo = Infinity, hi = -Infinity;
       shown.forEach(s => s.data.forEach(v => { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
-      const yt = niceTicks(lo, hi, 5), t0 = t[0], t1 = t[t.length - 1] === t0 ? t0 + 3600e3 : t[t.length - 1];
+      const yt = niceTicks(lo, hi, 5);
+      const t0 = o.range ? o.range[0] : t[0], t1 = o.range ? o.range[1] : (t[t.length - 1] === t0 ? t0 + 3600e3 : t[t.length - 1]);
       const x = v => M.left + (v - t0) / (t1 - t0) * f.iw;
       const y = v => M.top + f.ih - (v - yt[0]) / (yt[yt.length - 1] - yt[0]) * f.ih;
       axes(f.s, f, x, y, yt, timeTicks(t0, t1, f.iw), o.unit);
@@ -177,7 +179,8 @@
       }
       const step = o.step === "day" ? 864e5 : 3600e3;
       const tot = t.map((_, i) => shown.reduce((a, s) => a + (s.data[i] || 0), 0));
-      const yt = niceTicks(0, Math.max(1, ...tot), 4), t0 = t[0], t1 = t[t.length - 1] + step;
+      const yt = niceTicks(0, Math.max(1, ...tot), 4);
+      const t0 = o.range ? o.range[0] : t[0], t1 = o.range ? o.range[1] : t[t.length - 1] + step;
       const x = v => M.left + (v - t0) / (t1 - t0) * f.iw;
       const y = v => M.top + f.ih - v / yt[yt.length - 1] * f.ih;
       axes(f.s, f, x, y, yt, timeTicks(t0, t1, f.iw), o.unit);
@@ -196,6 +199,7 @@
       hit.addEventListener("mousemove", ev => {
         const r = f.s.getBoundingClientRect(), px = (ev.clientX - r.left) * f.W / r.width;
         const i = nearest(t, t0 + (px - M.left) / f.iw * (t1 - t0) - step / 2);
+        if (i < 0 || i >= t.length) return;
         tip.innerHTML = `<b>${(o.step === "day" ? fmt.day : fmt.full).format(t[i])}</b>` +
           shown.map(s => `<br><span style="color:${s.color}">&#9632;</span> ${s.name}: ${s.data[i] || 0}${o.unit || ""}`).join("");
         place(tip, el, ev.clientX - el.getBoundingClientRect().left, ev.clientY - el.getBoundingClientRect().top);

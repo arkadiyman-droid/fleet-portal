@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Live — Fleet Portal{% endblock %}
 {% block main_class %}full{% endblock %}
-{% block head %}<meta http-equiv="refresh" content="60">
+{% block head %}
 <style>
   .lv-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
   .lv-bar a.f { padding:4px 10px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:13px; background:#fff; }
@@ -53,6 +53,27 @@
   .lv-fire.on { color:#dc2626; } .lv-fire.off { color:#d1d5db; }
   .lv-legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 12px; }
   .lv-legend i { display:inline-block; width:14px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; font-style:normal; }
+  /* sortable headings */
+  .lv-table thead th:not(.pin1) { cursor:pointer; user-select:none; }
+  .lv-table thead th.s-asc::after { content:" \25B4"; } .lv-table thead th.s-desc::after { content:" \25BE"; }
+  /* a temperature you can click for its chart */
+  .lv-t { cursor:pointer; } .lv-t:hover { outline:2px solid #93c5fd; outline-offset:-2px; border-radius:4px; }
+  /* the chart window */
+  .lvx { position:fixed; inset:0; z-index:50; background:rgba(15,23,42,.45); display:flex; align-items:flex-start; justify-content:center; padding:4vh 2vw; }
+  .lvx[hidden] { display:none; }
+  .lvx-box { background:#fff; border-radius:12px; width:min(1500px, 96vw); max-height:92vh; overflow:auto; padding:14px 18px 16px; box-shadow:0 20px 50px rgba(0,0,0,.25); }
+  .lvx-head { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:6px; }
+  .lvx-head h2 { margin:0 8px 0 0; font-size:17px; }
+  .lvx-head button.r { padding:3px 10px; border:1px solid var(--border); border-radius:14px; background:#fff; cursor:pointer; font:inherit; font-size:13px; color:var(--muted); }
+  .lvx-head button.r.on { background:var(--text); color:#fff; border-color:var(--text); }
+  .lvx-x { margin-left:auto; border:none; background:none; font-size:26px; line-height:1; cursor:pointer; color:var(--muted); padding:0 4px; }
+  .lvx-sub { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; font-weight:600; margin:10px 0 0; }
+  .lvx-add { margin-top:12px; border-top:1px solid var(--border); padding-top:10px; }
+  .lvx-grp { display:flex; flex-wrap:wrap; gap:5px; align-items:center; margin:4px 0; }
+  .lvx-grp b { font-size:12px; color:var(--muted); min-width:96px; }
+  .lvx-chip { border:1px solid var(--border); background:#fff; border-radius:14px; padding:2px 10px; font:inherit; font-size:12.5px; cursor:pointer; }
+  .lvx-chip.on { color:#fff; border-color:transparent; }
+  .lvx-note { font-size:12px; color:#b45309; margin:6px 0 0; }
 </style>{% endblock %}
 
 {% macro t(v) %}{{ '—' if v is none else v }}{% endmacro %}
@@ -101,19 +122,19 @@
       <th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
-      <tr{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
+      <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
         <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel %} <span class="card-sub">{{ c.fuel }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
-        <td style="text-align:center">{{ flame(r) }}</td>
+        <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
-        <td>{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
-        <td>{{ hhmm(c.heat_rt) }}</td><td>{{ hhmm(c.hw_rt) }}</td><td>{{ hhmm(c.total_rt) }}</td>
+        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
+        <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
         <td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% else %}
-        <td>{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
-        <td>{{ hhmm(c.heat_rt) }}</td><td>{{ hhmm(c.hw_rt) }}</td><td>{{ hhmm(c.total_rt) }}</td>
+        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
+        <td data-v="">{{ hhmm(c.heat_rt) }}</td><td data-v="">{{ hhmm(c.hw_rt) }}</td><td data-v="">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% endif %}
@@ -125,7 +146,7 @@
   {% else %}
   <div class="lv-scroll lv-scroll-cards" id="lv-scroll"><div class="lv-grid">
   {% for r in rows %}{% set c = r.c or {} %}
-    <div class="lv-card {{ 'dark' if r.state != 'live' }}">
+    <div class="lv-card {{ 'dark' if r.state != 'live' }}" data-box="{{ r.box.id }}">
       <div class="lv-head">
         {% if r.state == 'live' %}{% set bad = r.recent_alarm and r.recent_alarm.level != 'info' %}<span class="lv-badge {{ 'alarm' if bad }}">{{ '!' if bad else 'Ok' }}</span>
         {% else %}<span class="lv-badge {{ r.state }}">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</span>{% endif %}
@@ -169,6 +190,159 @@
   {% endfor %}
   </div></div>
   {% endif %}
+
+  <div class="lvx" id="lvx" hidden role="dialog" aria-modal="true" aria-labelledby="lvx-title">
+    <div class="lvx-box">
+      <div class="lvx-head">
+        <h2 id="lvx-title"></h2>
+        {% for k, l in [('1', '24 h'), ('2', '2 days'), ('7', '7 days'), ('30', '30 days')] %}<button class="r" type="button" data-days="{{ k }}">{{ l }}</button>{% endfor %}
+        <a id="lvx-open" class="card-sub" href="#" style="margin-left:6px">full history</a>
+        <span class="card-sub" id="lvx-res"></span>
+        <button class="lvx-x" type="button" aria-label="Close" id="lvx-close">&times;</button>
+      </div>
+      <div id="lvx-chart"></div>
+      <div class="lvx-sub">Burner run time, minutes per hour</div>
+      <div id="lvx-bars"></div>
+      <p class="lvx-note" id="lvx-note" hidden></p>
+      <div class="lvx-add" id="lvx-add"></div>
+    </div>
+  </div>
+
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+(function () {
+  "use strict";
+  const KEYS = {"Out": "out", "Avg": "inside", "Inside": "inside", "DIT": "dit", "Supp": "supp", "Retn": "retn",
+                "Risr": "risr", "Stack": "stack", "Hi stk": "hi_stack", "Hi stack": "hi_stack", "Aqua": "aqua",
+                "Aquastat": "aqua", "Coil": "coil", "Mix": "mix"};
+  const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#dc2626", "#9333ea", "#0891b2", "#ca8a04", "#db2777",
+                  "#4b5563", "#65a30d", "#7c3aed", "#0d9488"];
+  const SERIES = "{{ url_for('admin.live_series', box_id=0) }}".replace("/0/", "/__ID__/");
+  const dlg = document.getElementById("lvx");
+  let cur = null;                       // {box, keys: [...], days, catalog}
+
+  // ── clickable temperatures: a table column or a card label names the sensor ──
+  const table = document.querySelector(".lv-table");
+  if (table) {
+    const heads = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
+    table.querySelectorAll("tbody tr[data-box]").forEach(tr => Array.from(tr.cells).forEach((td, i) => {
+      const k = KEYS[heads[i]];
+      if (k && /\d/.test(td.textContent)) { td.classList.add("lv-t"); td.dataset.k = k; td.title = (td.title ? td.title + " · " : "") + "Click for the chart"; }
+    }));
+  }
+  document.querySelectorAll(".lv-card[data-box] .lv-row > div").forEach(cell => {
+    const k = KEYS[(cell.querySelector(".k") || {}).textContent?.trim()], v = cell.querySelector(".v");
+    if (k && v && /\d/.test(v.textContent)) { v.classList.add("lv-t"); v.dataset.k = k; }
+  });
+  document.addEventListener("click", ev => {
+    const el = ev.target.closest(".lv-t");
+    if (!el) return;
+    const host = el.closest("[data-box]");
+    open(host.dataset.box, el.dataset.k);
+  });
+
+  function open(box, key) {
+    let days = "1";
+    try { days = localStorage.getItem("lvx-days") || "1"; } catch (e) {}
+    cur = {box, keys: [key], days, catalog: null};
+    dlg.hidden = false;
+    document.body.style.overflow = "hidden";
+    load();
+  }
+  function close() { dlg.hidden = true; document.body.style.overflow = ""; cur = null; }
+  document.getElementById("lvx-close").addEventListener("click", close);
+  dlg.addEventListener("click", ev => { if (ev.target === dlg) close(); });
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !dlg.hidden) close(); });
+  dlg.querySelectorAll("button.r").forEach(b => b.addEventListener("click", () => {
+    cur.days = b.dataset.days;
+    try { localStorage.setItem("lvx-days", cur.days); } catch (e) {}
+    load();
+  }));
+
+  function load() {
+    dlg.querySelectorAll("button.r").forEach(b => b.classList.toggle("on", b.dataset.days === cur.days));
+    document.getElementById("lvx-res").textContent = "loading…";
+    const want = cur;
+    fetch(SERIES.replace("__ID__", cur.box) + "?days=" + cur.days + "&keys=" + encodeURIComponent(cur.keys.join(",")),
+          {credentials: "same-origin"}).then(r => r.json()).then(d => {
+      if (cur !== want) return;
+      cur.catalog = d.catalog;
+      document.getElementById("lvx-title").textContent = d.name;
+      document.getElementById("lvx-open").href = d.url + "#history";
+      document.getElementById("lvx-res").textContent = "Showing " + d.res + " · times in New York";
+      const note = document.getElementById("lvx-note");
+      note.hidden = !d.note; note.textContent = d.note || "";
+      const color = k => COLORS[cur.keys.indexOf(k) % COLORS.length];
+      EchoCharts.line(document.getElementById("lvx-chart"), {t: d.t, range: d.range, unit: "°", height: 300,
+        series: cur.keys.map(k => ({name: d.labels[k] || k, color: color(k), data: d.series[k] || [], width: 2}))});
+      const B = d.bars || {};
+      EchoCharts.bars(document.getElementById("lvx-bars"), {t: B.t || [], range: d.range, step: "hour", unit: " min", height: 140,
+        series: [{name: "Heat", color: "#f97316", data: B.heat || []}, {name: "Hot water", color: "#0ea5e9", data: B.hw || []}]});
+      chips(color);
+    }).catch(() => { document.getElementById("lvx-res").textContent = "could not load the chart"; });
+  }
+
+  // ── add / remove sensors ──
+  function chips(color) {
+    const box = document.getElementById("lvx-add");
+    box.innerHTML = '<div class="card-sub" style="margin-bottom:4px">Add to the chart (click again to remove):</div>';
+    const groups = {};
+    (cur.catalog || []).forEach(c => (groups[c.group] = groups[c.group] || []).push(c));
+    Object.entries(groups).forEach(([g, items]) => {
+      const row = document.createElement("div"); row.className = "lvx-grp";
+      const b = document.createElement("b"); b.textContent = g; row.appendChild(b);
+      items.forEach(c => {
+        const on = cur.keys.includes(c.key), chip = document.createElement("button");
+        chip.type = "button"; chip.className = "lvx-chip" + (on ? " on" : ""); chip.textContent = c.label;
+        if (on) chip.style.background = color(c.key);
+        chip.addEventListener("click", () => {
+          if (on && cur.keys.length === 1) return;          // keep at least one line
+          cur.keys = on ? cur.keys.filter(k => k !== c.key) : cur.keys.concat([c.key]).slice(0, 12);
+          load();
+        });
+        row.appendChild(chip);
+      });
+      box.appendChild(row);
+    });
+  }
+
+  // ── sort by any column: click once ascending, again descending ──
+  if (table) {
+    const ths = Array.from(table.tHead.rows[0].cells), body = table.tBodies[0];
+    const keyOf = (tr, i) => {
+      const td = tr.cells[i]; if (!td) return null;
+      if (td.dataset.v !== undefined) return td.dataset.v === "" ? null : parseFloat(td.dataset.v);
+      const s = td.textContent.trim();
+      if (!s || s === "—" || s === "never") return null;
+      const n = parseFloat(s.replace(/[^0-9.-]/g, ""));
+      return /^-?[\d.]+°?$/.test(s) ? n : s.toLowerCase();
+    };
+    const apply = (i, dir) => {
+      const rows = Array.from(body.rows);
+      rows.sort((a, b) => {
+        const x = keyOf(a, i), y = keyOf(b, i);
+        if (x === null && y === null) return 0;
+        if (x === null) return 1;                         // no reading: always last
+        if (y === null) return -1;
+        return (x < y ? -1 : x > y ? 1 : 0) * dir;
+      });
+      rows.forEach(r => body.appendChild(r));
+      ths.forEach(th => th.classList.remove("s-asc", "s-desc"));
+      ths[i].classList.add(dir > 0 ? "s-asc" : "s-desc");
+    };
+    ths.forEach((th, i) => { if (i === 0) return; th.addEventListener("click", () => {
+      const dir = th.classList.contains("s-asc") ? -1 : 1;
+      apply(i, dir);
+      try { sessionStorage.setItem("lv-sort", JSON.stringify([i, dir])); } catch (e) {}
+    }); });
+    try { const s = JSON.parse(sessionStorage.getItem("lv-sort") || "null"); if (s && ths[s[0]]) apply(s[0], s[1]); } catch (e) {}
+  }
+
+  // ── fresh readings every minute, but never while a chart is open ──
+  const reload = () => { if (dlg.hidden) location.reload(); else setTimeout(reload, 15000); };
+  setTimeout(reload, 60000);
+})();
+</script>
   <script>
   (function () {
     // Both views: the table or the cards scroll inside a box fitted to the rest

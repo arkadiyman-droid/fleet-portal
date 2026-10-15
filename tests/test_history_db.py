@@ -145,3 +145,28 @@ def test_a_poll_cycle_writes_reads_and_events(app, session):
     session.expire_all()
     assert m.LegacyReading.query.filter_by(box_id=b.id).count() == 1
     assert [e.kind for e in m.LegacyEvent.query.filter_by(box_id=b.id)] == ["dark"]
+
+
+def test_the_live_pop_up_chart(app, session, two, client):
+    import app.models as m
+    from app import analytics
+    good, cold = two
+    _fill(app, good, cold)
+    session.add(m.LegacyStatus(box_id=cold.id, polled_at=NOW, ok=True, last_ok_at=NOW, data=_data(600, True)))
+    session.commit()
+    keys = [c["key"] for c in analytics.sensor_catalog(cold)]
+    assert keys[:3] == ["out", "inside", "dit"] and "sys0" in keys and "apt1" in keys and "apt2" not in keys
+    d = analytics.box_sensor_series(cold, 1, ["supp", "sys0", "apt1", "nonsense"], now=NOW)
+    assert list(d["series"]) == ["supp", "sys0", "apt1"] and d["res"] == "every read"
+    assert len(d["t"]) == len(d["series"]["supp"]) and d["series"]["sys0"][0] == 20
+    assert d["labels"]["sys0"] == "Out" and d["range"][1] - d["range"][0] == 86400000
+    assert sum(d["bars"]["heat"]) >= 900 and len(d["bars"]["t"]) >= 23             # 40 min an hour, from the counters
+    from app import history
+    history.rollup(NOW, poll_min=5, max_hours=100)
+    h = analytics.box_sensor_series(cold, 30, ["inside", "sys0"], now=NOW)
+    assert h["res"] == "hourly averages" and h["note"] and set(h["series"]["sys0"]) == {None}   # box sensors: reads only
+    assert len(h["t"]) == 24 and h["series"]["inside"][0] == 64 and sum(h["bars"]["heat"]) == 960
+    r = client.get(f"/live/{cold.id}/series.json?days=7&keys=inside,out")
+    assert r.status_code == 200 and r.get_json()["name"] == "Cold Bldg"
+    page = client.get("/live?view=table").data.decode()
+    assert 'data-box="%d"' % cold.id in page and "lvx-chart" in page and "http-equiv" not in page
