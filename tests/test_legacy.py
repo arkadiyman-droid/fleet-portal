@@ -139,16 +139,33 @@ def test_no_login_goes_to_an_address_that_is_not_a_gateway(monkeypatch):
     assert out["ok"] is False and "no login sent" in out["error"] and made == []
 
 
+# The box's settings, shaped as 101-109 Lowell st answered them (2026-10-15).
+CONFIG_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<obj href="obix/emsConfig" is="useg:EmsConfig" >
+<int name="installationType" val="0"/>
+<int name="heatControlType" val="13"/>
+<int name="fuelType" val="0"/>
+<bool name="emsControlsBoiler2" val="false"/>
+<int name="numBoilers" val="2"/>
+<int name="numFuelMeters" val="0"/>
+<int name="numWaterMeters" val="1"/>
+<int name="relayAssignment" val="3"/>
+</obj>"""
+
+
 def test_a_full_read(monkeypatch):
     monkeypatch.setattr(legacy, "identify", lambda url: "gateway")
-    pages = {"obix/status": STATUS_XML, "obix/alarm": ALARM_XML, "obix/systemnames": NAMES_XML}
+    pages = {"obix/status": STATUS_XML, "obix/alarm": ALARM_XML, "obix/systemnames": NAMES_XML, "obix/emsConfig": CONFIG_XML}
     s = mock.Mock()
     s.get.side_effect = lambda url, timeout: resp(200, pages[url.split(":8060/")[1]])
     monkeypatch.setattr(legacy, "_session", lambda *a: s)
     out = legacy.poll_one(dict(BOX))
     assert out["ok"] and out["identity"] == "gateway"
     assert out["data"]["status"]["callForHeat"] == "Outsd Sat" and out["data"]["names"]["systemSensorName1"] == "Aqu1"
-    assert [c.args[0].rsplit("/", 2)[-2:] for c in s.get.call_args_list] == [["obix", "status"], ["obix", "alarm"], ["obix", "systemnames"]]
+    assert [c.args[0].rsplit("/", 2)[-2:] for c in s.get.call_args_list] == [["obix", "status"], ["obix", "alarm"], ["obix", "systemnames"], ["obix", "emsConfig"]]
+    assert out["data"]["config"] == {"installationType": "0", "heatControlType": "13", "fuelType": "0",
+                                     "emsControlsBoiler2": "false", "numBoilers": "2", "numFuelMeters": "0", "numWaterMeters": "1"}
+    assert legacy.boilers(out["data"]) == 2 and legacy.fuel(out["data"]) == "Gas"
 
 
 def test_a_refused_login_is_reported(monkeypatch):
@@ -243,13 +260,21 @@ def test_every_colour_says_why():
 
 # ── matched against Anagha's Live page (2026-10-15) ─────────────────────────
 
-def test_run_times_add_up_all_boilers():
+def test_run_times_add_up_the_boilers_the_box_has():
     st = {"boiler1HWtrRunMinutes": "121", "boiler2HWtrRunMinutes": "184", "boiler1HeatRunMinutes": "38",
-          "boiler2HeatRunMinutes": "974", "callForHeat": "Outsd Sat"}
-    c = legacy.card({"status": st})
-    assert (c["hw_rt"], c["heat_rt"], c["total_rt"]) == (305, 1012, 1317)        # Anagha: 05:05 and 16:52
-    assert c["boilers"] == [(1, 38, 121), (2, 974, 184)]
+          "boiler2HeatRunMinutes": "974", "boiler3HWtrRunMinutes": "866", "callForHeat": "Outsd Sat"}
+    two = {"status": st, "config": {"numBoilers": "2", "fuelType": "0"}}
+    c = legacy.card(two)
+    assert (c["hw_rt"], c["heat_rt"], c["total_rt"]) == (305, 1012, 1317)        # Anagha: 05:05 and 16:52; boiler 3 ignored
+    assert c["boilers"] == [(1, 38, 121), (2, 974, 184)] and c["fuel"] == "Gas" and c["n_boilers"] == 2
+    one = legacy.card({"status": st, "config": {"numBoilers": "1", "fuelType": "2"}})
+    assert (one["hw_rt"], one["heat_rt"], one["fuel"]) == (121, 38, "Oil")       # 217 Howard Ave's phantom boiler 2
+    unknown = legacy.card({"status": st})
+    assert (unknown["hw_rt"], unknown["fuel"]) == (121, None)                     # boiler 1 until the settings arrive
     assert legacy.card({"status": {"callForHeat": "Outsd Sat"}})["heat_rt"] is None
+    from app import history
+    r = history.reading(1, None, {"status": st, "config": {"numBoilers": "1"}})
+    assert (r["hw1"], r["hw2"], r["hw3"]) == (121, None, None)
 
 
 def test_a_status_code_missing_its_first_letters():

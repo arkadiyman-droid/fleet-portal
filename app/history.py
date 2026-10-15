@@ -91,6 +91,7 @@ def reading(box_id, ts, data) -> dict:
     from app import legacy
     st = (data or {}).get("status") or {}
     c = legacy.card(data or {})
+    nb = legacy.boilers(data)
     return {
         "box_id": box_id, "ts": ts, "code": legacy.status_code(st.get("callForHeat"))[:12] or None,
         "out": _small(c["out"]), "inside": _small(c["inside"]), "dit": _small(c["dit"]),
@@ -98,8 +99,9 @@ def reading(box_id, ts, data) -> dict:
         "supp": _small(c["supp"]), "retn": _small(c["retn"]), "risr": _small(c["risr"]),
         "stack": _small(c["stack"]), "hi_stack": _small(c["hi_stack"]),
         "valve": _small(st.get("controlValvePctOpen")), "pressure": _small(st.get("pressure0")),
-        **{f"heat{i}": _small(st.get(f"boiler{i}HeatRunMinutes")) for i in range(1, 5)},
-        **{f"hw{i}": _small(st.get(f"boiler{i}HWtrRunMinutes")) for i in range(1, 5)},
+        # only the boilers the box has (legacy.boilers): the others' counters are noise
+        **{f"heat{i}": _small(st.get(f"boiler{i}HeatRunMinutes")) if i <= nb else None for i in range(1, 5)},
+        **{f"hw{i}": _small(st.get(f"boiler{i}HWtrRunMinutes")) if i <= nb else None for i in range(1, 5)},
         "fuel_level": _small(st.get("fuelLevel")), "gallons": _int32(st.get("gallons")),
         "fuel_count": _big(st.get("fuelMeterCount")), "water_count": _big(st.get("waterMeterCount")),
         "ign_count": _small(st.get("ignitionFailCount")),

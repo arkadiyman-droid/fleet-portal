@@ -74,6 +74,27 @@ ROLES = [("out", ("out",)), ("aqua", ("aqu",)), ("coil", ("coi",)), ("mix", ("mi
          ("supp", ("hwts", "sup")), ("retn", ("hwtr", "ret", "cond")), ("risr", ("rsr", "ris"))]
 
 
+# From the box's obix/emsConfig (read with the sensor names, daily): how many
+# boilers it really has and its fuel. Boxes report run minutes for boilers
+# they do not have (217 Howard Ave, one boiler, showed 830 heat minutes on
+# "boiler 2"): Anagha sums only numBoilers, and so do we (2026-10-15).
+CONFIG_KEYS = ("numBoilers", "fuelType", "heatControlType", "installationType", "numWaterMeters", "numFuelMeters",
+               "numGasMeters", "emsControlsBoiler1", "emsControlsHotWater1", "emsControlsBoiler2", "emsControlsHotWater2")
+
+
+def boilers(data) -> int:
+    """How many boilers to count: the box's numBoilers, or 1 until it is known."""
+    n = _int(((data or {}).get("config") or {}).get("numBoilers"))
+    return min(4, n) if n and n > 0 else 1
+
+
+def fuel(data):
+    """'Gas' or 'Oil' (emsConfig fuelType: 0 = gas, anything else oil, as
+    Anagha labels them), or None until known."""
+    f = _int(((data or {}).get("config") or {}).get("fuelType"))
+    return None if f is None else ("Gas" if f == 0 else "Oil")
+
+
 def status_code(raw) -> str:
     """The box's heat-mode code. Now and then a box drops the first letters
     of it ("afety", "tsd Sat", "utsd Sat": once each in a night, 2026-10-15),
@@ -197,7 +218,8 @@ def card(data: dict) -> dict:
     phrase, tone = STATUS.get(code, (code or "No status", "idle"))
     # Run times are the sum over the box's boilers, as Anagha shows them
     # (checked 2026-10-15: 101-109 Lowell's hot water 121 + 184 = Anagha's 305).
-    runs = [(i, _int(st.get(f"boiler{i}HeatRunMinutes")), _int(st.get(f"boiler{i}HWtrRunMinutes"))) for i in range(1, 5)]
+    runs = [(i, _int(st.get(f"boiler{i}HeatRunMinutes")), _int(st.get(f"boiler{i}HWtrRunMinutes")))
+            for i in range(1, boilers(data) + 1)]
     total = lambda k: (sum(r[k] or 0 for r in runs) if any(r[k] is not None for r in runs) else None)
     heat, hw = total(1), total(2)
     gallons, level = _int(st.get("gallons")), _int(st.get("fuelLevel"))
@@ -213,6 +235,7 @@ def card(data: dict) -> dict:
         "supp": role.get("supp"), "retn": role.get("retn"), "risr": role.get("risr"),
         "oil_pct": level if (gallons or level) else None,
         "boilers": [(i, h, w) for i, h, w in runs if h or w],     # per boiler, those that ran today
+        "n_boilers": boilers(data), "fuel": fuel(data),
         "temps": temps, "apartments": [a for a in apts if a],
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
@@ -317,7 +340,9 @@ def poll_one(box: dict, now=None) -> dict:
     s = _session(box["id"], box["user"], box["password"])
     data = {}
     try:
-        for i, path in enumerate(["obix/status", "obix/alarm"] + (["obix/systemnames"] if box.get("names_due") else [])):
+        extra = (["obix/systemnames"] if box.get("names_due") else []) + \
+                (["obix/emsConfig"] if box.get("names_due") or box.get("config_due") else [])
+        for i, path in enumerate(["obix/status", "obix/alarm"] + extra):
             if i:
                 time.sleep(PAUSE)
             r = s.get(f"{box['url']}/{path}", timeout=TIMEOUT)
@@ -332,6 +357,8 @@ def poll_one(box: dict, now=None) -> dict:
                 data["status"] = values(r.text)
             elif path == "obix/alarm":
                 data["alarm"] = parse_alarm(r.text)
+            elif path == "obix/emsConfig":
+                data["config"] = {k: v for k, v in values(r.text).items() if k in CONFIG_KEYS}
             else:
                 data["names"] = {k: v for k, v in values(r.text).items() if k.startswith(("systemSensorName", "userAlarm"))}
     except requests.RequestException as e:
@@ -359,7 +386,8 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
         st = b.status
         jobs.append({"id": b.id, "url": b.url, "user": b.login.username, "password": b.login.password,
                      "verified": b.identity in ("gateway", "open"),
-                     "names_due": not (st and st.names_at and now - st.names_at < NAMES_EVERY)})
+                     "names_due": not (st and st.names_at and now - st.names_at < NAMES_EVERY),
+                     "config_due": not (st and st.data and st.data.get("config"))})
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda j: poll(j, now), jobs))
     answered = 0

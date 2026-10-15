@@ -103,7 +103,7 @@
     {% for r in rows %}{% set c = r.c or {} %}
       <tr{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
-        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a></td>
+        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel %} <span class="card-sub">{{ c.fuel }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
         <td style="text-align:center">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
@@ -130,6 +130,7 @@
         {% if r.state == 'live' %}{% set bad = r.recent_alarm and r.recent_alarm.level != 'info' %}<span class="lv-badge {{ 'alarm' if bad }}">{{ '!' if bad else 'Ok' }}</span>
         {% else %}<span class="lv-badge {{ r.state }}">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</span>{% endif %}
         <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
+        {% if c.fuel %}<span class="card-sub" style="font-size:11px" title="{{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ c.fuel }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
         {{ flame(r) }}
       </div>
       {% if r.state == 'live' or r.c %}
