@@ -1,7 +1,7 @@
 from datetime import datetime, date
 
 from sqlalchemy import CheckConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from app.crypto_types import EncryptedString
 from app.extensions import db
@@ -550,3 +550,139 @@ class LegacyAlertState(db.Model):
 
     box = db.relationship("LegacyBox", backref=db.backref("alert_state", uselist=False,
                                                           cascade="all, delete-orphan"))
+
+
+# ── History of the 2010 boxes (app/history.py, app/analytics.py) ─────────────
+#
+# Measured on the real boxes (2026-10-14): one read as JSON costs 1,173 bytes
+# (22 GB a year for ~180 boxes), typed columns 374 bytes (7 GB a year). So:
+# every read is kept typed for LEGACY_RAW_DAYS (monthly partitions, dropped
+# whole); hourly and daily summaries and the event log are kept for good.
+
+class LegacyReading(db.Model):
+    """One successful read of one box, typed. In production the table is
+    PARTITIONED BY RANGE (ts), one partition per month (migration
+    b3e7c9a1d5f2; app/history.py makes and drops them). No foreign key:
+    box rows are never removed (delete only marks them)."""
+    __tablename__ = "legacy_readings"
+    # BRIN: a few kilobytes for months of append-only, time-ordered rows
+    __table_args__ = (db.Index("ix_legacy_readings_ts", "ts", postgresql_using="brin"),)
+
+    box_id = db.Column(db.Integer, primary_key=True)
+    ts = db.Column(db.DateTime, primary_key=True)                    # UTC, when the portal read it
+    code = db.Column(db.String(12))                                  # callForHeat, e.g. "Outsd Sat"
+    out = db.Column(db.SmallInteger)                                 # the box's outside sensor
+    inside = db.Column(db.SmallInteger)                              # averageTemperature
+    dit = db.Column(db.SmallInteger)                                 # targetInsideTemperature
+    aqua = db.Column(db.SmallInteger)
+    coil = db.Column(db.SmallInteger)
+    mix = db.Column(db.SmallInteger)
+    supp = db.Column(db.SmallInteger)
+    retn = db.Column(db.SmallInteger)
+    risr = db.Column(db.SmallInteger)
+    stack = db.Column(db.SmallInteger)
+    hi_stack = db.Column(db.SmallInteger)
+    valve = db.Column(db.SmallInteger)                               # controlValvePctOpen
+    pressure = db.Column(db.SmallInteger)                            # pressure0
+    # run minutes since the box's own midnight, per boiler: heat and hot water
+    heat1 = db.Column(db.SmallInteger)
+    hw1 = db.Column(db.SmallInteger)
+    heat2 = db.Column(db.SmallInteger)
+    hw2 = db.Column(db.SmallInteger)
+    heat3 = db.Column(db.SmallInteger)
+    hw3 = db.Column(db.SmallInteger)
+    heat4 = db.Column(db.SmallInteger)
+    hw4 = db.Column(db.SmallInteger)
+    fuel_level = db.Column(db.SmallInteger)
+    gallons = db.Column(db.Integer)
+    fuel_count = db.Column(db.BigInteger)                            # meter pulse counters
+    water_count = db.Column(db.BigInteger)
+    ign_count = db.Column(db.SmallInteger)
+    outputs = db.Column(db.Integer)                                  # relay image
+    inputs = db.Column(db.Integer)
+    sys = db.Column(ARRAY(db.SmallInteger))                          # systemTemperature0..15
+    apt = db.Column(ARRAY(db.SmallInteger))                          # apartmentTemperature0..31 (0 = no sensor)
+
+
+class LegacyHourly(db.Model):
+    """One box, one hour (UTC start): kept for good. out_avg is the box's own
+    outside sensor, or the fleet's median that hour (out_fleet) when the box
+    has none. Run minutes are summed over its boilers."""
+    __tablename__ = "legacy_hourly"
+
+    box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="CASCADE"), primary_key=True)
+    hour = db.Column(db.DateTime, primary_key=True, index=True)
+    n = db.Column(db.SmallInteger, nullable=False)                   # reads in the hour
+    out_avg = db.Column(db.Float)
+    out_fleet = db.Column(db.Boolean, nullable=False, default=False)
+    in_avg = db.Column(db.Float)
+    in_min = db.Column(db.SmallInteger)
+    in_max = db.Column(db.SmallInteger)
+    dit = db.Column(db.SmallInteger)
+    aqua_avg = db.Column(db.Float)
+    aqua_max = db.Column(db.SmallInteger)
+    supp_avg = db.Column(db.Float)
+    retn_avg = db.Column(db.Float)
+    coil_min = db.Column(db.SmallInteger)
+    coil_max = db.Column(db.SmallInteger)
+    mix_min = db.Column(db.SmallInteger)
+    mix_max = db.Column(db.SmallInteger)
+    stack_avg = db.Column(db.Float)
+    stack_max = db.Column(db.SmallInteger)
+    hi_stack = db.Column(db.SmallInteger)
+    heat_min = db.Column(db.SmallInteger, nullable=False, default=0)
+    hw_min = db.Column(db.SmallInteger, nullable=False, default=0)
+    calling_min = db.Column(db.SmallInteger, nullable=False, default=0)   # status says heat is being called for
+    safety_min = db.Column(db.SmallInteger, nullable=False, default=0)    # Safety / Ignition Failure
+    bypass_min = db.Column(db.SmallInteger, nullable=False, default=0)
+    fuel = db.Column(db.Integer)                                     # meter counts used
+    water = db.Column(db.Integer)
+    hdd = db.Column(db.Float, nullable=False, default=0)             # heating degree-days (65 F base)
+    law_req = db.Column(db.SmallInteger)                             # heat-season minimum this hour, if any
+    law_low = db.Column(db.SmallInteger, nullable=False, default=0)  # apartment sensors averaging below it
+    apt_low = db.Column(db.SmallInteger)                             # lowest apartment read in the hour
+    apt_avg = db.Column(ARRAY(db.SmallInteger))                      # per sensor, the hour's average (null = none)
+
+
+class LegacyDaily(db.Model):
+    """One box, one New York calendar day, from its hourly rows."""
+    __tablename__ = "legacy_daily"
+
+    box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="CASCADE"), primary_key=True)
+    day = db.Column(db.Date, primary_key=True, index=True)
+    n = db.Column(db.Integer, nullable=False)
+    hours = db.Column(db.SmallInteger, nullable=False)
+    out_avg = db.Column(db.Float)
+    out_min = db.Column(db.Float)
+    out_max = db.Column(db.Float)
+    hdd = db.Column(db.Float, nullable=False, default=0)
+    in_avg = db.Column(db.Float)
+    in_min = db.Column(db.SmallInteger)
+    in_max = db.Column(db.SmallInteger)
+    dit = db.Column(db.SmallInteger)
+    heat_min = db.Column(db.Integer, nullable=False, default=0)
+    hw_min = db.Column(db.Integer, nullable=False, default=0)
+    calling_min = db.Column(db.Integer, nullable=False, default=0)
+    safety_min = db.Column(db.Integer, nullable=False, default=0)
+    fuel = db.Column(db.Integer)
+    water = db.Column(db.Integer)
+    water_night = db.Column(db.Integer)                              # 1 am to 5 am: leaks show here
+    law_hours = db.Column(db.SmallInteger, nullable=False, default=0)
+    law_sensor_hours = db.Column(db.Integer, nullable=False, default=0)
+    apt_low = db.Column(db.SmallInteger)
+    stack_fire = db.Column(db.Float)                                 # average hourly peak stack while firing
+    overheat_hours = db.Column(db.SmallInteger, nullable=False, default=0)
+    warm_heat_min = db.Column(db.Integer, nullable=False, default=0)  # heat run with 60 F+ outside
+
+
+class LegacyEvent(db.Model):
+    """What changed, when: status changes, box alarms, dark / back."""
+    __tablename__ = "legacy_events"
+    __table_args__ = (db.Index("ix_legacy_events_box_ts", "box_id", "ts"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    box_id = db.Column(db.Integer, db.ForeignKey("legacy_boxes.id", ondelete="CASCADE"), nullable=False)
+    ts = db.Column(db.DateTime, nullable=False, index=True)
+    kind = db.Column(db.String(10), nullable=False)                  # status | alarm | dark | back
+    code = db.Column(db.String(40))                                  # the new status code / alarm name
+    text = db.Column(db.String(200))

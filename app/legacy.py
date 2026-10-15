@@ -32,6 +32,8 @@ import requests
 from requests.auth import HTTPDigestAuth
 from sqlalchemy import text
 
+from app import history
+
 log = logging.getLogger(__name__)
 
 _LOCK_KEY = 875_219_002
@@ -297,11 +299,13 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
     with ThreadPoolExecutor(max_workers=workers) as pool:
         results = list(pool.map(lambda j: poll(j, now), jobs))
     answered = 0
+    readings, events = [], []
     for res in results:
         b = db.session.get(LegacyBox, res["id"])
         if "identity" in res:
             b.identity = res["identity"]
         row = b.status or LegacyStatus(box_id=b.id)
+        prev_ok, prev_data = (row.ok if b.status else None), dict(row.data or {})
         row.polled_at, row.ok = res["polled_at"], res["ok"]
         row.error = res.get("error")
         row.auth_failed = bool(res.get("auth_failed"))
@@ -315,8 +319,16 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
             if "names" in res["data"]:
                 row.names_at = res["polled_at"]
             row.data = merged
+            readings.append(history.reading(b.id, res["polled_at"], merged))
+        events += history.changes(b.id, res["polled_at"], prev_ok, prev_data, res.get("ok"), row.data, res.get("error"))
         db.session.add(row)
     db.session.commit()
+    if app.config.get("LEGACY_HISTORY_ENABLED", True):
+        try:
+            history.save(readings, events, now)
+        except Exception as e:                       # the Live page's readings are already saved
+            db.session.rollback()
+            log.warning("History save failed: %s", e)
     return answered
 
 
@@ -357,6 +369,13 @@ class LegacyPoller:
                                     except Exception as e:
                                         db.session.rollback()
                                         log.warning("Legacy alert check failed: %s", e)
+                                    # Then the history: hourly / daily sums, old months dropped.
+                                    if app.config.get("LEGACY_HISTORY_ENABLED", True):
+                                        try:
+                                            history.maintain(app)
+                                        except Exception as e:
+                                            db.session.rollback()
+                                            log.warning("History upkeep failed: %s", e)
                             finally:
                                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
                     finally:

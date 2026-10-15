@@ -1,7 +1,21 @@
 {% extends "base.html" %}
 {% block title %}{{ r.box.name }} — Live — Fleet Portal{% endblock %}
 {% block main_class %}wide{% endblock %}
-{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block head %}
+<style>
+  .hx-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 6px; }
+  .hx-bar button { padding:3px 10px; border:1px solid var(--border); border-radius:14px; background:#fff; cursor:pointer; font:inherit; font-size:13px; color:var(--muted); }
+  .hx-bar button.on { background:var(--text); color:#fff; border-color:var(--text); }
+  .hx h3 { font-size:13px; margin:14px 0 2px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  .hx-ev { list-style:none; padding:0; margin:4px 0 0; font-size:13px; max-height:220px; overflow:auto; }
+  .hx-ev li { padding:3px 0; border-bottom:1px solid #f1f5f9; }
+  .hx-ev .k { display:inline-block; min-width:52px; font-size:11px; font-weight:700; text-transform:uppercase; }
+  .hx-ev .status { color:#2563eb; } .hx-ev .alarm { color:#dc2626; } .hx-ev .dark { color:#6b7280; } .hx-ev .back { color:#16a34a; }
+  .hx-legend { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); margin:4px 0 0 42px; flex-wrap:wrap; }
+  .hx-legend i { display:inline-block; width:18px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px; }
+  table.hx-days td, table.hx-days th { padding:5px 8px; font-size:12.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+</style>
+{% endblock %}
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
 
 {% block content %}
@@ -69,10 +83,121 @@
     </div></div>
   </div>
 
+  <div class="section hx" style="margin-top:14px" id="history">
+    <div class="hx-bar">
+      <h2 style="margin:0 8px 0 0">History</h2>
+      {% for k, l in [('1', '24 h'), ('2', '2 days'), ('7', '7 days'), ('30', '30 days'), ('90', '90 days'), ('365', '1 year')] %}
+      <button type="button" data-days="{{ k }}">{{ l }}</button>{% endfor %}
+      <span class="card-sub" id="hx-res" style="margin-left:auto"></span>
+    </div>
+    <h3>Temperatures (F)</h3><div id="hx-temps"></div>
+    <h3>Stack (F)</h3><div id="hx-stack"></div>
+    <h3>Burner minutes</h3><div id="hx-burner"></div>
+    <h3>Apartments: hourly average per sensor</h3><div id="hx-apt"></div>
+    <div class="hx-legend" id="hx-apt-legend" style="display:none">
+      <span><i style="background:rgb(37,99,235)"></i>55</span><span><i style="background:rgb(14,165,233)"></i>64</span>
+      <span><i style="background:rgb(34,197,94)"></i>70</span><span><i style="background:rgb(234,179,8)"></i>76</span>
+      <span><i style="background:rgb(234,88,12)"></i>84+</span><span><i style="background:#dc2626"></i>below the heat-season minimum</span>
+      <span><i style="background:#f3f4f6;border:1px solid #e5e7eb"></i>no reading</span>
+    </div>
+    <h3>What changed</h3><ul class="hx-ev" id="hx-events"></ul>
+    <p class="card-sub" style="margin:10px 0 0">Download (opens in Excel):
+      <a href="{{ url_for('admin.live_history_csv', box_id=b.id, res='raw', days='7') }}">every read, 7 days</a> ·
+      <a href="{{ url_for('admin.live_history_csv', box_id=b.id, res='hourly', days='30') }}">hourly, 30 days</a> ·
+      <a href="{{ url_for('admin.live_history_csv', box_id=b.id, res='hourly', days='365') }}">hourly, 1 year</a> ·
+      <a href="{{ url_for('admin.live_history_csv', box_id=b.id, res='daily', days='365') }}">daily, 1 year</a>.
+      Every read is kept {{ raw_days }} days; hourly and daily summaries are kept for good.</p>
+  </div>
+
+  <div class="section" style="margin-top:14px">
+    <h2>Day by day</h2>
+    {% if daily %}
+    <div style="overflow-x:auto"><table class="hx-days">
+      <thead><tr><th>Day</th><th>Outside</th><th>Degree-days</th><th>Inside avg / low</th><th>Desired</th><th>Heat run</th>
+        <th>Hot water</th><th>Calling</th><th>In Safety</th><th>Below minimum</th><th>Lowest apt.</th><th>Stack firing</th><th>Reads</th></tr></thead>
+      <tbody>
+      {% for d in daily %}
+        <tr>
+          <td>{{ d.day.strftime('%a %b %d') }}</td>
+          <td>{{ '%.0f'|format(d.out_avg) if d.out_avg is not none else '—' }}</td>
+          <td>{{ '%.1f'|format(d.hdd) }}</td>
+          <td>{{ '%.0f'|format(d.in_avg) if d.in_avg is not none else '—' }} / {{ d.in_min if d.in_min is not none else '—' }}</td>
+          <td>{{ d.dit if d.dit is not none else '—' }}</td>
+          <td>{{ hhmm(d.heat_min) }}</td><td>{{ hhmm(d.hw_min) }}</td><td>{{ hhmm(d.calling_min) }}</td>
+          <td>{% if d.safety_min %}<span class="chip crit">{{ hhmm(d.safety_min) }}</span>{% else %}—{% endif %}</td>
+          <td>{% if d.law_sensor_hours %}<span class="chip crit">{{ d.law_hours }} h · {{ d.law_sensor_hours }} sensor-h</span>{% else %}—{% endif %}</td>
+          <td>{{ d.apt_low if d.apt_low is not none else '—' }}</td>
+          <td>{{ '%.0f'|format(d.stack_fire) if d.stack_fire is not none else '—' }}</td>
+          <td>{{ d.n }}{% if d.hours < 23 %} <span class="card-sub">({{ d.hours }} h)</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% else %}<div class="card-sub">The first day's summary appears after midnight (New York) once reading has run a full day.</div>{% endif %}
+  </div>
+
   {% if c.temps %}
   <div class="section" style="margin-top:14px"><h2>All system temperatures (the box's own sensor names)</h2>
     <table><thead><tr>{% for i, name, val in c.temps %}<th>{{ name }}</th>{% endfor %}</tr></thead>
       <tbody><tr>{% for i, name, val in c.temps %}<td>{{ '—' if val is none else val }}</td>{% endfor %}</tr></tbody></table>
   </div>
   {% endif %}
+
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script>
+(function () {
+  const url = {{ url_for('admin.live_history', box_id=b.id)|tojson }};
+  const C = window.EchoCharts, bar = document.querySelector(".hx-bar");
+  const KIND = {status: "status", alarm: "alarm", dark: "dark", back: "back"};
+  const when = new Intl.DateTimeFormat("en-US", {timeZone: "America/New_York", month: "short", day: "numeric",
+                                                  hour: "numeric", minute: "2-digit"});
+  let key = null;
+  try { key = localStorage.getItem("hx-days"); } catch (e) {}
+  // While the page auto-refreshes every minute, keep the range the viewer chose.
+  function load(days) {
+    bar.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.days === days));
+    try { localStorage.setItem("hx-days", days); } catch (e) {}
+    document.getElementById("hx-res").textContent = "loading…";
+    fetch(url + "?days=" + days, {credentials: "same-origin"}).then(r => r.json()).then(d => {
+      document.getElementById("hx-res").textContent = d.res ? "Showing " + d.res : "";
+      const L = d.lines || {};
+      const marks = (d.events || []).filter(e => e.kind === "status" || e.kind === "alarm")
+        .map(e => ({t: e.t, color: e.kind === "alarm" ? "#dc2626" : "#94a3b8", text: e.text}));
+      C.line(document.getElementById("hx-temps"), {t: d.t, unit: "", height: 250, marks, series: [
+        {name: "Outside", color: "#2563eb", data: L.out || []},
+        {name: "Inside average", color: "#16a34a", data: L.inside || [], width: 2.2},
+        {name: "Desired inside", color: "#16a34a", data: L.dit || [], dash: "5 4", width: 1.2},
+        {name: "Aquastat", color: "#ea580c", data: L.aqua || []},
+        {name: "Supply", color: "#dc2626", data: L.supp || [], hidden: true},
+        {name: "Return", color: "#9333ea", data: L.retn || [], hidden: true}]});
+      C.line(document.getElementById("hx-stack"), {t: d.t, unit: "", height: 150, series: [
+        {name: "Stack", color: "#6b7280", data: L.stack || []}]});
+      const B = d.bars || {};
+      C.bars(document.getElementById("hx-burner"), {t: B.t || [], step: B.step, unit: " min", height: 150, series: [
+        {name: "Heat", color: "#f97316", data: B.heat || []},
+        {name: "Hot water", color: "#0ea5e9", data: B.hw || []}]});
+      const apt = document.getElementById("hx-apt");
+      if (d.apt) {
+        C.heat(apt, {t: d.apt.t, rows: d.apt.sensors, v: d.apt.v, req: d.apt.req});
+        document.getElementById("hx-apt-legend").style.display = "";
+      } else {
+        apt.innerHTML = '<div class="card-sub">' + (d.days > 120 ? "Shown for up to 90 days: pick a shorter range."
+          : "No apartment readings in this range yet.") + "</div>";
+        document.getElementById("hx-apt-legend").style.display = "none";
+      }
+      const ul = document.getElementById("hx-events");
+      ul.innerHTML = "";
+      (d.events || []).forEach(e => {
+        const li = document.createElement("li");
+        li.innerHTML = '<span class="k ' + (KIND[e.kind] || "") + '"></span> ';
+        li.firstChild.textContent = e.kind;
+        li.appendChild(document.createTextNode(when.format(e.t) + " · " + e.text));
+        ul.appendChild(li);
+      });
+      if (!ul.children.length) ul.innerHTML = '<li class="card-sub">Nothing changed in this range.</li>';
+    }).catch(() => { document.getElementById("hx-res").textContent = "could not load the history"; });
+  }
+  bar.querySelectorAll("button").forEach(b => b.addEventListener("click", () => load(b.dataset.days)));
+  load(["1", "2", "7", "30", "90", "365"].includes(key) ? key : "2");
+})();
+</script>
 {% endblock %}

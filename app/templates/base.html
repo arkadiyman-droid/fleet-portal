@@ -139,6 +139,7 @@
       <a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
       <a href="{{ url_for('admin.adopt') }}">Adopt</a>
       {% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %}
+      {% if g.is_superuser %}<a href="{{ url_for('admin.analytics_page') }}">Analytics</a>{% endif %}
       <a href="{{ url_for('admin.updates_page') }}">Updates</a>
       <a href="{{ url_for('admin.alerts_page') }}">Alerts{% if open_alerts %} <span class="navbadge">{{ open_alerts }}</span>{% endif %}</a>
       <a href="{{ url_for('admin.list_clients') }}">Clients</a>

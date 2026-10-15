@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Analytics — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}
+<style>
+  .an-find { list-style:none; margin:0; padding:0; }
+  .an-find li { display:flex; gap:10px; align-items:baseline; padding:7px 0; border-bottom:1px solid #f1f5f9; }
+  .an-find li .cat { min-width:128px; }
+  .an-find li a { font-weight:600; color:#1e3a8a; text-decoration:none; }
+  table.an td, table.an th { padding:6px 9px; font-size:12.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  table.an th { cursor:pointer; user-select:none; position:sticky; top:0; background:#f9fafb; }
+  table.an th[title] { text-decoration:underline dotted #9ca3af; text-underline-offset:3px; }
+  table.an th.sorted::after { content:" \25BE"; } table.an th.sorted.asc::after { content:" \25B4"; }
+  table.an td.bad { color:#b91c1c; font-weight:700; } table.an td.warn { color:#b45309; font-weight:600; }
+  table.an td.good { color:#15803d; }
+  .an-note { color:var(--muted); font-size:13px; margin:0 0 12px; }
+  .an-wrap { overflow:auto; max-height:640px; border:1px solid var(--border); border-radius:8px; }
+</style>
+{% endblock %}
+
+{% macro n(v, fmt='%.0f', dash='—') -%}{{ fmt|format(v) if v is not none else dash }}{%- endmacro %}
+
+{% block content %}
+  <div class="page-head">
+    <h1>Analytics <span class="card-sub" style="font-size:15px;font-weight:400">· 2010 boxes · {{ a.label }}</span></h1>
+    <a class="btn plain" style="background:#fff;color:var(--text);border:1px solid var(--border)"
+       href="{{ url_for('admin.analytics_csv', period=a.key) }}">Download CSV</a>
+  </div>
+
+  <div class="filters">
+    {% for k, l in [('1', '24 hours'), ('7', '7 days'), ('30', '30 days'), ('90', '90 days'), ('season', 'Heating season'), ('365', '12 months')] %}
+      <a class="chip-link {% if a.key == k %}sel{% endif %}" href="{{ url_for('admin.analytics_page', period=k) }}">{{ l }}</a>
+    {% endfor %}
+  </div>
+
+  {% if not a.since %}
+  <div class="banner warn" style="margin-bottom:14px">History started being recorded with this update. The first hourly summaries
+    appear about an hour after reading starts, the first day's after midnight (New York). Every number below fills in as it accumulates.</div>
+  {% elif a.since > a.start %}
+  <p class="an-note">History is recorded since {{ local(a.since).strftime('%b %d, %Y %I:%M %p').replace(' 0', ' ') }} (New York):
+    this period is only partly covered so far, and comparisons with the previous period start once it exists.</p>
+  {% endif %}
+
+  <div class="tiles">
+    <div class="tile"><div class="n">{{ a.kpi.boxes }}<span style="font-size:14px;color:var(--muted)"> / {{ a.kpi.of }}</span></div><div class="l">Buildings with data</div></div>
+    <div class="tile"><div class="n">{{ n(a.kpi.burner_hours, '%.0f') }}</div><div class="l">Burner hours</div></div>
+    <div class="tile"><div class="n">{{ n(a.kpi.hdd, '%.1f') }}</div><div class="l">Degree-days (typical bldg)</div></div>
+    <div class="tile {% if not a.kpi.law_sensor_hours %}ok{% endif %}"><div class="n" {% if a.kpi.law_sensor_hours %}style="color:var(--crit)"{% endif %}>{{ a.kpi.law_boxes }}</div><div class="l">Bldgs below heat minimum</div></div>
+    <div class="tile {% if not a.kpi.safety_hours %}ok{% endif %}"><div class="n" {% if a.kpi.safety_hours %}style="color:var(--crit)"{% endif %}>{{ n(a.kpi.safety_hours, '%.1f') }}</div><div class="l">Hours in Safety · {{ a.kpi.trips }} trips</div></div>
+    <div class="tile"><div class="n">{{ n((a.kpi.uptime or 0) * 100, '%.0f') }}%</div><div class="l">Reads answered (median)</div></div>
+  </div>
+
+  <div class="section">
+    <h2>Findings</h2>
+    {% if a.findings %}
+    <ul class="an-find">
+      {% for f in a.findings[:25] %}
+      <li><span class="cat"><span class="chip {{ f.sev }}">{{ f.cat }}</span></span>
+        <span><a href="{{ url_for('admin.live_box', box_id=f.box.id) }}#history">{{ f.box.name }}</a>: {{ f.text }}</span></li>
+      {% endfor %}
+    </ul>
+    {% if a.findings|length > 25 %}
+    <details style="margin-top:6px"><summary class="card-sub" style="cursor:pointer">{{ a.findings|length - 25 }} more</summary>
+      <ul class="an-find">
+      {% for f in a.findings[25:] %}
+      <li><span class="cat"><span class="chip {{ f.sev }}">{{ f.cat }}</span></span>
+        <span><a href="{{ url_for('admin.live_box', box_id=f.box.id) }}#history">{{ f.box.name }}</a>: {{ f.text }}</span></li>
+      {% endfor %}
+      </ul></details>
+    {% endif %}
+    {% elif a.rows %}<div class="all-good">Nothing stands out for this period.</div>
+    {% else %}<div class="card-sub">No history in this period yet.</div>{% endif %}
+    <p class="an-note" style="margin:10px 0 0">Efficiency compares <b>burner minutes per heating degree-day</b> (65 F base):
+      the weather is taken out, so buildings compare fairly. It needs {{ '%.0f'|format(2) }}+ degree-days, so it stays blank on mild days.
+      Buildings without an outside sensor use the fleet's median outside temperature.</p>
+  </div>
+
+  <div class="section" style="margin-top:14px">
+    <h2>Heat-season minimums</h2>
+    <p class="an-note">October 1 to May 31: from 6 am to 10 pm at least {{ law.DAY_MIN }} F inside when it is below
+      {{ law.DAY_RULE_BELOW }} F outside; from 10 pm to 6 am at least {{ law.NIGHT_MIN }} F (New York City's rule, used as the benchmark).
+      An apartment sensor counts when its <b>hourly average</b> is below the minimum.</p>
+    {% set lrows = a.rows|selectattr('law_sensor_hours')|sort(attribute='law_sensor_hours', reverse=true)|list %}
+    {% if lrows %}
+    <div class="an-wrap"><table class="an sortable">
+      <thead><tr><th>Building</th><th title="Hours in which at least one apartment sensor averaged below the minimum">Hours below</th>
+        <th title="Sum over sensors of the hours each was below">Sensor-hours</th><th>Day / night hours</th>
+        <th>Lowest read</th><th>Worst sensors</th><th>Last time (New York)</th></tr></thead>
+      <tbody>
+      {% for r in lrows %}{% set d = a.law.get(r.box.id, {}) %}
+        <tr><td><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}#history">{{ r.box.name }}</a></td>
+          <td data-v="{{ r.law_hours }}" class="{{ 'bad' if r.law_hours >= 6 else 'warn' }}">{{ r.law_hours }}</td>
+          <td data-v="{{ r.law_sensor_hours }}">{{ r.law_sensor_hours }}</td>
+          <td>{{ d.get('day', 0) }} / {{ d.get('night', 0) }}</td>
+          <td data-v="{{ r.apt_low if r.apt_low is not none else 999 }}">{{ n(r.apt_low) }}{% if r.apt_low is not none %} F{% endif %}</td>
+          <td>{% for i, s in d.get('worst', []) %}#{{ i }} {{ s.hours }} h, low {{ s.low }}{% if not loop.last %} · {% endif %}{% endfor %}</td>
+          <td>{{ local(d.last).strftime('%b %d %I %p').replace(' 0', ' ') if d.get('last') else '—' }}</td></tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% elif a.rows %}<div class="all-good">No apartment sensor was below the minimum in this period.</div>
+    {% else %}<div class="card-sub">No history in this period yet.</div>{% endif %}
+  </div>
+
+  <div class="section" style="margin-top:14px">
+    <h2>Every building</h2>
+    <p class="an-note">Click a column to sort. Red = well outside the fleet; amber = worth a look. Fleet medians:
+      {{ n(a.fleet.mpd) }} burner min per degree-day, {{ hm(a.fleet.hw_day) if a.fleet.hw_day else '—' }} hot water a day,
+      stack {{ n(a.fleet.stack_fire) }} F while firing.</p>
+    {% if a.rows %}
+    <div class="an-wrap"><table class="an sortable">
+      <thead><tr>
+        <th>Building</th>
+        <th title="Share of the expected reads the box answered">Answered</th>
+        <th title="Heating degree-days in the period, from the box's outside sensor (or the fleet's)">Deg-days</th>
+        <th title="Heating burner run time, all boilers">Heat run</th>
+        <th title="Burner minutes per heating degree-day: lower is better">Min / DD</th>
+        <th title="Burner minutes per degree-day against the fleet median">× fleet</th>
+        <th title="Burner minutes per degree-day against this building's previous period of the same length">vs before</th>
+        <th>Inside avg</th><th>Desired</th>
+        <th title="Hours heating while the inside average was {{ law.OVERHEAT }}+ F above the desired temperature">Overheated h</th>
+        <th title="Heating minutes with {{ law.WARM_OUTSIDE }} F or warmer outside">Heat 60F+</th>
+        <th title="Hot-water burner run time per day">Hot water/day</th>
+        <th title="Average hourly peak stack temperature while firing">Stack firing</th>
+        <th>In Safety</th><th>Trips</th><th title="Times the box stopped answering">Dark</th>
+        <th title="Water meter counts used; share between 1 and 5 am">Water (night)</th>
+      </tr></thead>
+      <tbody>
+      {% for r in a.rows|sort(attribute='box.name') %}
+        <tr>
+          <td><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}#history">{{ r.box.name }}</a>{% if r.no_out_sensor %} <span class="card-sub" title="No outside sensor: the fleet's median outside temperature is used">*</span>{% endif %}</td>
+          <td data-v="{{ r.uptime }}" class="{{ 'warn' if r.uptime < 0.9 }}">{{ '%.0f'|format(r.uptime * 100) }}%</td>
+          <td data-v="{{ r.hdd }}">{{ '%.1f'|format(r.hdd) }}</td>
+          <td data-v="{{ r.heat }}">{{ hm(r.heat) }}</td>
+          <td data-v="{{ r.mpd if r.mpd is not none else -1 }}">{{ n(r.mpd) }}</td>
+          <td data-v="{{ r.mpd_x if r.mpd_x is not none else -1 }}" class="{{ 'bad' if r.mpd_x and r.mpd_x >= 1.4 else ('good' if r.mpd_x and r.mpd_x <= 0.8 else '') }}">{{ n(r.mpd_x, '%.2f') }}</td>
+          <td data-v="{{ r.trend if r.trend is not none else -9 }}" class="{{ 'warn' if r.trend and r.trend >= 0.25 else ('good' if r.trend and r.trend <= -0.15 else '') }}">{% if r.trend is not none %}{{ '%+.0f'|format(r.trend * 100) }}%{% else %}—{% endif %}</td>
+          <td data-v="{{ r.in_avg if r.in_avg is not none else -1 }}">{{ n(r.in_avg, '%.1f') }}</td>
+          <td data-v="{{ r.dit if r.dit is not none else -1 }}">{{ n(r.dit) }}</td>
+          <td data-v="{{ r.overheat_hours }}" class="{{ 'warn' if r.overheat_hours >= 6 }}">{{ r.overheat_hours or '—' }}</td>
+          <td data-v="{{ r.warm_heat }}" class="{{ 'warn' if r.warm_heat >= 60 }}">{{ hm(r.warm_heat) if r.warm_heat else '—' }}</td>
+          <td data-v="{{ r.hw_day }}" class="{{ 'warn' if r.hw_x and r.hw_x >= 2 and r.hw_day >= 120 }}">{{ hm(r.hw_day) if r.hw else '—' }}</td>
+          <td data-v="{{ r.stack_fire if r.stack_fire is not none else -1 }}" class="{{ 'warn' if r.stack_x and r.stack_x >= 1.3 and r.stack_fire >= 400 }}">{{ n(r.stack_fire) }}</td>
+          <td data-v="{{ r.safety }}" class="{{ 'bad' if r.safety }}">{{ hm(r.safety) if r.safety else '—' }}</td>
+          <td data-v="{{ r.trips }}" class="{{ 'bad' if r.trips }}">{{ r.trips or '—' }}</td>
+          <td data-v="{{ r.dark }}">{{ r.dark or '—' }}</td>
+          <td data-v="{{ r.water or 0 }}">{% if r.water %}{{ r.water }}{% if r.water_night %} ({{ '%.0f'|format(r.water_night / r.water * 100) }}%){% endif %}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody></table></div>
+    {% if a.rows|selectattr("no_out_sensor")|list %}<p class="an-note" style="margin:6px 0 0">* no outside sensor on the box: the fleet's median outside temperature stands in.</p>{% endif %}
+    {% else %}<div class="card-sub">No history in this period yet.</div>{% endif %}
+  </div>
+
+  <div class="section" style="margin-top:14px">
+    <h2>Apartment sensors</h2>
+    <p class="an-note">Last 48 hours: sensors stuck on one value for a day or more, or that reported and then went quiet for 6+ hours.</p>
+    {% if a.sensors %}
+    <ul class="issues">{% for s in a.sensors %}<li class="info"><a href="{{ url_for('admin.live_box', box_id=s.box.id) }}#history">{{ s.box.name }}</a>: sensor #{{ s.sensor }} {{ s.what }}</li>{% endfor %}</ul>
+    {% else %}<div class="all-good">No stuck or silent sensors found.</div>{% endif %}
+  </div>
+
+<script>
+document.querySelectorAll("table.sortable").forEach(t => {
+  t.querySelectorAll("th").forEach((th, col) => th.addEventListener("click", () => {
+    const asc = th.classList.contains("sorted") ? !th.classList.contains("asc") : col === 0;
+    t.querySelectorAll("th").forEach(h => h.classList.remove("sorted", "asc"));
+    th.classList.add("sorted"); if (asc) th.classList.add("asc");
+    const body = t.tBodies[0], rows = Array.from(body.rows);
+    const key = r => { const c = r.cells[col]; const v = c.dataset.v; return v !== undefined ? parseFloat(v) : c.textContent.trim().toLowerCase(); };
+    rows.sort((a, b) => { const x = key(a), y = key(b); return (x < y ? -1 : x > y ? 1 : 0) * (asc ? 1 : -1); });
+    rows.forEach(r => body.appendChild(r));
+  }));
+});
+</script>
+{% endblock %}

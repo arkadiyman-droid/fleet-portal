@@ -53,6 +53,10 @@ class Config:
         self.LEGACY_ALERT_AFTER_SECONDS = int(os.environ.get("LEGACY_ALERT_AFTER_SECONDS", "240"))
         self.LEGACY_DARK_MINUTES = int(os.environ.get("LEGACY_DARK_MINUTES", "30"))
         self.LEGACY_OUTAGE_SHARE = float(os.environ.get("LEGACY_OUTAGE_SHARE", "0.3"))
+        # Their history (app/history.py): every read kept this many days (whole
+        # months are dropped); hourly and daily summaries are kept for good.
+        self.LEGACY_HISTORY_ENABLED = os.environ.get("LEGACY_HISTORY_ENABLED", "1") not in ("0", "false", "False")
+        self.LEGACY_RAW_DAYS = int(os.environ.get("LEGACY_RAW_DAYS", "90"))
 
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")

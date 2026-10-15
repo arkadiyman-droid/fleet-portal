@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
+from flask import (Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request,
+                   session, stream_with_context, url_for)
 from sqlalchemy.exc import IntegrityError
 from werkzeug.security import generate_password_hash
 
@@ -1013,9 +1014,107 @@ def live_box(box_id):
     if b.deleted_at:
         abort(404)
     row = _legacy_rows(datetime.utcnow(), [b])[0]
-    from app import legacy
+    from app import history, legacy
+    from app.models import LegacyDaily, LegacyEvent
+    daily = LegacyDaily.query.filter_by(box_id=b.id).order_by(LegacyDaily.day.desc()).limit(31).all()
+    events = LegacyEvent.query.filter_by(box_id=b.id).order_by(LegacyEvent.ts.desc()).limit(30).all()
     return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm, now_utc=datetime.utcnow(),
-                           dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30))
+                           dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30), daily=daily, events=events,
+                           local=history.local, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90))
+
+
+def _live_box_or_404(box_id):
+    if not is_superuser():
+        abort(403)
+    b = LegacyBox.query.get_or_404(box_id)
+    if b.deleted_at:
+        abort(404)
+    return b
+
+
+@admin_bp.route("/live/<int:box_id>/history.json")
+def live_history(box_id):
+    b = _live_box_or_404(box_id)
+    from app import analytics
+    days = analytics.RANGES.get(request.args.get("days", "2"), 2)
+    return jsonify(analytics.box_series(b.id, days))
+
+
+def _csv_response(name, header, rows):
+    import csv
+    import io
+    import re
+
+    def gen():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(header)
+        for row in rows:
+            w.writerow(row)
+            if buf.tell() > 32768:
+                yield buf.getvalue()
+                buf.seek(0)
+                buf.truncate()
+        yield buf.getvalue()
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "export"
+    return Response(stream_with_context(gen()), mimetype="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{safe}.csv"'})
+
+
+@admin_bp.route("/live/<int:box_id>/history.csv")
+def live_history_csv(box_id):
+    b = _live_box_or_404(box_id)
+    from app import analytics
+    res = request.args.get("res", "hourly")
+    if res not in analytics.CSV_COLUMNS:
+        abort(400)
+    days = analytics.RANGES.get(request.args.get("days", "30"), 30)
+    header, rows = analytics.box_csv_rows(b.id, res, days)
+    return _csv_response(f"{b.name}_{res}_{days}d", header, rows)
+
+
+def _analytics_period():
+    from app import analytics
+    key = request.args.get("period", "7")
+    return key if key == "season" or key in analytics.PERIODS else "7"
+
+
+@admin_bp.route("/analytics")
+def analytics_page():
+    if not is_superuser():
+        abort(403)
+    from app import analytics, history
+    a = analytics.portfolio(_analytics_period(), poll_min=_poll_min())
+    return render_template("analytics.html", title="Analytics", a=a, local=history.local, hm=analytics._hm,
+                           law=history, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90))
+
+
+@admin_bp.route("/analytics.csv")
+def analytics_csv():
+    if not is_superuser():
+        abort(403)
+    from app import analytics
+    a = analytics.portfolio(_analytics_period(), poll_min=_poll_min())
+    cols = [("building", lambda r: r["box"].name), ("answered_pct", lambda r: round(r["uptime"] * 100, 1)),
+            ("heat_burner_min", "heat"), ("hot_water_burner_min", "hw"), ("degree_days", lambda r: round(r["hdd"], 1)),
+            ("burner_min_per_degree_day", "mpd"), ("x_fleet_median", "mpd_x"), ("change_vs_previous", "trend"),
+            ("inside_avg_f", "in_avg"), ("inside_min_f", "in_min"), ("outside_avg_f", "out_avg"),
+            ("desired_avg_f", "dit"), ("below_minimum_hours", "law_hours"),
+            ("below_minimum_sensor_hours", "law_sensor_hours"), ("lowest_apartment_f", "apt_low"),
+            ("safety_min", "safety"), ("trips", "trips"), ("dark_times", "dark"), ("overheated_hours", "overheat_hours"),
+            ("heating_60f_plus_min", "warm_heat"), ("hot_water_min_per_day", "hw_day"),
+            ("stack_while_firing_f", "stack_fire"), ("water_counts", "water"), ("water_night_counts", "water_night"),
+            ("no_outside_sensor", "no_out_sensor")]
+
+    def val(r, get):
+        v = get(r) if callable(get) else r[get]
+        return round(v, 2) if isinstance(v, float) else ("" if v is None else v)
+    rows = ([val(r, g) for _n, g in cols] for r in sorted(a["rows"], key=lambda r: r["box"].name.lower()))
+    return _csv_response(f"analytics_{a['key']}_{a['end']:%Y%m%d}", [n for n, _g in cols], rows)
+
+
+def _poll_min():
+    return max(1, round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
 
 @admin_bp.route("/live/action", methods=["POST"])

@@ -229,6 +229,21 @@ sudo systemctl restart fleet-portal
 Every controller's token decrypts again because `FLEET_TOKEN_ENCRYPTION_KEY`
 came back with `env`. Shred the plaintext `env` and dump afterwards.
 
+The nightly dump leaves out the data of the 2010 boxes' two big history
+tables: every 5-minute read (kept 90 days) is not backed up, and the hourly
+summaries go off-site once per finished month. To bring the hourly history
+back, load each month's file after the dump:
+
+```bash
+for f in echotherm-portal-backups/history/legacy_hourly_*.csv.gz.age; do
+  age -d -i master.key "$f" | gunzip > h.csv
+  psql "postgresql://fleetportal@127.0.0.1/fleetportal" -c "\copy legacy_hourly FROM 'h.csv' WITH CSV HEADER"
+done
+shred -u h.csv
+```
+
+Daily summaries and the event log are in the nightly dump itself.
+
 ## Checks
 
 ```bash
