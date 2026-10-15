@@ -144,3 +144,13 @@ def test_actions_need_the_administrator(app, session, boxes):
     session.expire_all()
     import app.models as m
     assert session.get(m.LegacyBox, boxes[1].id).deleted_at is None
+
+
+def test_the_flame_shows_a_burner_that_ran(app, session, boxes, client):
+    from app import history
+    now = dt.datetime.utcnow()
+    for b, (h0, h1) in zip(boxes[:2], ((100, 104), (100, 100))):
+        history.save([history.reading(b.id, now - dt.timedelta(minutes=m), {"status": {"boiler1HeatRunMinutes": str(h)}})
+                      for m, h in ((6, h0), (1, h1))], [], now)
+    from app.routes import _firing
+    assert _firing(now, [b.id for b in boxes]) == {boxes[0].id: "heat"}

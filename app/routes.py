@@ -929,12 +929,46 @@ def fleet_update_one(controller_id):
 _TONE_ORDER = {"crit": 0, "warn": 1, "heat": 2, "ok": 3, "idle": 4}
 
 
+def _firing(now, box_ids):
+    """{box_id: "heat" | "hot water" | "heat and hot water"} for boxes whose
+    burner run counters went up between their last two reads: the burner
+    fired in that interval. Anagha shows a fuel-valve flame; the 2010 box's
+    live status has no such point (it is only in its activity records), so
+    the counters are the evidence. Midnight resets count when the new value
+    is above zero."""
+    from sqlalchemy import text as _text
+    if not box_ids:
+        return {}
+    heat = "coalesce(heat1,0)+coalesce(heat2,0)+coalesce(heat3,0)+coalesce(heat4,0)"
+    hw = "coalesce(hw1,0)+coalesce(hw2,0)+coalesce(hw3,0)+coalesce(hw4,0)"
+    try:
+        rows = db.session.execute(_text(
+            f"SELECT box_id, ts, {heat} AS heat, {hw} AS hw FROM legacy_readings "
+            "WHERE ts >= :since AND box_id = ANY(:ids) ORDER BY box_id, ts DESC"),
+            {"since": now - timedelta(minutes=13), "ids": list(box_ids)}).all()
+    except Exception:
+        db.session.rollback()
+        return {}
+    last, out = {}, {}
+    for r in rows:
+        last.setdefault(r.box_id, []).append(r)
+    for box_id, (cur, prev, *_rest) in ((k, v) for k, v in last.items() if len(v) >= 2):
+        if (cur.ts - prev.ts).total_seconds() > 11 * 60:
+            continue
+        went = lambda a, b: (b > a) or (b < a and b > 0)
+        kinds = [w for w, a, b in (("heat", prev.heat, cur.heat), ("hot water", prev.hw, cur.hw)) if went(a, b)]
+        if kinds:
+            out[box_id] = " and ".join(kinds)
+    return out
+
+
 def _legacy_rows(now, boxes=None):
     from app import legacy
     rows = []
     if boxes is None:
         boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
             .order_by(LegacyBox.name).all()
+    firing = _firing(now, [b.id for b in boxes])
     for b in boxes:
         st = b.status
         c = legacy.card(st.data) if st and st.data else None
@@ -956,6 +990,7 @@ def _legacy_rows(now, boxes=None):
                    or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")))
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
                      "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
+                     "firing": firing.get(b.id) if state == "live" else None,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
     return rows
 
@@ -1002,6 +1037,7 @@ def live_page():
     view = "table" if request.args.get("view") == "table" else "cards"
     from app import legacy
     return render_template("live.html", title="Live", rows=rows, summary=summary, newest=newest, show=show,
+                           legend=legacy.TINT_LEGEND,
                            q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 

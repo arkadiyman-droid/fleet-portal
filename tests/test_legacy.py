@@ -205,3 +205,37 @@ def test_a_refused_login_drops_the_session(monkeypatch):
     monkeypatch.setattr(legacy, "_session", lambda *a: s)
     legacy.poll_one(dict(BOX, verified=True))
     assert 1 not in legacy._sessions
+
+
+# ── colours (decoded from Anagha's Live page, 2026-10-15) ───────────────────
+
+def _tint(**kw):
+    role = {k: kw.get(k) for k in ("out", "supp", "retn", "aqua", "coil", "mix")}
+    return {k: v[0] for k, v in legacy.tint(role, kw.get("avg"), kw.get("dit", 68), kw.get("stack"),
+                                            kw.get("temps", [(0, "Out", 60)])).items()}
+
+
+def test_inside_colours_match_anagha():
+    assert _tint(avg=78, out=58) == {}                      # 10 over desired, cool day: no colour
+    assert _tint(avg=79, out=58) == {"inside": "hot"}       # 11 over: red
+    assert _tint(avg=82, out=70) == {"inside": "wx"}        # a 70 F day explains it: teal beats red
+    assert _tint(avg=77, out=69) == {}                      # 69 is not 2 over the desired 68
+    assert _tint(avg=77, out=70, dit=69) == {}              # nor 70 over 69
+    assert _tint(avg=65, out=62) == {"inside": "cold"}      # 3 under: blue
+
+
+def test_plant_colours_match_anagha():
+    assert _tint(supp=89, retn=90) == {"supp": "cold"}
+    assert _tint(supp=141, retn=140) == {"supp": "hot"}
+    assert _tint(supp=0) == {}                              # no sensor
+    assert _tint(aqua=147) == {"aqua": "cold"} and _tint(aqua=150) == {}
+    assert _tint(stack=0) == {"stack": "hot"} and _tint(stack=625) == {"stack": "hot"} and _tint(stack=341) == {}
+    assert _tint(stack=0, temps=[(0, "Out", 0)]) == {}      # a box reading nothing at all is not a stack fault
+    assert _tint(coil=105) == {"coil": "hot"} and _tint(coil=111) == {}
+    assert _tint(mix=10) == {"mix": "cold"} and _tint(mix=120) == {"mix": "wx"}
+    assert _tint(mix=139) == {} and _tint(mix=144) == {"mix": "scald"}
+
+
+def test_every_colour_says_why():
+    why = legacy.tint({"out": 58, "aqua": 84}, 79, 68, 625, [(0, "Out", 58)])
+    assert "11 F above the desired 68 F" in why["inside"][1] and "84 F" in why["aqua"][1] and "625" in why["stack"][1]

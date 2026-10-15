@@ -200,7 +200,55 @@ def card(data: dict) -> dict:
         "temps": temps, "apartments": [a for a in apts if a],
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
-    }
+    } | {"tint": tint(role, _int(st.get("averageTemperature")), _int(st.get("targetInsideTemperature")),
+                      _int(st.get("stackTemperature")), temps)}
+
+
+# Cell colours, decoded from Anagha's Live page (2026-10-15: every one of its
+# 188 rows checked against these rules) so both read the same at a glance:
+#   blue   = cold / not up to temperature      red    = too hot, or a fault
+#   teal   = warm, but explained (the weather; lukewarm hot water)
+#   orange = scald risk
+# What Anagha leaves out, and these add: each colour says why, with numbers.
+TINT_LEGEND = [("cold", "cold / not up to temperature"), ("hot", "too hot, or a fault"),
+               ("wx", "warm because of the weather · lukewarm hot water"), ("scald", "hot water scald risk")]
+
+
+def tint(role, avg, dit, stack, temps) -> dict:
+    """{field: (colour, why)} for the cells that deserve a colour."""
+    t = {}
+    out = role.get("out")
+    if avg and dit:
+        if out is not None and out >= dit + 2:          # beats red: a hot day is not a fault
+            t["inside"] = ("wx", f"{out} F outside, above the desired {dit} F: the warmth is the weather's")
+        elif avg >= dit + 11:
+            t["inside"] = ("hot", f"{avg - dit} F above the desired {dit} F: overheating, fuel wasted")
+        elif avg <= dit - 3:
+            t["inside"] = ("cold", f"{dit - avg} F below the desired {dit} F")
+    for key, name in (("supp", "Supply"), ("retn", "Return")):
+        v = role.get(key)
+        if v and v < 90:
+            t[key] = ("cold", f"{name} {v} F, under 90 F: the loop is cold")
+        elif v and v > 140:
+            t[key] = ("hot", f"{name} {v} F, over 140 F")
+    v = role.get("aqua")
+    if v and v < 150:
+        t["aqua"] = ("cold", f"Boiler water {v} F, under 150 F: not up to temperature")
+    if stack == 0 and any(val for _i, _n, val in temps):
+        t["stack"] = ("hot", "The stack sensor reads 0 while the others read: a sensor or wiring fault")
+    elif stack and stack >= 600:
+        t["stack"] = ("hot", f"Stack {stack} F: check combustion, or the boiler needs cleaning")
+    v = role.get("coil")
+    if v and v < 110:
+        t["coil"] = ("hot", f"Coil {v} F, under 110 F: it cannot make hot water")
+    v = role.get("mix")
+    if v and v < 100:
+        t["mix"] = ("cold", f"Hot water {v} F: under 100 F")
+    elif v and v <= 120:
+        t["mix"] = ("wx", f"Hot water {v} F: lukewarm, at or under 120 F (New York's minimum at the tap)")
+    elif v and v >= 140:
+        t["mix"] = ("scald", f"Hot water {v} F: 140 F or more is a scald risk")
+    return t
 
 
 # ── polling ──────────────────────────────────────────────────────────────────

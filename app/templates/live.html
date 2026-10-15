@@ -28,10 +28,24 @@
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
   .lv-oil { height:8px; border-radius:4px; background:#fee2e2; overflow:hidden; margin:4px 10px; } .lv-oil div { height:100%; background:#16a34a; }
   .lv-table td, .lv-table th { white-space:nowrap; font-size:13px; padding:5px 7px; }
+  /* Anagha's colours (decoded 2026-10-15) — the same palette in the table and on the cards */
+  .t-cold { background:#2675b9 !important; color:#fff !important; }
+  .t-hot { background:#eb0f2d !important; color:#fff !important; }
+  .t-wx { background:#09d3bb !important; color:#062e2a !important; }
+  .t-scald { background:#ff9933 !important; color:#1f1300 !important; }
+  .lv-table td.t-cold, .lv-table td.t-hot, .lv-table td.t-wx, .lv-table td.t-scald { font-weight:700; text-align:center; cursor:help; }
+  .lv-row .v.t-cold, .lv-row .v.t-hot, .lv-row .v.t-wx, .lv-row .v.t-scald { border-radius:6px; margin:0 6px; cursor:help; }
+  .lv-out { color:#1d4ed8; }
+  .lv-fire { width:14px; height:14px; vertical-align:-2px; }
+  .lv-fire.on { color:#dc2626; } .lv-fire.off { color:#d1d5db; }
+  .lv-legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .lv-legend i { display:inline-block; width:14px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; font-style:normal; }
 </style>{% endblock %}
 
 {% macro t(v) %}{{ '—' if v is none else v }}{% endmacro %}
-{% macro temp_cls(v, dit) %}{% if v is none %}{% elif dit and v > dit + 8 %}hot{% elif dit and v < dit - 2 %}cool{% else %}mid{% endif %}{% endmacro %}
+{% macro tc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} class="t-{{ x[0] }}" title="{{ x[1] }}"{% endif %}{% endmacro %}
+{% macro vc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} t-{{ x[0] }}" title="{{ x[1] }}{% endif %}{% endmacro %}
+{% macro flame(r) %}{% if r.state == 'live' %}<svg class="lv-fire {{ 'on' if r.firing else 'off' }}" viewBox="0 0 16 16" fill="currentColor" role="img"><title>{{ ('Burner fired since the last read: ' ~ r.firing) if r.firing else 'Burner not firing (no run time since the last read)' }}</title><path d="M8 0c.4 2.6-1.1 4-2.4 5.4C4.3 6.9 3 8.4 3 10.6 3 13.6 5.2 16 8 16s5-2.4 5-5.4c0-2.2-1-3.9-2.2-5.2.1 1.4-.4 2.6-1.4 3.2.2-3.4-.9-6.4-1.4-8.6z"/></svg>{% endif %}{% endmacro %}
 
 {% block content %}
   <div class="page-head"><h1>Live <span class="card-sub">· installed gateways, read every {{ poll_min }} min</span></h1>
@@ -53,6 +67,8 @@
       <input name="q" value="{{ q }}" placeholder="Search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px"></form>
   </div>
 
+  {% if show != 'hidden' and rows %}<div class="lv-legend">{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
+    <span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
   {% if not rows %}<div class="card-sub">Nothing to show{% if q or show != 'all' %} for this filter{% endif %}.</div>{% endif %}
@@ -68,7 +84,7 @@
     <button class="btn danger" name="action" value="delete" type="submit" onclick="return confirm('Delete the selected boxes from the portal? They stop being read, disappear from Live, and a re-import will not bring them back.')">Delete</button>
   </div>{% endif %}
   <div style="overflow-x:auto"><table class="lv-table">
-    <thead><tr><th><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th>Building</th><th>Status</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
+    <thead><tr><th><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th>Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
       <th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
@@ -76,10 +92,18 @@
         <td><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
         <td><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a></td>
         <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
+        <td style="text-align:center">{{ flame(r) }}</td>
+        {% if r.state == 'live' %}
+        <td>{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
+        <td>{{ hhmm(c.heat_rt) }}</td><td>{{ hhmm(c.hw_rt) }}</td><td>{{ hhmm(c.total_rt) }}</td>
+        <td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
+        <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
+        {% else %}
         <td>{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td>{{ hhmm(c.heat_rt) }}</td><td>{{ hhmm(c.hw_rt) }}</td><td>{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
+        {% endif %}
         <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
       </tr>
     {% endfor %}
@@ -93,23 +117,25 @@
         {% if r.state == 'live' %}{% set bad = r.recent_alarm and r.recent_alarm.level != 'info' %}<span class="lv-badge {{ 'alarm' if bad }}">{{ '!' if bad else 'Ok' }}</span>
         {% else %}<span class="lv-badge {{ r.state }}">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</span>{% endif %}
         <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
+        {{ flame(r) }}
       </div>
       {% if r.state == 'live' or r.c %}
         <div class="lv-pill {{ c.tone if r.state == 'live' else 'dark' }}">{{ c.status if r.state == 'live' else 'Last known' }}</div>
-        <div class="lv-row"><div><div class="k">Out</div><div class="v cool">{{ t(c.out) }}°</div></div>
-          <div><div class="k">Inside</div><div class="v {{ temp_cls(c.inside, c.dit) }}">{{ t(c.inside) }}°</div></div>
+        {% set live = r.state == 'live' %}
+        <div class="lv-row"><div><div class="k">Out</div><div class="v lv-out">{{ t(c.out) }}°</div></div>
+          <div><div class="k">Inside</div><div class="v{{ vc(c, 'inside') if live }}">{{ t(c.inside) }}°</div></div>
           <div><div class="k">DIT</div><div class="v">{{ t(c.dit) }}°</div></div></div>
         <div class="lv-row"><div><div class="k">Heat RT</div><div class="v">{{ hhmm(c.heat_rt) }}</div></div>
           <div><div class="k">HW RT</div><div class="v">{{ hhmm(c.hw_rt) }}</div></div>
           <div><div class="k">Total</div><div class="v">{{ hhmm(c.total_rt) }}</div></div></div>
-        <div class="lv-row"><div><div class="k">Aquastat</div><div class="v">{{ t(c.aqua) }}</div></div>
-          <div><div class="k">Coil</div><div class="v">{{ t(c.coil) }}</div></div>
-          <div><div class="k">Mix</div><div class="v">{{ t(c.mix) }}</div></div></div>
-        <div class="lv-row small"><div><div class="k">Stack</div><div class="v">{{ t(c.stack) }}</div></div>
+        <div class="lv-row"><div><div class="k">Aquastat</div><div class="v{{ vc(c, 'aqua') if live }}">{{ t(c.aqua) }}</div></div>
+          <div><div class="k">Coil</div><div class="v{{ vc(c, 'coil') if live }}">{{ t(c.coil) }}</div></div>
+          <div><div class="k">Mix</div><div class="v{{ vc(c, 'mix') if live }}">{{ t(c.mix) }}</div></div></div>
+        <div class="lv-row small"><div><div class="k">Stack</div><div class="v{{ vc(c, 'stack') if live }}">{{ t(c.stack) }}</div></div>
           <div><div class="k">Hi stack</div><div class="v">{{ t(c.hi_stack) }}</div></div>
           <div><div class="k">Water</div><div class="v">{{ t(c.water) }}</div></div></div>
-        <div class="lv-row small"><div><div class="k">Supp</div><div class="v">{{ t(c.supp) }}</div></div>
-          <div><div class="k">Retn</div><div class="v">{{ t(c.retn) }}</div></div>
+        <div class="lv-row small"><div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
+          <div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div>
           <div><div class="k">Risr</div><div class="v">{{ t(c.risr) }}</div></div></div>
         {% if c.oil_pct is not none %}<div class="lv-oil" title="Oil {{ c.oil_pct }}%"><div style="width:{{ [c.oil_pct, 100]|min }}%"></div></div>{% endif %}
       {% endif %}
