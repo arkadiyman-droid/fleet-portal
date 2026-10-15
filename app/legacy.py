@@ -372,7 +372,7 @@ def poll_one(box: dict, now=None) -> dict:
     return out
 
 
-def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
+def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
     """One cycle over every active box; returns how many answered."""
     from app.extensions import db
     from app.models import LegacyBox, LegacyStatus
@@ -388,7 +388,9 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
                      "verified": b.identity in ("gateway", "open"),
                      "names_due": not (st and st.names_at and now - st.names_at < NAMES_EVERY),
                      "config_due": not (st and st.data and st.data.get("config"))})
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    # Boxes read side by side (LEGACY_POLL_WORKERS, default 16: a cycle of
+    # ~186 boxes took ~2 min at 8, 2026-10-15). Pacing stays per box.
+    with ThreadPoolExecutor(max_workers=workers or app.config.get("LEGACY_POLL_WORKERS", 16)) as pool:
         results = list(pool.map(lambda j: poll(j, now), jobs))
     answered = 0
     readings, events = [], []

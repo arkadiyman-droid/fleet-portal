@@ -46,6 +46,7 @@ class Config:
         # Installed 2010 gateways, read view-only for /live (app/legacy.py).
         self.LEGACY_POLLER_ENABLED = os.environ.get("LEGACY_POLLER_ENABLED", "1") not in ("0", "false", "False")
         self.LEGACY_POLL_INTERVAL_SECONDS = int(os.environ.get("LEGACY_POLL_INTERVAL_SECONDS", "300"))
+        self.LEGACY_POLL_WORKERS = int(os.environ.get("LEGACY_POLL_WORKERS", "16"))   # boxes read side by side
         # Their alerts (app/alerts.py check_legacy): red on two polls in a row,
         # dark after LEGACY_DARK_MINUTES; when LEGACY_OUTAGE_SHARE of the boxes
         # go dark together it is the portal's own connection: one message.
