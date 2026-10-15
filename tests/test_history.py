@@ -62,16 +62,36 @@ def test_hour_row():
     assert row["stack_max"] == 355
 
 
+def _cycle(prev, ok, data=None, error=None):
+    now = history.remember(prev, ok, data)
+    return now, [e["kind"] for e in history.changes(1, H, prev, ok, now, error)]
+
+
 def test_events():
-    st = lambda code: {"status": {"callForHeat": code}, "alarm": None}
-    ev = history.changes(1, H, True, st("Outsd Sat"), True, st("Safety"))
+    st = lambda code, alarm=None: {"status": {"callForHeat": code}, "alarm": alarm}
+    first, ev = _cycle({}, True, st("Outsd Sat"))
+    assert ev == []                                                           # first read: nothing to compare
+    now = history.remember(first, True, st("Safety"))
+    ev = history.changes(1, H, first, True, now)
     assert [(e["kind"], e["code"]) for e in ev] == [("status", "Safety")]
     assert "Outside Temp. Satisfied -> Safety" in ev[0]["text"]
-    assert history.changes(1, H, None, {}, True, st("Safety")) == []          # first read: nothing to compare
-    assert [e["kind"] for e in history.changes(1, H, True, st("Safety"), False, st("Safety"), "no answer")] == ["dark"]
-    assert [e["kind"] for e in history.changes(1, H, False, st("Safety"), True, st("Safety"))] == ["back"]
-    new = {"status": {"callForHeat": "Safety"}, "alarm": {"name": "safetyActive", "at": "2026-01-15T07:01:00-05:00"}}
-    assert [e["kind"] for e in history.changes(1, H, True, st("Safety"), True, new)] == ["alarm"]
+
+    miss1, ev = _cycle(now, False, error="no answer")
+    assert ev == []                                                           # one miss: a reset connection
+    miss2, ev = _cycle(miss1, False, error="no answer")
+    assert ev == ["dark"]
+    _s, ev = _cycle(miss2, False)
+    assert ev == []                                                           # logged once
+    back, ev = _cycle(miss2, True, st("Safety"))
+    assert ev == ["back"]
+
+    trip = {"name": "safetyActive", "at": "2026-01-15T07:01:00-05:00"}
+    a1, ev = _cycle(back, True, st("Safety", trip))
+    assert ev == ["alarm"]
+    a2, ev = _cycle(a1, True, st("Safety"))                                   # this box then answers an empty list
+    assert ev == []
+    _a3, ev = _cycle(a2, True, st("Safety", trip))                            # ...and the same alarm again: not news
+    assert ev == []
 
 
 def test_day_bounds_follow_new_york():

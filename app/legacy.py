@@ -305,7 +305,7 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
         if "identity" in res:
             b.identity = res["identity"]
         row = b.status or LegacyStatus(box_id=b.id)
-        prev_ok, prev_data = (row.ok if b.status else None), dict(row.data or {})
+        prev_data = dict(row.data or {})
         row.polled_at, row.ok = res["polled_at"], res["ok"]
         row.error = res.get("error")
         row.auth_failed = bool(res.get("auth_failed"))
@@ -318,9 +318,11 @@ def poll_all(app, now=None, poll=poll_one, workers=8) -> int:
             merged["read_at"] = res["polled_at"].isoformat()      # for the box's clock drift
             if "names" in res["data"]:
                 row.names_at = res["polled_at"]
-            row.data = merged
             readings.append(history.reading(b.id, res["polled_at"], merged))
-        events += history.changes(b.id, res["polled_at"], prev_ok, prev_data, res.get("ok"), row.data, res.get("error"))
+        else:
+            merged = None
+        row.data = history.remember(prev_data, res.get("ok"), merged)
+        events += history.changes(b.id, res["polled_at"], prev_data, res.get("ok"), row.data, res.get("error"))
         db.session.add(row)
     db.session.commit()
     if app.config.get("LEGACY_HISTORY_ENABLED", True):

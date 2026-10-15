@@ -108,30 +108,55 @@ def reading(box_id, ts, data) -> dict:
     }
 
 
-def _alarm_key(data):
+def alarm_key(data):
     a = (data or {}).get("alarm")
-    return f"{a.get('name')}@{a.get('at')}" if a else ""
+    return f"{a.get('name')}@{a.get('at')}"[:120] if a else ""
 
 
-def changes(box_id, ts, prev_ok, prev_data, ok, data, error=None) -> list:
-    """Events for one box this cycle, comparing with what was stored before.
-    Nothing is invented on a box's first read (no 'before' to compare)."""
+DARK_AFTER_MISSES = 2       # one missed read is a reset connection, not a dark box
+
+
+def remember(prev_data, ok, data):
+    """What the stored reading keeps between polls for the event log:
+    'last_alarm' survives reads that answer an empty alarm list (some boxes
+    alternate, 2026-10-15), 'fails' counts misses in a row. Returns the new
+    stored dict (data when the read was ok, the old one otherwise)."""
+    if ok:
+        out = dict(data)
+        out["fails"] = 0
+        if out.get("alarm"):
+            out["last_alarm"] = alarm_key(out)
+        elif "last_alarm" in prev_data:
+            out["last_alarm"] = prev_data["last_alarm"]
+        else:
+            out["last_alarm"] = ""
+        return out
+    out = dict(prev_data)
+    out["fails"] = int(prev_data.get("fails") or 0) + 1
+    return out
+
+
+def changes(box_id, ts, prev_data, ok, data, error=None) -> list:
+    """Events for one box this cycle: data is what remember() stored now,
+    prev_data what was stored before. Nothing is invented on a box's first
+    read (no 'before' to compare)."""
     from app import legacy
     out = []
-    if ok and prev_data:
+    if ok and prev_data and prev_data.get("status"):
         old = ((prev_data.get("status") or {}).get("callForHeat") or "").strip()
         new = (((data or {}).get("status") or {}).get("callForHeat") or "").strip()
         if old and new and old != new:
             words = lambda code: legacy.STATUS.get(code, (code, ""))[0]
             out.append({"box_id": box_id, "ts": ts, "kind": "status", "code": new[:40],
                         "text": f"{words(old)} -> {words(new)}"[:200]})
-        if "alarm" in prev_data and (data or {}).get("alarm") and _alarm_key(data) != _alarm_key(prev_data):
+        if ("last_alarm" in prev_data and (data or {}).get("alarm")
+                and alarm_key(data) != prev_data["last_alarm"]):
             info = legacy.alarm_info(data["alarm"], ts, legacy.clock_drift(data)) or {}
             out.append({"box_id": box_id, "ts": ts, "kind": "alarm", "code": str(data["alarm"].get("name"))[:40],
                         "text": f"{info.get('words', 'Alarm')} at {info.get('when', '?')}"[:200]})
-    if prev_ok is True and not ok:
+    if not ok and (data or {}).get("fails") == DARK_AFTER_MISSES and prev_data.get("status"):
         out.append({"box_id": box_id, "ts": ts, "kind": "dark", "code": None, "text": (error or "no answer")[:200]})
-    elif prev_ok is False and ok:
+    elif ok and int(prev_data.get("fails") or 0) >= DARK_AFTER_MISSES:
         out.append({"box_id": box_id, "ts": ts, "kind": "back", "code": None, "text": "answering again"})
     return out
 

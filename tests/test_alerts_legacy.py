@@ -51,4 +51,5 @@ def test_only_new_trip_alarms_are_sent():
     assert alerts.legacy_fresh_alarm({"alarm": alarm("safetyActive", 60 * 5)}, key, NOW)[1] is None   # new but stale
     k2, line = alerts.legacy_fresh_alarm({"alarm": alarm("safetyActive", 4)}, key, NOW)
     assert k2 != key and line == "Box alarm: Safety at Oct 14 5:56 PM."
-    assert alerts.legacy_fresh_alarm({"alarm": None}, key, NOW) == ("", None)
+    assert alerts.legacy_fresh_alarm({"alarm": None}, key, NOW) == (key, None)    # an empty answer is not news
+    assert alerts.legacy_fresh_alarm({"alarm": old}, key, NOW)[1] is None           # nor is the same alarm again

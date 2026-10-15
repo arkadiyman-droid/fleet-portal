@@ -193,11 +193,16 @@ def legacy_issues(st, now, dark_after):
 def legacy_fresh_alarm(data, last_key, now):
     """(key, line): the key of the box's latest alarm, and a line to send when
     it is a NEW safety or ignition alarm from the last two hours. last_key
-    None means nothing was seen before (first look): remember, never send."""
+    None means nothing was seen before (first look): remember, never send.
+    Some boxes answer their latest alarm on one read and an empty list on
+    the next (seen 2026-10-15: the same ignition failure alerted twice), so
+    an empty answer keeps the last key: only a different alarm is news."""
     from app import legacy
     a = (data or {}).get("alarm")
-    key = f"{a.get('name')}@{a.get('at')}"[:120] if a else ""
-    if not a or last_key is None or key == last_key:
+    if not a:
+        return last_key, None
+    key = f"{a.get('name')}@{a.get('at')}"[:120]
+    if last_key is None or key == last_key:
         return key, None
     info = legacy.alarm_info(a, now, legacy.clock_drift(data))
     if not info or info["level"] != "crit" or not info["utc"]:

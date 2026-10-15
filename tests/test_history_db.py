@@ -139,8 +139,9 @@ def test_a_poll_cycle_writes_reads_and_events(app, session):
     session.add(b); session.commit()
     t0 = dt.datetime.utcnow()
     legacy.poll_all(app, now=t0, poll=fake_poll)
-    legacy.poll_all(app, now=t0 + dt.timedelta(minutes=5),
-                    poll=lambda j, now: {"id": j["id"], "polled_at": now, "ok": False, "error": "no answer"})
+    for k in (5, 10, 15):                                  # dark is logged once, after two misses
+        legacy.poll_all(app, now=t0 + dt.timedelta(minutes=k),
+                        poll=lambda j, now: {"id": j["id"], "polled_at": now, "ok": False, "error": "no answer"})
     session.expire_all()
     assert m.LegacyReading.query.filter_by(box_id=b.id).count() == 1
     assert [e.kind for e in m.LegacyEvent.query.filter_by(box_id=b.id)] == ["dark"]
