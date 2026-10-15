@@ -1,20 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Analytics — Fleet Portal{% endblock %}
-{% block main_class %}wide{% endblock %}
+{% block main_class %}full{% endblock %}
 {% block head %}
 <style>
   .an-find { list-style:none; margin:0; padding:0; }
   .an-find li { display:flex; gap:10px; align-items:baseline; padding:7px 0; border-bottom:1px solid #f1f5f9; }
   .an-find li .cat { min-width:128px; }
   .an-find li a { font-weight:600; color:#1e3a8a; text-decoration:none; }
-  table.an td, table.an th { padding:6px 9px; font-size:12.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
-  table.an th { cursor:pointer; user-select:none; position:sticky; top:0; background:#f9fafb; }
+  table.an td, table.an th { padding:7px 9px; font-size:13.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  table.an th { cursor:pointer; user-select:none; position:sticky; top:0; background:#f9fafb; white-space:normal; vertical-align:bottom; line-height:1.25; }
   table.an th[title] { text-decoration:underline dotted #9ca3af; text-underline-offset:3px; }
   table.an th.sorted::after { content:" \25BE"; } table.an th.sorted.asc::after { content:" \25B4"; }
   table.an td.bad { color:#b91c1c; font-weight:700; } table.an td.warn { color:#b45309; font-weight:600; }
   table.an td.good { color:#15803d; }
   .an-note { color:var(--muted); font-size:13px; margin:0 0 12px; }
-  .an-wrap { overflow:auto; max-height:640px; border:1px solid var(--border); border-radius:8px; }
+  .an-wrap { overflow:auto; max-height:72vh; border:1px solid var(--border); border-radius:8px; }
+  .an-wrap table.an { overflow:visible; }   /* base tables clip, which would stop the sticky headings */
 </style>
 {% endblock %}
 
