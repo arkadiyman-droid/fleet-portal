@@ -28,6 +28,18 @@
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
   .lv-oil { height:8px; border-radius:4px; background:#fee2e2; overflow:hidden; margin:4px 10px; } .lv-oil div { height:100%; background:#16a34a; }
   .lv-table td, .lv-table th { white-space:nowrap; font-size:13px; padding:5px 7px; }
+  /* Table view: the table scrolls inside its own box sized to the window, so
+     everything above it stays put; the column headings stick to its top and
+     the tick + Building columns stick to its left. */
+  .lv-scroll { overflow:auto; border:1px solid var(--border); border-radius:8px; background:#fff; }
+  .lv-scroll .lv-table { border-radius:0; overflow:visible; }   /* base tables clip (overflow:hidden), which would stop the sticky headings */
+  .lv-table thead th { position:sticky; top:0; z-index:2; background:#f3f4f6; box-shadow:inset 0 -1px 0 var(--border); }
+  .lv-table .pin1, .lv-table .pin2 { position:sticky; z-index:1; background:#fff; }
+  .lv-table .pin1 { left:0; width:30px; min-width:30px; }
+  .lv-table .pin2 { left:30px; box-shadow:inset -1px 0 0 var(--border); }
+  .lv-table thead th.pin1, .lv-table thead th.pin2 { z-index:3; background:#f3f4f6; }
+  .lv-table tbody tr:hover td { background:#f8fafc; }
+  .lv-table tbody tr:hover td.t-cold, .lv-table tbody tr:hover td.t-hot, .lv-table tbody tr:hover td.t-wx, .lv-table tbody tr:hover td.t-scald { filter:brightness(.95); }
   /* Anagha's colours (decoded 2026-10-15) — the same palette in the table and on the cards */
   .t-cold { background:#2675b9 !important; color:#fff !important; }
   .t-hot { background:#eb0f2d !important; color:#fff !important; }
@@ -83,14 +95,14 @@
     {% else %}<button class="btn plain" name="action" value="hide" type="submit">Hide</button>{% endif %}
     <button class="btn danger" name="action" value="delete" type="submit" onclick="return confirm('Delete the selected boxes from the portal? They stop being read, disappear from Live, and a re-import will not bring them back.')">Delete</button>
   </div>{% endif %}
-  <div style="overflow-x:auto"><table class="lv-table">
-    <thead><tr><th><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th>Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
+  <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
+    <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
       <th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
-        <td><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
-        <td><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a></td>
+        <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
+        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a></td>
         <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
         <td style="text-align:center">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
@@ -109,6 +121,24 @@
     {% endfor %}
     </tbody></table></div>
   </form>
+  <script>
+  (function () {
+    // Fit the table's box to the rest of the window, so the page itself does not scroll.
+    const box = document.getElementById("lv-scroll");
+    const fit = () => {
+      const top = box.getBoundingClientRect().top + window.scrollY;
+      box.style.maxHeight = Math.max(320, window.innerHeight - top - 14) + "px";
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    // The page reloads every minute: keep the viewer's place in the table.
+    const key = "lv-scroll:" + location.search;
+    try { const p = JSON.parse(sessionStorage.getItem(key) || "null"); if (p) { box.scrollTop = p[0]; box.scrollLeft = p[1]; } } catch (e) {}
+    box.addEventListener("scroll", () => {
+      try { sessionStorage.setItem(key, JSON.stringify([box.scrollTop, box.scrollLeft])); } catch (e) {}
+    }, {passive: true});
+  })();
+  </script>
   {% else %}
   <div class="lv-grid">
   {% for r in rows %}{% set c = r.c or {} %}
