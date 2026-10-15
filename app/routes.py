@@ -1076,6 +1076,20 @@ def live_history(box_id):
     return jsonify(analytics.box_series(b.id, days))
 
 
+@admin_bp.route("/fleet/<int:controller_id>/series.json")
+def fleet_series(controller_id):
+    """The chart window for an EchoTherm controller (app/ctrl_history.py)."""
+    ctrl = Controller.query.get_or_404(controller_id)
+    require_role("viewer", ctrl)
+    from app import ctrl_history
+    days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
+    keys = [k for k in request.args.get("keys", "").split(",") if k]
+    data = ctrl_history.series(ctrl, days, keys)
+    data["name"] = ctrl.name + (f" ({ctrl.building.name})" if ctrl.building else "")
+    data["url"] = url_for("admin.fleet_controller", controller_id=ctrl.id)
+    return jsonify(data)
+
+
 @admin_bp.route("/live/<int:box_id>/series.json")
 def live_series(box_id):
     """The Live page's pop-up chart: chosen sensors + burner minutes per hour."""

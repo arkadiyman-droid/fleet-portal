@@ -686,3 +686,14 @@ class LegacyEvent(db.Model):
     kind = db.Column(db.String(10), nullable=False)                  # status | alarm | dark | back
     code = db.Column(db.String(40))                                  # the new status code / alarm name
     text = db.Column(db.String(200))
+
+
+class ControllerReading(db.Model):
+    """A compact snapshot of one EchoTherm controller's /api/status, every
+    5 minutes, kept 90 days (app/ctrl_history.py): charts only."""
+    __tablename__ = "controller_readings"
+
+    controller_id = db.Column(db.Integer, db.ForeignKey("controllers.id", ondelete="CASCADE"), primary_key=True)
+    ts = db.Column(db.DateTime, primary_key=True)
+    values = db.Column(JSONB, nullable=False)                        # {chart key: number}, run counters included
+    apt = db.Column(ARRAY(db.SmallInteger))                          # aptTemps, trailing zeros dropped

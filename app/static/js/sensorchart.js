@@ -3,16 +3,17 @@
  * (Live page and a box's page). Needs charts.js first.
  *
  * Any element with class "lv-t" and data-k="<sensor key>[,<key>...]" inside an element
- * with data-box="<box id>" opens the window: that sensor as a line, chips to
+ * with data-box="<2010 box id>" or data-ctrl="<controller id>" opens the window: that sensor as a line, chips to
  * add the box's other sensors, and the burner's heat / hot-water minutes per
  * hour as stacked bars under it on the same time axis. Data comes from
- * /live/<id>/series.json (app/analytics.box_sensor_series).
+ * /live/<id>/series.json (app/analytics.box_sensor_series) or, for a
+ * controller, /fleet/<id>/series.json (app/ctrl_history.series).
  *
  * window.SensorChart.isOpen() lets a page hold its auto-reload while open.
  */
 (function () {
   "use strict";
-  const SERIES = "/live/__ID__/series.json";
+  const SERIES = {box: "/live/__ID__/series.json", ctrl: "/fleet/__ID__/series.json"};
   const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#dc2626", "#9333ea", "#0891b2", "#ca8a04", "#db2777",
                   "#4b5563", "#65a30d", "#7c3aed", "#0d9488"];
   const RANGES = [["1", "24 h"], ["2", "2 days"], ["7", "7 days"], ["30", "30 days"]];
@@ -52,11 +53,11 @@
   const $ = id => document.getElementById(id);
   let cur = null;                            // {box, keys, days, catalog}
 
-  function open(box, key) {
+  function open(box, key, kind) {
     let days = "1";
     try { days = localStorage.getItem("lvx-days") || "1"; } catch (e) {}
     const keys = String(key).split(",").map(k => k.trim()).filter(Boolean);
-    cur = {box: String(box), keys, days, catalog: null};
+    cur = {box: String(box), keys, days, catalog: null, url: SERIES[kind || "box"]};
     dlg.hidden = false;
     document.body.style.overflow = "hidden";
     load();
@@ -66,8 +67,8 @@
   document.addEventListener("click", ev => {
     const el = ev.target.closest(".lv-t");
     if (!el || !el.dataset.k) return;
-    const host = el.closest("[data-box]");
-    if (host) open(host.dataset.box, el.dataset.k);
+    const host = el.closest("[data-box], [data-ctrl]");
+    if (host) open(host.dataset.box || host.dataset.ctrl, el.dataset.k, host.dataset.box ? "box" : "ctrl");
   });
   $("lvx-close").addEventListener("click", close);
   dlg.addEventListener("click", ev => { if (ev.target === dlg) close(); });
@@ -82,7 +83,7 @@
     dlg.querySelectorAll("button.r").forEach(b => b.classList.toggle("on", b.dataset.days === cur.days));
     $("lvx-res").textContent = "loading…";
     const want = cur;
-    fetch(SERIES.replace("__ID__", encodeURIComponent(cur.box)) + "?days=" + cur.days + "&keys=" +
+    fetch(cur.url.replace("__ID__", encodeURIComponent(cur.box)) + "?days=" + cur.days + "&keys=" +
           encodeURIComponent(cur.keys.join(",")), {credentials: "same-origin"}).then(r => r.json()).then(d => {
       if (cur !== want) return;
       cur.catalog = d.catalog;

@@ -134,6 +134,15 @@ def poll_controller(app, ctrl: Controller) -> ControllerStatus:
             if result.get("ok"):
                 _finish_restore(ctrl)
             db.session.commit()
+            if result.get("ok"):
+                # a 5-minute snapshot for the charts (app/ctrl_history.py); never
+                # allowed to cost the poll that is already saved
+                try:
+                    from app import ctrl_history
+                    ctrl_history.record(ctrl.id, result["raw_json"], result["polled_at"])
+                except Exception as e:
+                    db.session.rollback()
+                    log.warning("Controller history save failed for %s: %s", ctrl.id, e)
             return row
         except IntegrityError:
             db.session.rollback()
