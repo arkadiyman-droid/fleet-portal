@@ -53,6 +53,24 @@
   .lv-fire.on { color:#dc2626; } .lv-fire.off { color:#d1d5db; }
   .lv-legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 12px; }
   .lv-legend i { display:inline-block; width:14px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; font-style:normal; }
+  /* the badge opens the building's issue panel */
+  button.lv-badge { border:none; cursor:pointer; font-family:inherit; line-height:1.4; }
+  button.lv-badge:hover { filter:brightness(1.1); box-shadow:0 0 0 2px #fde68a; }
+  .lv-iss { position:absolute; z-index:40; width:min(420px, 92vw); background:#fff; border:1px solid var(--border); border-radius:10px;
+            box-shadow:0 12px 32px rgba(0,0,0,.18); padding:10px 12px 12px; font-size:13px; }
+  .lv-iss[hidden] { display:none; }
+  .lv-iss h3 { margin:0 24px 6px 0; font-size:14px; }
+  .lv-iss h4 { margin:8px 0 3px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .lv-iss ul { list-style:none; margin:0; padding:0; }
+  .lv-iss li { padding:3px 0 3px 18px; position:relative; }
+  .lv-iss li::before { content:""; position:absolute; left:2px; top:8px; width:9px; height:9px; border-radius:3px; background:#9ca3af; }
+  .lv-iss li.crit::before, .lv-iss li.hot::before { background:#eb0f2d; } .lv-iss li.cold::before { background:#2675b9; }
+  .lv-iss li.wx::before { background:#09d3bb; } .lv-iss li.scald::before { background:#ff9933; } .lv-iss li.info::before { background:#9ca3af; }
+  .lv-iss li.ev { color:#374151; } .lv-iss li.ev b { color:var(--muted); font-weight:600; margin-right:4px; }
+  .lv-iss .x { position:absolute; right:8px; top:4px; border:none; background:none; font-size:22px; color:var(--muted); cursor:pointer; }
+  .lv-iss .acts { display:flex; gap:8px; margin-top:10px; }
+  .lv-iss .ok { color:#15803d; font-weight:600; }
+  td .lv-iss-open { cursor:pointer; }
   /* sortable headings */
   .lv-table thead th:not(.pin1) { cursor:pointer; user-select:none; }
   .lv-table thead th.s-asc::after { content:" \25B4"; } .lv-table thead th.s-desc::after { content:" \25BE"; }
@@ -107,7 +125,7 @@
       <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
         <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel %} <span class="card-sub">{{ c.fuel }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
-        <td>{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}</td>
+        <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
@@ -130,8 +148,9 @@
   {% for r in rows %}{% set c = r.c or {} %}
     <div class="lv-card {{ 'dark' if r.state != 'live' }}" data-box="{{ r.box.id }}">
       <div class="lv-head">
-        {% if r.state == 'live' %}{% set bad = r.recent_alarm and r.recent_alarm.level != 'info' %}<span class="lv-badge {{ 'alarm' if bad }}">{{ '!' if bad else 'Ok' }}</span>
-        {% else %}<span class="lv-badge {{ r.state }}">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</span>{% endif %}
+        {% set np = r.issues.problems|length %}
+        {% if r.state == 'live' %}<button type="button" class="lv-badge lv-iss-open {{ 'alarm' if np }}" data-issues="{{ r.issues|tojson|forceescape }}" title="{{ ('%d problem%s: click to see' % (np, 's' if np != 1 else '')) if np else 'No problems: click for details' }}">{{ np if np else 'Ok' }}</button>
+        {% else %}<button type="button" class="lv-badge lv-iss-open {{ r.state }}" data-issues="{{ r.issues|tojson|forceescape }}" title="Click to see why">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</button>{% endif %}
         <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
         {% if c.fuel %}<span class="card-sub" style="font-size:11px" title="{{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ c.fuel }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
         {{ flame(r) }}
@@ -227,8 +246,44 @@
     try { const s = JSON.parse(sessionStorage.getItem("lv-sort") || "null"); if (s && ths[s[0]]) apply(s[0], s[1]); } catch (e) {}
   }
 
-  // ── fresh readings every minute, but never while a chart is open ──
-  const reload = () => { if (!SensorChart.isOpen()) location.reload(); else setTimeout(reload, 15000); };
+  // ── a building's issues: the card badge or the table's status opens the panel ──
+  const pan = document.createElement("div");
+  pan.className = "lv-iss"; pan.hidden = true; pan.setAttribute("role", "dialog");
+  document.body.appendChild(pan);
+  const esc = s => String(s).replace(/[&<>"]/g, ch => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[ch]));
+  const EV = {status: "Status", alarm: "Alarm", dark: "Stopped answering", back: "Answering again"};
+  let panFor = null;
+  function showIssues(btn) {
+    const d = JSON.parse(btn.dataset.issues), host = btn.closest("[data-box]");
+    let h = '<button class="x" type="button" aria-label="Close">&times;</button><h3>' + esc(d.name) + "</h3>";
+    h += d.problems.length ? "<h4>Problems</h4><ul>" + d.problems.map(p => '<li class="crit">' + esc(p) + "</li>").join("") + "</ul>"
+                           : '<div class="ok">No problems right now.</div>';
+    if (d.notes.length) h += "<h4>Readings to note</h4><ul>" + d.notes.map(n => '<li class="' + esc(n.tone) + '">' + esc(n.text) + "</li>").join("") + "</ul>";
+    h += "<h4>Last 24 hours</h4>" + (d.events.length ? "<ul>" + d.events.map(e => '<li class="ev"><b>' + esc(e.when) + "</b>" +
+           esc(EV[e.kind] || e.kind) + (e.kind === "dark" || e.kind === "back" ? "" : ": " + esc(e.text)) + "</li>").join("") + "</ul>"
+           : '<div class="card-sub">Nothing changed.</div>');
+    h += '<div class="acts"><button class="btn plain lv-t" type="button" data-k="' + esc(d.keys) + '">Chart</button>' +
+         '<a class="btn plain" style="background:#fff;color:var(--text);border:1px solid var(--border)" href="' + esc(d.url) + '">Building page</a></div>';
+    pan.innerHTML = h;
+    pan.dataset.box = host ? host.dataset.box : "";     // the Chart button opens this building (sensorchart.js)
+    pan.hidden = false; panFor = btn;
+    const r = btn.getBoundingClientRect(), w = pan.offsetWidth;
+    pan.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - w - 8)) + "px";
+    pan.style.top = (window.scrollY + r.bottom + 6) + "px";
+    pan.querySelector(".x").addEventListener("click", hideIssues);
+  }
+  function hideIssues() { pan.hidden = true; panFor = null; }
+  document.addEventListener("click", ev => {
+    const btn = ev.target.closest(".lv-iss-open");
+    if (btn) { ev.preventDefault(); if (panFor === btn) hideIssues(); else showIssues(btn); return; }
+    if (!pan.hidden && !pan.contains(ev.target)) hideIssues();
+    if (ev.target.closest(".lv-iss .lv-t")) hideIssues();
+  });
+  document.addEventListener("keydown", ev => { if (ev.key === "Escape") hideIssues(); });
+  document.getElementById("lv-scroll")?.addEventListener("scroll", hideIssues, {passive: true});
+
+  // ── fresh readings every minute, but never while a chart or the issue panel is open ──
+  const reload = () => { if (!SensorChart.isOpen() && pan.hidden) location.reload(); else setTimeout(reload, 15000); };
   setTimeout(reload, 60000);
 })();
 </script>

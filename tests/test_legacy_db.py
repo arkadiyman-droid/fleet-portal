@@ -154,3 +154,25 @@ def test_the_flame_shows_a_burner_that_ran(app, session, boxes, client):
                       for m, h in ((6, h0), (1, h1))], [], now)
     from app.routes import _firing
     assert _firing(now, [b.id for b in boxes]) == {boxes[0].id: "heat"}
+
+
+def test_the_badge_opens_the_building_issues(app, session, boxes, client):
+    import json
+    import re
+    import app.models as m
+    from app import legacy
+    legacy.poll_all(app, poll=fake_poll)                                    # 8060 reads, 8061 dark, 8062 refuses
+    now = dt.datetime.utcnow()
+    session.add(m.LegacyAlertState(box_id=boxes[0].id, alerting=True, opened_at=now))
+    session.add(m.LegacyEvent(box_id=boxes[0].id, ts=now, kind="status", code="Safety", text="Outside Temp. Satisfied -> Safety"))
+    session.commit()
+    page = client.get("/live?view=cards").data.decode()
+    panels = {}
+    for raw in re.findall(r'data-issues="([^"]*)"', page):
+        d = json.loads(raw.replace("&#34;", '"').replace("&#39;", "'").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+        panels[d["name"]] = d
+    bedell = panels["10-12 Bedell St"]
+    assert any("Phone alert open" in p for p in bedell["problems"]) and bedell["events"][0]["kind"] == "status"
+    assert panels["Dark Building"]["problems"] == ["no answer"] and panels["Dark Building"]["keys"] == "inside,out"
+    assert panels["Other Login Bldg"]["problems"] == ["The box refused the login"]
+    assert 'class="lv-badge lv-iss-open alarm"' in page

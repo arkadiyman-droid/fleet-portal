@@ -962,6 +962,63 @@ def _firing(now, box_ids):
     return out
 
 
+_TINT_NAMES = {"inside": "Inside average", "supp": "Supply", "retn": "Return", "aqua": "Aquastat", "stack": "Stack",
+               "coil": "Coil", "mix": "Hot water (mix)"}
+_TINT_KEYS = {"inside": "inside", "supp": "supp", "retn": "retn", "aqua": "aqua", "stack": "stack", "coil": "coil",
+              "mix": "mix"}
+
+
+def _issue_context(now, box_ids):
+    """For the Live page's issue panel, in two queries for all boxes: the last
+    day's events (newest first, a few per box) and each box's alert state."""
+    from app import history
+    from app.models import LegacyEvent
+    events, states = {}, {}
+    if not box_ids:
+        return events, states
+    for e in LegacyEvent.query.filter(LegacyEvent.box_id.in_(box_ids), LegacyEvent.ts >= now - timedelta(hours=24)) \
+            .order_by(LegacyEvent.ts.desc()).all():
+        lst = events.setdefault(e.box_id, [])
+        if len(lst) < 8:
+            lst.append({"kind": e.kind, "when": history.local(e.ts).strftime("%I:%M %p").lstrip("0"),
+                        "text": e.text or e.code or e.kind})
+    for s in LegacyAlertState.query.filter(LegacyAlertState.box_id.in_(box_ids)).all():
+        states[s.box_id] = s
+    return events, states
+
+
+def _issues(row, now, events, alert_state):
+    """Everything worth knowing about one box, as the card badge's panel
+    shows it: problems (what makes the badge red), coloured readings with
+    their reasons, and the last day's changes."""
+    from app import history
+    c, problems, notes = row["c"] or {}, [], []
+    if row["state"] != "live":
+        problems.append(row["why"] or "Not reading")
+    elif c.get("tone") == "crit":
+        problems.append(f"Status now: {c['status']}")
+    ra = row["recent_alarm"]
+    if ra and ra["level"] in ("crit", "warn"):
+        problems.append(f"Box alarm: {ra['words']}, {ra['when']}" + (" (still active)" if ra["active"] else ""))
+    a = alert_state
+    if a and a.alerting:
+        problems.append(f"Phone alert open since {history.local(a.opened_at).strftime('%b %d %I:%M %p').replace(' 0', ' ')}"
+                        if a.opened_at else "Phone alert open")
+    if a and a.muted_until and a.muted_until > now:
+        notes.append({"text": f"Alerts muted until {history.local(a.muted_until).strftime('%b %d %I:%M %p').replace(' 0', ' ')}",
+                      "tone": "info"})
+    if row["state"] == "live":
+        for k, (tone, why) in (c.get("tint") or {}).items():
+            # the reasons name their reading already, except the inside average's
+            notes.append({"text": f"Inside average: {why}" if k == "inside" else why, "tone": tone, "k": _TINT_KEYS.get(k)})
+        if ra and ra["level"] == "info":
+            notes.append({"text": f"Box note: {ra['words']}, {ra['when']}", "tone": "info"})
+    keys = ["inside", "out"] if row["state"] != "live" else (
+        ["stack", "aqua", "inside"] if problems else ["inside", "out"])
+    return {"name": row["box"].name, "problems": problems, "notes": notes, "events": events,
+            "keys": ",".join(keys), "url": f"/live/{row['box'].id}"}
+
+
 def _legacy_rows(now, boxes=None):
     from app import legacy
     rows = []
@@ -969,6 +1026,7 @@ def _legacy_rows(now, boxes=None):
         boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
             .order_by(LegacyBox.name).all()
     firing = _firing(now, [b.id for b in boxes])
+    events, astates = _issue_context(now, [b.id for b in boxes])
     for b in boxes:
         st = b.status
         c = legacy.card(st.data) if st and st.data else None
@@ -992,6 +1050,7 @@ def _legacy_rows(now, boxes=None):
                      "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
                      "firing": firing.get(b.id) if state == "live" else None,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
+        rows[-1]["issues"] = _issues(rows[-1], now, events.get(b.id, []), astates.get(b.id))
     return rows
 
 
