@@ -719,13 +719,14 @@ def _alert_badge():
 
 def _hot_water_now(box_ids, now) -> dict:
     """box id -> its current target / supply, for the hot-water boxes among
-    box_ids with a fresh reading (Alerts shows them beside the alarm)."""
+    box_ids read in the last legacy.STALE (Alerts shows them beside the alarm).
+    One timed-out poll keeps the last good reading, as Live does."""
     from app import legacy
     out = {}
     if not box_ids:
         return out
     for st in LegacyStatus.query.filter(LegacyStatus.box_id.in_(set(box_ids))).all():
-        if not (st.ok and st.data and st.last_ok_at and now - st.last_ok_at <= legacy.STALE):
+        if not (st.data and st.last_ok_at and now - st.last_ok_at <= legacy.STALE):
             continue
         if legacy.heat_system(st.data) != "hot water":
             continue
