@@ -11,7 +11,7 @@ from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
 from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
-                        LegacyAlertState, LegacyBox, Permission, Property, Rollout, RolloutTarget, User)
+                        LegacyAlertState, LegacyBox, LegacyStatus, Permission, Property, Rollout, RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -717,6 +717,24 @@ def _alert_badge():
         return {"open_alerts": 0}
 
 
+def _hot_water_now(box_ids, now) -> dict:
+    """box id -> its current target / supply, for the hot-water boxes among
+    box_ids with a fresh reading (Alerts shows them beside the alarm)."""
+    from app import legacy
+    out = {}
+    if not box_ids:
+        return out
+    for st in LegacyStatus.query.filter(LegacyStatus.box_id.in_(set(box_ids))).all():
+        if not (st.ok and st.data and st.last_ok_at and now - st.last_ok_at <= legacy.STALE):
+            continue
+        if legacy.heat_system(st.data) != "hot water":
+            continue
+        c = legacy.card(st.data)
+        out[st.box_id] = {"target": c.get("target"), "supp": c.get("supp"), "gap": c.get("target_gap"),
+                          "why": (c.get("tint") or {}).get("target", (None, None))[1]}
+    return out
+
+
 def _legacy_alert_states():
     return LegacyAlertState.query.join(LegacyBox, LegacyBox.id == LegacyAlertState.box_id) \
         .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None))
@@ -740,6 +758,9 @@ def alerts_page():
     l_open = sorted([s for s in lstates if s.alerting], key=lambda s: s.opened_at or now)
     l_waiting = [s for s in lstates if not s.alerting and s.first_bad_at]
     l_muted = [s for s in lstates if s.muted_until and s.muted_until > now]
+    events = events.order_by(AlertEvent.created_at.desc()).limit(100).all()
+    hw_now = _hot_water_now([s.box_id for s in lstates if s.alerting or s.first_bad_at or (s.muted_until and s.muted_until > now)]
+                            + [e.legacy_box_id for e in events if e.legacy_box_id], now) if ids is None else {}
     cfg = current_app.config
     ntfy_qr = None
     if is_superuser() and cfg.get("ALERT_NTFY_TOPIC"):
@@ -750,7 +771,7 @@ def alerts_page():
     return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted, ntfy_qr=ntfy_qr,
                            l_open=l_open, l_waiting=l_waiting, l_muted=l_muted, show_legacy=ids is None,
                            legacy_dark_min=cfg.get("LEGACY_DARK_MINUTES", 30),
-                           events=events.order_by(AlertEvent.created_at.desc()).limit(100).all(),
+                           events=events, hw_now=hw_now,
                            channels=notify.channels(), now=now,
                            after_min=round(cfg.get("ALERT_AFTER_SECONDS", 600) / 60),
                            repeat_h=cfg.get("ALERT_REPEAT_HOURS", 0),

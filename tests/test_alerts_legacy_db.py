@@ -290,7 +290,7 @@ def test_a_normal_steam_call_and_hot_water_never_say_no_heat(app, session):
     assert (session.get(m.LegacyAlertState, hot.id).issue or "") == ""                    # hot water: not this rule
 
 
-def test_hot_water_supply_far_below_target(app, session, sent):
+def test_hot_water_supply_far_below_target(app, session, sent, client):
     import app.models as m
     from app import alerts, history
     (b,) = _boxes(session, 1)
@@ -314,3 +314,13 @@ def test_hot_water_supply_far_below_target(app, session, sent):
         _check(app, session, minute)
     assert len(sent) == 1 and sent[0][1].startswith("Supply below target")
     assert alerts.hydronic_below_target(b.id, {**data_now, "config": {"heatControlType": "1"}}, T0 + dt.timedelta(minutes=55)) is None
+
+    # Alerts shows the building's target and supply as read now, blue when 25+ F short
+    row = session.get(m.LegacyStatus, b.id)
+    row.last_ok_at = row.polled_at = dt.datetime.utcnow()
+    row.data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75"},
+                "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}, "alarm": None}
+    session.add(row); session.commit()
+    page = client.get("/alerts").data.decode()
+    assert 'class="hw-now lv-t short" data-k="dsup,supp"' in page and "Target 140 · Supp 75 <b>-65</b>" in page
+    assert "Target / Supp now" in page and 'data-k="dsup,supp,inside"' in page        # the alert's chart: target + supply

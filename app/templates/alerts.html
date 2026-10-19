@@ -4,9 +4,19 @@
 
 {# the sensors worth seeing for an alarm: a box gone quiet shows where its data stops;
    anything else is about the burner and the boiler (static/js/sensorchart.js) #}
-{% macro ckeys(text) %}{% set t = (text or '')|lower %}{{ 'inside,out' if ('not answering' in t or 'refuses' in t or 'stopped answering' in t) else 'stack,aqua,inside' }}{% endmacro %}
+{% macro ckeys(text) %}{% set t = (text or '')|lower %}{{ 'inside,out' if ('not answering' in t or 'refuses' in t or 'stopped answering' in t) else ('dsup,supp,inside' if 'below target' in t else 'stack,aqua,inside') }}{% endmacro %}
+
+{# a hot-water box's target and supply right now: blue when the supply is 25+ F short while calling #}
+{% macro hw(box_id, blank='') %}{% set h = hw_now.get(box_id) %}{% if h %}<span class="hw-now lv-t{{ ' short' if h.gap }}" data-k="dsup,supp" title="{{ (h.why ~ ' · ') if h.why }}Hot water now{{ '' if h.target else ': not calling for heat, so no target' }}. Click for the target and supply chart">Target {{ h.target or '—' }} · Supp {{ h.supp if h.supp is not none else '—' }}{% if h.gap %} <b>-{{ h.gap }}</b>{% endif %}</span>{% else %}{{ blank }}{% endif %}{% endmacro %}
 
 {% macro ckeys_c(text) %}{% set t = (text or '')|lower %}{{ 'inside,out' if ('offline' in t or 'not answering' in t or 'unreachable' in t) else 'stack1,aqua1,supp,inside' }}{% endmacro %}
+
+{% block head %}
+<style>
+  .hw-now { display:inline-block; font-size:12px; padding:0 7px; margin-left:6px; border:1px solid var(--border); border-radius:10px; white-space:nowrap; }
+  .hw-now.short { background:#2675b9; border-color:#2675b9; color:#fff; }   /* the Live "cold" blue */
+</style>
+{% endblock %}
 
 {% block content %}
   <div class="page-head">
@@ -43,7 +53,7 @@
       {% if open_ or l_open %}
       <ul class="issues">
         {% for s in l_open %}<li class="crit" data-box="{{ s.box_id }}"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys(s.issue) }}" title="Open this building's chart (sensors for this alarm, burner run time underneath)">chart</span>
-          <span class="chip info">2010 box</span>: {{ s.issue or 'red' }}
+          <span class="chip info">2010 box</span>{{ hw(s.box_id) }}: {{ s.issue or 'red' }}
           <span class="card-sub">since {{ s.opened_at.strftime('%Y-%m-%d %H:%M UTC') if s.opened_at else '?' }}</span></li>{% endfor %}
         {% for s in open_ %}<li class="crit" data-ctrl="{{ s.controller_id }}"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys_c(s.issue) }}" title="Open this controller's chart (sensors for this alarm, burner run time underneath)">chart</span>
           {% if s.controller.building %}({{ s.controller.building.name }}){% endif %}: {{ s.issue or 'red' }}
@@ -54,7 +64,7 @@
       <h2 style="margin-top:12px">Red, not alerted yet</h2>
       <ul class="issues">
         {% for s in l_waiting %}<li class="warn" data-box="{{ s.box_id }}"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys(s.issue) }}" title="Open this building's chart (sensors for this alarm, burner run time underneath)">chart</span>
-          <span class="chip info">2010 box</span>: {{ s.issue or 'red' }} <span class="card-sub">red since {{ s.first_bad_at.strftime('%H:%M UTC') }}</span></li>{% endfor %}
+          <span class="chip info">2010 box</span>{{ hw(s.box_id) }}: {{ s.issue or 'red' }} <span class="card-sub">red since {{ s.first_bad_at.strftime('%H:%M UTC') }}</span></li>{% endfor %}
         {% for s in waiting %}<li class="warn" data-ctrl="{{ s.controller_id }}"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys_c(s.issue) }}" title="Open this controller's chart (sensors for this alarm, burner run time underneath)">chart</span>:
           {{ s.issue or 'red' }} <span class="card-sub">red since {{ s.first_bad_at.strftime('%H:%M UTC') }}</span></li>{% endfor %}
       </ul>
@@ -63,7 +73,7 @@
       <h2 style="margin-top:12px">Muted</h2>
       <ul class="issues">
         {% for s in l_muted %}<li class="info" data-box="{{ s.box_id }}"><a href="{{ url_for('admin.live_box', box_id=s.box_id) }}">{{ s.box.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys(s.issue) }}" title="Open this building's chart (sensors for this alarm, burner run time underneath)">chart</span>
-          <span class="chip info">2010 box</span> until {{ s.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if s.muted_by %}, by {{ s.muted_by }}{% endif %}</li>{% endfor %}
+          <span class="chip info">2010 box</span>{{ hw(s.box_id) }} until {{ s.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if s.muted_by %}, by {{ s.muted_by }}{% endif %}</li>{% endfor %}
         {% for s in muted %}<li class="info" data-ctrl="{{ s.controller_id }}"><a href="{{ url_for('admin.fleet_controller', controller_id=s.controller_id) }}">{{ s.controller.name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys_c(s.issue) }}" title="Open this controller's chart (sensors for this alarm, burner run time underneath)">chart</span>
           until {{ s.muted_until.strftime('%Y-%m-%d %H:%M UTC') }}{% if s.muted_by %}, by {{ s.muted_by }}{% endif %}</li>{% endfor %}
       </ul>
@@ -97,13 +107,14 @@
     <h2>History</h2>
     {% if events %}
     <table class="table">
-      <thead><tr><th>When (UTC)</th><th>What</th><th>Controller</th><th>Message</th><th>Delivered</th></tr></thead>
+      <thead><tr><th>When (UTC)</th><th>What</th><th>Controller</th><th title="Hot-water 2010 boxes: their target and supply as read now (not at the time of the alert)">Target / Supp now</th><th>Message</th><th>Delivered</th></tr></thead>
       <tbody>
       {% for ev in events %}
         <tr{% if ev.legacy_box_id %} data-box="{{ ev.legacy_box_id }}"{% elif ev.controller_id %} data-ctrl="{{ ev.controller_id }}"{% endif %}>
           <td style="white-space:nowrap">{{ ev.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
           <td><span class="chip {{ {'open':'crit','reminder':'crit','recovered':'ok','test':'info','mute':'info','outage':'crit','outage-end':'ok','flapping':'warn','digest':'info'}.get(ev.kind, 'info') }}">{{ {'open':'Alert','reminder':'Reminder','recovered':'Recovered','test':'Test','mute':'Mute','outage':'Outage','outage-end':'Back','flapping':'Keeps tripping','digest':'Morning summary'}.get(ev.kind, ev.kind) }}</span></td>
           <td>{% if ev.legacy_box_id %}<a href="{{ url_for('admin.live_box', box_id=ev.legacy_box_id) }}">{{ ev.controller_name }}</a> <span class="chip info">2010 box</span><span class="lv-t lv-chartbtn" data-k="{{ ckeys(ev.text) }}" title="Open this building's chart (sensors for this alarm, burner run time underneath)">chart</span>{% elif ev.controller_id %}<a href="{{ url_for('admin.fleet_controller', controller_id=ev.controller_id) }}">{{ ev.controller_name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys_c(ev.text) }}" title="Open this controller's chart (sensors for this alarm, burner run time underneath)">chart</span>{% else %}{{ ev.controller_name or '—' }}{% endif %}</td>
+          <td style="white-space:nowrap">{{ hw(ev.legacy_box_id, '—') if ev.legacy_box_id else '—' }}</td>
           <td style="white-space:pre-line">{{ ev.title }}{% if ev.kind in ('open', 'reminder', 'recovered', 'outage', 'outage-end', 'flapping', 'digest') %}
 {{ ev.text }}{% endif %}</td>
           <td class="card-sub">{{ ev.delivered }}</td>
