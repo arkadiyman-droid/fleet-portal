@@ -24,6 +24,29 @@ import datetime as _dt
 import time as _time
 
 LEVELS = ("ok", "unknown", "info", "warn", "crit")   # ascending severity
+
+# Controller alarm types (EMS events/event_logger.py ALM_*) that are worth
+# paging someone for. The rest (restart, bypass change, gas/oil switch,
+# thresholds, valve feedback, scald trend / warning / sensor fault, CO sensor
+# fault, stack sensor fault, a LoRaWAN device offline) are shown in yellow on
+# the controller's page and never page: the user, 2026-10-18 — nuisance
+# alerts make people switch alerts off (a LoRaWAN sensor offline kept the
+# bench in alarm for 16 hours).
+URGENT_ALARMS = {1: "ignition failure", 3: "safety", 11: "pump failure", 12: "vacuum pump failure",
+                 13: "hot water scald trip", 17: "gas leak", 18: "flood", 19: "CO trip", 21: "boiler not heating",
+                 23: "CO shutdown", 24: "burner lockout (Fireye)", 25: "boiler fault (Aerco C-More)",
+                 26: "burner lockout (Honeywell)", 27: "boiler fault (Aerco Modulex)"}
+IGNITION_ALARM = 1
+
+
+def heat_system(d):
+    """'steam' / 'hot water' / None from a controller's /api/status heatCtrlType
+    (EMS control/system_types.py: 1 steam, 5 vacuum steam, 20 hydronic)."""
+    try:
+        hct = int(d.get("heatCtrlType"))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return "steam" if hct in (1, 5) else "hot water" if hct == 20 else None
 _RANK = {lvl: i for i, lvl in enumerate(LEVELS)}
 
 # --- thresholds -----------------------------------------------------------
@@ -162,9 +185,24 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
             if a.get("active"):
                 out["alarms"].append(a)
         if out["alarms"]:
-            first = out["alarms"][0]
-            more = f" (+{len(out['alarms']) - 1} more)" if len(out["alarms"]) > 1 else ""
-            issues.append(("crit", f"Alarm active: {first.get('label') or first.get('type')}{more}"))
+            hot = heat_system(d) == "hot water"
+            urgent, minor, ign_ignored = [], [], False
+            for a in out["alarms"]:
+                t = a.get("type")
+                if t == IGNITION_ALARM and hot:
+                    ign_ignored = True              # several boilers, fuel valves not all wired back
+                elif t in URGENT_ALARMS:
+                    urgent.append(a)
+                else:
+                    minor.append(a)
+            label = lambda a: a.get("label") or URGENT_ALARMS.get(a.get("type")) or f"alarm {a.get('type')}"
+            if urgent:
+                more = f" (+{len(urgent) - 1} more)" if len(urgent) > 1 else ""
+                issues.append(("crit", f"Alarm active: {label(urgent[0])}{more}"))
+            if minor:
+                issues.append(("warn", "Alarm active (not urgent, not paged): " + ", ".join(label(a) for a in minor[:3])))
+            if ign_ignored:
+                issues.append(("info", "Ignition alarm: not alerted on hot-water systems (no fuel-valve feedback)"))
 
     fh = d.get("fleetHealth") if d else None
     if not fh:

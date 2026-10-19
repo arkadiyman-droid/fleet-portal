@@ -121,9 +121,11 @@ class RedMeansActNow:
 
     def test_active_alarm_is_red_and_counted(self):
         raw = healthy_raw()
-        raw["recentAlarms"] = [{"type": "IgnitionFail", "label": "Ignition failure", "active": True},
-                               {"type": "LowWater", "label": "Low water", "active": True},
-                               {"type": "Restart", "label": "Restart", "active": False}]
+        raw["heatCtrlType"] = 1                                    # steam: an ignition failure matters
+        # real EMS alarm types (events/event_logger.py): 1 ignition, 3 safety, 6 restart
+        raw["recentAlarms"] = [{"type": 1, "label": "Ignition failure", "active": True},
+                               {"type": 3, "label": "Safety", "active": True},
+                               {"type": 6, "label": "Restart", "active": False}]
         e = ev(status(raw=raw))
         assert e["level"] == "crit"
         assert len(e["alarms"]) == 2

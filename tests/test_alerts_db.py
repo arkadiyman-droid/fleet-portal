@@ -84,6 +84,7 @@ class Paging:
 
         _tick(app, session, ctrl, 40, ok=True)
         assert len(sent) == 2 and sent[1][0].startswith("Recovered: ") and sent[1][2]["good_news"] is True
+        assert sent[1][1].startswith("Offline: cleared after 30 min.") and "Now: online" in sent[1][1]   # what recovered, plainly
         assert not session.get(m.AlertState, ctrl.id).alerting
         kinds = [e.kind for e in m.AlertEvent.query.order_by(m.AlertEvent.created_at).all()]
         assert kinds == ["open", "recovered"]

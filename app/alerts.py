@@ -124,6 +124,40 @@ def message(kind: str, ctrl, text: str):
     return title, body
 
 
+def plain_issue(text):
+    """A controller issue without its moving parts, for "X: cleared after ...":
+    "Offline, last seen 6 min ago: no answer (timed out)..." -> "Offline"."""
+    import re
+    t = (text or "").strip()
+    if t.startswith("Offline"):
+        return "Offline"
+    return re.sub(r"\s*\(\+\d+ more\)", "", t)
+
+
+def controller_ignition_evidence(ctrl_id, now):
+    """A steam controller's ignition failure: what its aquastat and hot-water
+    mix did over the last 45 minutes (app/ctrl_history.py snapshots)."""
+    from app.models import ControllerReading
+    rows = ControllerReading.query.filter(ControllerReading.controller_id == ctrl_id,
+                                          ControllerReading.ts >= now - EVIDENCE_WINDOW,
+                                          ControllerReading.ts <= now).order_by(ControllerReading.ts).all()
+
+    class _R:                                  # the shape _trend reads
+        def __init__(self, r):
+            self.ts, v = r.ts, r.values or {}
+            self.aqua, self.mix = v.get("aqua1"), v.get("mix")
+    rr = [_R(r) for r in rows]
+    aqua, aw = _trend(rr, "aqua", "Aquastat")
+    mix, mw = _trend(rr, "mix", "Hot water mix")
+    parts = [p for p in (aqua, mix) if p]
+    if not parts:
+        return None, False
+    falling = "falling" in (aw, mw)
+    verdict = ("looks real: the boiler is not making heat" if falling
+               else "aquastat holding: it may have relit, or the alarm was a blip")
+    return "Evidence: " + "; ".join(parts) + f" - {verdict}.", falling
+
+
 def check_all(app, now=None) -> int:
     """Evaluate every active controller once; send what decide() says.
     Returns how many notifications were attempted."""
@@ -142,7 +176,17 @@ def check_all(app, now=None) -> int:
         row = db.session.get(AlertState, ctrl.id) or AlertState(controller_id=ctrl.id)
         st = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until", "issue")}
         st["alerting"] = bool(st["alerting"])
-        new, event = decide(st, ev["level"], crit, now, cfg)
+        st["issue"] = plain_issue(st["issue"])
+        rule = cfg
+        raw = (ctrl.status.raw_json if ctrl.status else None) or {}
+        if crit and any("gnition" in c for c in crit) and fleet_health.heat_system(raw) == "steam":
+            line, falling = controller_ignition_evidence(ctrl.id, now)   # steam: is it really getting cold?
+            if line:
+                crit = crit + [line]
+            if falling and not row.alerting:
+                rule = {k: cfg.get(k) for k in ("ALERT_REPEAT_HOURS", "ALERT_RECOVERED_MIN_SECONDS")}
+                rule["ALERT_AFTER_SECONDS"] = 0
+        new, event = decide(st, ev["level"], crit, now, rule)
         new.pop("issue", None)
         for k, v in new.items():
             setattr(row, k, v)
@@ -151,6 +195,9 @@ def check_all(app, now=None) -> int:
         elif not new["alerting"]:
             row.issue = None
         db.session.add(row)
+        if event and event["kind"] == "recovered" and ev.get("online"):
+            mode = (ev.get("heating") or {}).get("mode")
+            event = dict(event, text=event["text"] + f"\nNow: online{', heating ' + str(mode) if mode else ''}.")
         event, extra = flap_gate(event, {"controller_id": ctrl.id}, now, cfg, ctrl.name, row.issue or st.get("issue"))
         for e in (event, extra):
             if not e:

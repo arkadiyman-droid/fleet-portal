@@ -172,3 +172,36 @@ def test_nothing_configured(ctx):
     ctx.config.update(ALERT_NTFY_TOPIC="")
     assert notify.channels() == {"ntfy": False, "email": False}
     assert notify.send("t", "b", urgent=True) == "no channel configured"
+
+
+# ── which controller alarms page (EMS alarm types), 2026-10-18 ──────────────
+
+def _eval(alarms, hct=20):
+    import types
+    from app import fleet_health
+    now = T0
+    ctrl = types.SimpleNamespace(tailscale_ip="100.64.0.7", fleet_api_token="x")
+    st = types.SimpleNamespace(ok=True, polled_at=now, last_ok_at=now, error=None, http_status=200, version="v",
+                               building_name="B", raw_json={"heatCtrlType": hct, "recentAlarms": alarms})
+    return fleet_health.evaluate(ctrl, st, now_dt=now)
+
+
+def _alarm(t, label):
+    return {"type": t, "label": label, "active": True}
+
+
+def test_only_urgent_controller_alarms_page():
+    lora = _eval([_alarm(28, "LORAWAN Device Offline")])
+    assert lora["level"] == "warn" and not [t for lvl, t in lora["issues"] if lvl == "crit"]   # shown, never paged
+    hot_ign = _eval([_alarm(1, "Ignition Failure")], hct=20)
+    assert hot_ign["level"] != "crit" and any("hot-water" in t for _l, t in hot_ign["issues"])
+    steam_ign = _eval([_alarm(1, "Ignition Failure")], hct=1)
+    assert steam_ign["level"] == "crit" and ("crit", "Alarm active: Ignition Failure") in steam_ign["issues"]
+    both = _eval([_alarm(3, "Safety"), _alarm(6, "Controller Restart")])
+    assert ("crit", "Alarm active: Safety") in both["issues"]
+    assert any(lvl == "warn" and "Controller Restart" in t for lvl, t in both["issues"])
+
+
+def test_recovered_names_the_problem_plainly():
+    assert alerts.plain_issue("Offline, last seen 6 min ago: no answer (timed out)") == "Offline"
+    assert alerts.plain_issue("Alarm active: Safety (+1 more)") == "Alarm active: Safety"
