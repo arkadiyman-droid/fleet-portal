@@ -965,9 +965,9 @@ def _firing(now, box_ids):
     return out
 
 
-_TINT_NAMES = {"inside": "Inside average", "supp": "Supply", "retn": "Return", "aqua": "Aquastat", "stack": "Stack",
+_TINT_NAMES = {"inside": "Inside average", "supp": "Supply", "target": "Target", "retn": "Return", "aqua": "Aquastat", "stack": "Stack",
                "coil": "Coil", "mix": "Hot water (mix)"}
-_TINT_KEYS = {"inside": "inside", "supp": "supp", "retn": "retn", "aqua": "aqua", "stack": "stack", "coil": "coil",
+_TINT_KEYS = {"inside": "inside", "supp": "supp", "target": "dsup", "retn": "retn", "aqua": "aqua", "stack": "stack", "coil": "coil",
               "mix": "mix"}
 
 
@@ -1010,7 +1010,7 @@ def _issues(row, now, events, alert_state):
     elif ra and ra["level"] in ("crit", "warn"):
         problems.append(f"Box alarm: {ra['words']}, {ra['when']}" + (" (still active)" if ra["active"] else ""))
     a = alert_state
-    if a and a.issue and a.issue.startswith("No heat") and (a.alerting or a.first_bad_at):
+    if a and a.issue and a.issue.startswith(("No heat", "Supply below target")) and (a.alerting or a.first_bad_at):
         problems.append(a.issue)
     if a and a.alerting:
         problems.append(f"Phone alert open since {history.local(a.opened_at).strftime('%b %d %I:%M %p').replace(' 0', ' ')}"

@@ -580,6 +580,7 @@ class LegacyReading(db.Model):
     supp = db.Column(db.SmallInteger)
     retn = db.Column(db.SmallInteger)
     risr = db.Column(db.SmallInteger)
+    dsup = db.Column(db.SmallInteger)                                # desiredSupplyTemp: hot-water target (0 = not calling)
     stack = db.Column(db.SmallInteger)
     hi_stack = db.Column(db.SmallInteger)
     valve = db.Column(db.SmallInteger)                               # controlValvePctOpen

@@ -97,6 +97,7 @@ def reading(box_id, ts, data) -> dict:
         "out": _small(c["out"]), "inside": _small(c["inside"]), "dit": _small(c["dit"]),
         "aqua": _small(c["aqua"]), "coil": _small(c["coil"]), "mix": _small(c["mix"]),
         "supp": _small(c["supp"]), "retn": _small(c["retn"]), "risr": _small(c["risr"]),
+        "dsup": _small(st.get("desiredSupplyTemp")),
         "stack": _small(c["stack"]), "hi_stack": _small(c["hi_stack"]),
         "valve": _small(st.get("controlValvePctOpen")), "pressure": _small(st.get("pressure0")),
         # only the boilers the box has (legacy.boilers): the others' counters are noise

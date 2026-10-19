@@ -368,7 +368,7 @@ def box_csv_rows(box_id, res, days, now=None):
 # ── one sensor (or several) of one box, for the Live page's pop-up chart ─────
 
 BASE_SENSORS = [("out", "Outside"), ("inside", "Inside average"), ("dit", "Desired inside"), ("aqua", "Aquastat"),
-                ("supp", "Supply"), ("retn", "Return"), ("risr", "Riser"), ("coil", "Coil"), ("mix", "Mix"),
+                ("supp", "Supply"), ("dsup", "Target supply"), ("retn", "Return"), ("risr", "Riser"), ("coil", "Coil"), ("mix", "Mix"),
                 ("stack", "Stack"), ("hi_stack", "High stack")]
 _HOURLY_COL = {"out": "out_avg", "inside": "in_avg", "dit": "dit", "aqua": "aqua_avg", "supp": "supp_avg",
                "retn": "retn_avg", "stack": "stack_avg", "hi_stack": "hi_stack", "coil": "coil_max", "mix": "mix_max"}

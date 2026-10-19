@@ -297,3 +297,17 @@ def test_heating_system_from_the_box_settings():
     assert (c["system"], c["system_label"]) == ("hot water", "Hot water (mixing valve)")
     assert legacy.ignition_ignored({"config": {"heatControlType": "13"}})
     assert not legacy.ignition_ignored({"config": {"heatControlType": "1"}}) and not legacy.ignition_ignored({})
+
+
+def test_hot_water_target_next_to_the_supply():
+    st = {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75"}
+    data = {"status": st, "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}}
+    c = legacy.card(data)
+    assert (c["supp"], c["target"], c["target_gap"]) == (75, 140, 65)
+    assert c["tint"]["target"][0] == "cold" and "65 F below the target 140 F" in c["tint"]["target"][1]
+    ok = legacy.card({**data, "status": {**st, "systemTemperature0": "130"}})
+    assert ok["target"] == 140 and ok["target_gap"] is None and "target" not in ok["tint"]      # 10 F short: fine
+    idle = legacy.card({**data, "status": {**st, "callForHeat": "Outsd Sat"}})
+    assert idle["target_gap"] is None                                                          # not calling: no colour
+    steam = legacy.card({**data, "config": {"heatControlType": "1"}})
+    assert steam["target"] is None                                                             # steam has no supply target

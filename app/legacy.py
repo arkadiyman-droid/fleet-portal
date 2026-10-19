@@ -235,6 +235,12 @@ def hhmm(minutes):
 
 
 def card(data: dict) -> dict:
+    c = _card(data)
+    c["tint"] = card_tints(c)
+    return c
+
+
+def _card(data: dict) -> dict:
     """The Anagha-style card from one box's stored reading (LegacyStatus.data)."""
     st = (data or {}).get("status") or {}
     names = (data or {}).get("names") or {}
@@ -279,7 +285,32 @@ def card(data: dict) -> dict:
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
     } | {"tint": tint(role, _int(st.get("averageTemperature")), _int(st.get("targetInsideTemperature")),
-                      _int(st.get("stackTemperature")), temps)}
+                      _int(st.get("stackTemperature")), temps)} | _target(data, role.get("supp"), phrase, tone)
+
+
+# Hot-water target: the box's desiredSupplyTemp, its outdoor-reset supply
+# target during a heat call (0 when satisfied; aquastatTargetTemp is a fixed
+# 180 F setpoint, not this). Shown next to the supply; a supply TARGET_GAP+
+# below it while calling for heat is coloured, and alerts when it lasts
+# (alerts.hydronic_below_target). Seen 2026-10-18: 105-107 Terrace St calling
+# with target 140 F and supply 75 F.
+TARGET_GAP = 20
+
+
+def _target(data, supp, phrase, tone) -> dict:
+    st = (data or {}).get("status") or {}
+    target = _int(st.get("desiredSupplyTemp")) if heat_system(data) == "hot water" else None
+    return {"target": target or None,
+            "target_gap": (target - supp) if target and supp and tone == "heat" and target - supp >= TARGET_GAP else None}
+
+
+def card_tints(c) -> dict:
+    """The card's colours, the target's included."""
+    t = dict(c.get("tint") or {})
+    if c.get("target_gap"):
+        t["target"] = ("cold", f"Supply {c['supp']} F is {c['target_gap']} F below the target {c['target']} F "
+                               f"while calling for heat ({c['status']})")
+    return t
 
 
 # Cell colours, decoded from Anagha's Live page (2026-10-15: every one of its

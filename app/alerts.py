@@ -68,8 +68,9 @@ def decide(st: dict, level: str, crit: list, now: _dt.datetime, cfg: dict):
         what = (st.get("issue") or "The problem").strip().rstrip(".")
         if what.startswith("Status: "):
             what = what[len("Status: "):]
-        if what.startswith("No heat"):
-            what = "No heat"
+        for label in ("No heat", "Supply below target"):
+            if what.startswith(label):
+                what = label
         st.update(alerting=False, opened_at=None, notified_at=None)
         # a problem that cleared quickly closes quietly: the alert already went out
         long_enough = secs >= _secs(cfg, "ALERT_RECOVERED_MIN_SECONDS", 1800)
@@ -384,6 +385,47 @@ def steam_no_heat(box_id, now):
             f"{mix_part} - the burner is not making heat.")
 
 
+# ── hot water: calling for heat, but the supply stays far below its target ────
+
+TARGET_CALL_MIN = 30
+
+
+def hydronic_below_target(box_id, data, now):
+    """The "Supply below target" line for a hot-water box that has called for
+    heat TARGET_CALL_MIN+ minutes with its supply legacy.TARGET_GAP+ under
+    its target (desiredSupplyTemp) at every read of the last 30 minutes."""
+    from app import legacy
+    from app.models import LegacyReading
+    if legacy.heat_system(data) != "hot water":
+        return None
+    st = (data or {}).get("status") or {}
+    target_now = legacy._int(st.get("desiredSupplyTemp"))
+    if not target_now:
+        return None
+    calling = {k for k, (_p, tone) in legacy.STATUS.items() if tone == "heat"}
+    rows = LegacyReading.query.filter(LegacyReading.box_id == box_id, LegacyReading.ts >= now - NOHEAT_LOOKBACK,
+                                      LegacyReading.ts <= now).order_by(LegacyReading.ts).all()
+    if not rows or rows[-1].code not in calling or now - rows[-1].ts > _CALL_GAP:
+        return None
+    run = [rows[-1]]
+    for r in reversed(rows[:-1]):
+        if r.code not in calling or run[0].ts - r.ts > _CALL_GAP:
+            break
+        run.insert(0, r)
+    minutes = round((run[-1].ts - run[0].ts).total_seconds() / 60)
+    if minutes < TARGET_CALL_MIN:
+        return None
+    window = [r for r in run if r.ts >= run[-1].ts - _dt.timedelta(minutes=TARGET_CALL_MIN)]
+    gaps = [(r.dsup or target_now) - r.supp for r in window if r.supp]
+    if len(gaps) < 3 or min(gaps) < legacy.TARGET_GAP:
+        return None
+    last = window[-1]
+    target = last.dsup or target_now
+    words = legacy.STATUS.get(last.code, (last.code, ""))[0]
+    return (f"Supply below target: supply {last.supp} F is {target - last.supp} F below its target {target} F "
+            f"after {minutes} min calling for heat ({words}) - the boiler is not keeping up.")
+
+
 def legacy_message(kind: str, box, text: str):
     title = f"{_TITLES[kind]}: {box.name}"
     where = ""
@@ -455,6 +497,10 @@ def check_legacy(app, now=None) -> int:
             no_heat = steam_no_heat(b.id, now)
             if no_heat:
                 issues = issues + [no_heat]
+        if st is not None and st.ok and legacy.heat_system(st.data) == "hot water":
+            below = hydronic_below_target(b.id, st.data, now)
+            if below:
+                issues = issues + [below]
         rule = dict(base)
         # A box alarm alone is not an alert: if the box clears it by the next
         # reads, nothing is sent (it stays in the building's history). It only
