@@ -349,16 +349,17 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False
 
 
 def _target_stats(cur, poll_min, hot_water) -> dict:
-    """Hot water, the reads calling for heat with a target: average target,
-    average supply, and minutes the supply was legacy.TARGET_GAP+ short."""
+    """Hot water, the reads calling for heat: average target, average supply,
+    and minutes the loop was cold (supply and/or return under
+    legacy.LOOP_COLD_F; stored as short_min)."""
     from app import legacy
     if not hot_water:
         return {"dsup_avg": None, "supp_call_avg": None, "short_min": 0}
-    calls = [r for r in cur if r.dsup and _tone(r.code) == "heat"]
+    calls = [r for r in cur if _tone(r.code) == "heat"]
     supps = [r.supp for r in calls if _ok(r.supp, 1, 260) is not None]
-    short = sum(1 for r in calls if r.supp and r.dsup - r.supp >= legacy.TARGET_GAP)
-    return {"dsup_avg": _mean([r.dsup for r in calls]), "supp_call_avg": _mean(supps),
-            "short_min": min(60, short * poll_min)}
+    cold = sum(1 for r in calls if legacy.loop_cold(r.supp, r.retn))
+    return {"dsup_avg": _mean([r.dsup for r in calls if r.dsup]), "supp_call_avg": _mean(supps),
+            "short_min": min(60, cold * poll_min)}
 
 
 def rollup_hour(hour, poll_min=5) -> int:

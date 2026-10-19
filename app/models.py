@@ -642,7 +642,7 @@ class LegacyHourly(db.Model):
     law_req = db.Column(db.SmallInteger)                             # heat-season minimum this hour, if any
     law_low = db.Column(db.SmallInteger, nullable=False, default=0)  # apartment sensors averaging below it
     # hot water while calling for heat: the box's target supply, the real supply,
-    # and the minutes the supply was legacy.TARGET_GAP+ under the target
+    # and the minutes the loop was cold (supply / return under legacy.LOOP_COLD_F)
     dsup_avg = db.Column(db.Float)
     supp_call_avg = db.Column(db.Float)
     short_min = db.Column(db.SmallInteger, nullable=False, default=0)

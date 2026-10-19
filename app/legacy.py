@@ -285,32 +285,51 @@ def _card(data: dict) -> dict:
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
     } | {"tint": tint(role, _int(st.get("averageTemperature")), _int(st.get("targetInsideTemperature")),
-                      _int(st.get("stackTemperature")), temps)} | _target(data, role.get("supp"), phrase, tone)
+                      _int(st.get("stackTemperature")), temps)} | _target(data, role.get("supp"), role.get("retn"), tone)
 
 
 # Hot-water target: the box's desiredSupplyTemp, its outdoor-reset supply
 # target during a heat call (0 when satisfied; aquastatTargetTemp is a fixed
-# 180 F setpoint, not this). Shown next to the supply; a supply TARGET_GAP+
-# below it while calling for heat is coloured, and alerts when it lasts
-# (alerts.hydronic_below_target). Seen 2026-10-18: 105-107 Terrace St calling
-# with target 140 F and supply 75 F. 25 F, not 20 (the user, 2026-10-18): 151 F
-# supply under an ambitious 175 F target is not "way below".
-TARGET_GAP = 25
+# 180 F setpoint, not this). Shown next to the supply, for information.
+#
+# What makes a hot-water system a problem is a cold loop: supply and/or
+# return under LOOP_COLD_F while calling for heat (the user, 2026-10-19: the
+# only problematic hydronic systems are the ones with supply and/or return
+# below 80). A gap to the target is not: a 25 F gap flagged 9 buildings at
+# once, most of them heating fine against an ambitious reset target. Coloured
+# on Live, a problem in the building's panel, and an alert when it lasts
+# (alerts.hydronic_loop_cold).
+LOOP_COLD_F = 80
 
 
-def _target(data, supp, phrase, tone) -> dict:
+def loop_cold(supp, retn) -> list:
+    """[("supply", 73), ("return", 67)]: the loop readings under LOOP_COLD_F
+    (0 or None = no sensor, never cold)."""
+    return [(n, v) for n, v in (("supply", supp), ("return", retn)) if v and 0 < v < LOOP_COLD_F]
+
+
+def cold_words(cold) -> str:
+    return " and ".join(f"{n} {v} F" for n, v in cold)
+
+
+def _target(data, supp, retn, tone) -> dict:
     st = (data or {}).get("status") or {}
-    target = _int(st.get("desiredSupplyTemp")) if heat_system(data) == "hot water" else None
+    hot = heat_system(data) == "hot water"
+    target = _int(st.get("desiredSupplyTemp")) if hot else None
+    cold = loop_cold(supp, retn) if hot and tone == "heat" else []
     return {"target": target or None,
-            "target_gap": (target - supp) if target and supp and tone == "heat" and target - supp >= TARGET_GAP else None}
+            "loop_cold": f"Hot water cold: {cold_words(cold)}, under {LOOP_COLD_F} F while calling for heat" if cold else None}
 
 
 def card_tints(c) -> dict:
-    """The card's colours, the target's included."""
+    """The card's colours, a cold hot-water loop's included."""
     t = dict(c.get("tint") or {})
-    if c.get("target_gap"):
-        t["target"] = ("cold", f"Supply {c['supp']} F is {c['target_gap']} F below the target {c['target']} F "
-                               f"while calling for heat ({c['status']})")
+    if c.get("loop_cold"):
+        for key, label in (("supp", "Supply"), ("retn", "Return")):
+            v = c.get(key)
+            if v and 0 < v < LOOP_COLD_F:
+                t[key] = ("cold", f"{label} {v} F is under {LOOP_COLD_F} F while calling for heat ({c['status']})"
+                                  + (f", target {c['target']} F" if c.get("target") else "") + ": a problem")
     return t
 
 

@@ -216,9 +216,9 @@ def sensor_health(now, boxes):
     return sorted(out, key=lambda s: (s["box"].name.lower(), s["sensor"]))
 
 
-def legacy_gap():
+def loop_cold_f():
     from app import legacy
-    return legacy.TARGET_GAP
+    return legacy.LOOP_COLD_F
 
 
 def _hm(minutes):
@@ -249,9 +249,10 @@ def findings(rows, fleet, law, sensors, boxes):
             add("warn", r, "Efficiency", f"burner time per degree-day up {r['trend'] * 100:.0f}% on the previous period",
                 450 + r["trend"] * 100)
         if r["short_h"] >= 2:
-            add("warn", r, "Below target", f"supply {legacy_gap()}+ F below its target for {r['short_h']:g} h while calling for heat"
-                + (f" (average supply {r['supp_call_avg']:.0f} F vs target {r['target_avg']:.0f} F)"
-                   if r["supp_call_avg"] is not None and r["target_avg"] is not None else ""), 600 + r["short_h"])
+            add("warn", r, "Hot water cold", f"supply or return under {loop_cold_f()} F for {r['short_h']:g} h while calling for heat"
+                + (f" (average supply {r['supp_call_avg']:.0f} F"
+                   + (f", target {r['target_avg']:.0f} F" if r["target_avg"] is not None else "") + ")"
+                   if r["supp_call_avg"] is not None else ""), 600 + r["short_h"])
         if r["overheat_hours"] >= 6:
             add("warn", r, "Waste", f"heated for {r['overheat_hours']} hour(s) while {history.OVERHEAT}+ F above "
                 f"its desired temperature", 400 + r["overheat_hours"])

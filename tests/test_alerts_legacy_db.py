@@ -290,21 +290,21 @@ def test_a_normal_steam_call_and_hot_water_never_say_no_heat(app, session):
     assert (session.get(m.LegacyAlertState, hot.id).issue or "") == ""                    # hot water: not this rule
 
 
-def test_hot_water_supply_far_below_target(app, session, sent, client):
+def test_hot_water_cold_loop(app, session, sent, client):
     import app.models as m
     from app import alerts, history
     (b,) = _boxes(session, 1)
     reads = []
-    for k in range(12):                                 # calling 55 min; supply stuck near 75 F against 140 F
+    for k in range(12):                                 # calling 55 min; supply stuck near 75 F
         data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": str(74 + k % 3)},
                 "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}}
         reads.append(history.reading(b.id, T0 + dt.timedelta(minutes=5 * k), data))
     history.save(reads, [], T0)
     assert m.LegacyReading.query.filter_by(box_id=b.id).first().dsup == 140                # stored for the charts
     data_now = reads and {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140"}, "config": {"heatControlType": "13"}}
-    assert alerts.hydronic_below_target(b.id, data_now, T0 + dt.timedelta(minutes=20)) is None    # under 30 min
-    line = alerts.hydronic_below_target(b.id, data_now, T0 + dt.timedelta(minutes=55))
-    assert line.startswith("Supply below target: supply ") and "below its target 140 F after 55 min calling" in line
+    assert alerts.hydronic_loop_cold(b.id, data_now, T0 + dt.timedelta(minutes=20)) is None      # under 30 min
+    line = alerts.hydronic_loop_cold(b.id, data_now, T0 + dt.timedelta(minutes=55))
+    assert line.startswith("Hot water cold: supply ") and "under 80 F after 55 min calling" in line and "target 140 F" in line
     for minute in (40, 45, 50, 55):
         row = session.get(m.LegacyStatus, b.id) or m.LegacyStatus(box_id=b.id)
         at = T0 + dt.timedelta(minutes=minute)
@@ -312,15 +312,27 @@ def test_hot_water_supply_far_below_target(app, session, sent, client):
         row.data = dict(data_now, alarm=None)
         session.add(row); session.commit()
         _check(app, session, minute)
-    assert len(sent) == 1 and sent[0][1].startswith("Supply below target")
-    assert alerts.hydronic_below_target(b.id, {**data_now, "config": {"heatControlType": "1"}}, T0 + dt.timedelta(minutes=55)) is None
+    assert len(sent) == 1 and sent[0][1].startswith("Hot water cold")
+    assert alerts.hydronic_loop_cold(b.id, {**data_now, "config": {"heatControlType": "1"}}, T0 + dt.timedelta(minutes=55)) is None
 
     # Alerts shows the building's target and supply as read now, blue when 25+ F short
     row = session.get(m.LegacyStatus, b.id)
     row.last_ok_at = row.polled_at = dt.datetime.utcnow()
-    row.data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75"},
-                "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}, "alarm": None}
+    row.data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75",
+                           "systemTemperature1": "70"},
+                "names": {"systemSensorName0": "HWtS", "systemSensorName1": "HWtR"}, "config": {"heatControlType": "13"},
+                "alarm": None}
     session.add(row); session.commit()
     page = client.get("/alerts").data.decode()
-    assert 'class="hw-now lv-t short" data-k="dsup,supp"' in page and "Target 140 · Supp 75 <b>-65</b>" in page
-    assert "Target / Supp now" in page and 'data-k="dsup,supp,inside"' in page        # the alert's chart: target + supply
+    assert 'class="hw-now lv-t short" data-k="dsup,supp,retn"' in page and "Target 140 · Supp 75 · Ret 70" in page
+    assert "Target / Supp / Ret now" in page
+
+
+def test_hot_water_far_under_target_but_warm_is_not_cold(app, session, sent):
+    from app import alerts, history
+    (b,) = _boxes(session, 1)
+    data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "175", "systemTemperature0": "120",
+                       "systemTemperature1": "95"},
+            "names": {"systemSensorName0": "HWtS", "systemSensorName1": "HWtR"}, "config": {"heatControlType": "13"}}
+    history.save([history.reading(b.id, T0 + dt.timedelta(minutes=5 * k), data) for k in range(12)], [], T0)
+    assert alerts.hydronic_loop_cold(b.id, data, T0 + dt.timedelta(minutes=55)) is None     # 55 F under target, loop warm

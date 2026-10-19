@@ -68,7 +68,7 @@ def decide(st: dict, level: str, crit: list, now: _dt.datetime, cfg: dict):
         what = (st.get("issue") or "The problem").strip().rstrip(".")
         if what.startswith("Status: "):
             what = what[len("Status: "):]
-        for label in ("No heat", "Supply below target"):
+        for label in ("No heat", "Hot water cold", "Supply below target"):
             if what.startswith(label):
                 what = label
         st.update(alerting=False, opened_at=None, notified_at=None)
@@ -385,23 +385,21 @@ def steam_no_heat(box_id, now):
             f"{mix_part} - the burner is not making heat.")
 
 
-# ── hot water: calling for heat, but the supply stays far below its target ────
+# ── hot water: calling for heat, but the loop stays cold ──────────────────────
 
 TARGET_CALL_MIN = 30
 
 
-def hydronic_below_target(box_id, data, now):
-    """The "Supply below target" line for a hot-water box that has called for
-    heat TARGET_CALL_MIN+ minutes with its supply legacy.TARGET_GAP+ under
-    its target (desiredSupplyTemp) at every read of the last 30 minutes."""
+def hydronic_loop_cold(box_id, data, now):
+    """The "Hot water cold" line for a hot-water box that has called for heat
+    TARGET_CALL_MIN+ minutes with its supply and/or return under
+    legacy.LOOP_COLD_F at every read of the last 30 minutes."""
     from app import legacy
     from app.models import LegacyReading
     if legacy.heat_system(data) != "hot water":
         return None
     st = (data or {}).get("status") or {}
     target_now = legacy._int(st.get("desiredSupplyTemp"))
-    if not target_now:
-        return None
     calling = {k for k, (_p, tone) in legacy.STATUS.items() if tone == "heat"}
     rows = LegacyReading.query.filter(LegacyReading.box_id == box_id, LegacyReading.ts >= now - NOHEAT_LOOKBACK,
                                       LegacyReading.ts <= now).order_by(LegacyReading.ts).all()
@@ -416,14 +414,14 @@ def hydronic_below_target(box_id, data, now):
     if minutes < TARGET_CALL_MIN:
         return None
     window = [r for r in run if r.ts >= run[-1].ts - _dt.timedelta(minutes=TARGET_CALL_MIN)]
-    gaps = [(r.dsup or target_now) - r.supp for r in window if r.supp]
-    if len(gaps) < 3 or min(gaps) < legacy.TARGET_GAP:
+    cold = [legacy.loop_cold(r.supp, r.retn) for r in window]
+    if len(window) < 3 or not all(cold):
         return None
     last = window[-1]
     target = last.dsup or target_now
     words = legacy.STATUS.get(last.code, (last.code, ""))[0]
-    return (f"Supply below target: supply {last.supp} F is {target - last.supp} F below its target {target} F "
-            f"after {minutes} min calling for heat ({words}) - the boiler is not keeping up.")
+    return (f"Hot water cold: {legacy.cold_words(cold[-1])}, under {legacy.LOOP_COLD_F} F after {minutes} min "
+            f"calling for heat ({words}{f', target {target} F' if target else ''}) - the boiler is not keeping up.")
 
 
 def legacy_message(kind: str, box, text: str):
@@ -498,7 +496,7 @@ def check_legacy(app, now=None) -> int:
             if no_heat:
                 issues = issues + [no_heat]
         if st is not None and st.ok and legacy.heat_system(st.data) == "hot water":
-            below = hydronic_below_target(b.id, st.data, now)
+            below = hydronic_loop_cold(b.id, st.data, now)
             if below:
                 issues = issues + [below]
         rule = dict(base)

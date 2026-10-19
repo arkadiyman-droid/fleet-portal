@@ -731,8 +731,8 @@ def _hot_water_now(box_ids, now) -> dict:
         if legacy.heat_system(st.data) != "hot water":
             continue
         c = legacy.card(st.data)
-        out[st.box_id] = {"target": c.get("target"), "supp": c.get("supp"), "gap": c.get("target_gap"),
-                          "why": (c.get("tint") or {}).get("target", (None, None))[1]}
+        out[st.box_id] = {"target": c.get("target"), "supp": c.get("supp"), "retn": c.get("retn"),
+                          "cold": c.get("loop_cold")}
     return out
 
 
@@ -1032,8 +1032,10 @@ def _issues(row, now, events, alert_state):
     elif ra and ra["level"] in ("crit", "warn"):
         problems.append(f"Box alarm: {ra['words']}, {ra['when']}" + (" (still active)" if ra["active"] else ""))
     a = alert_state
-    if a and a.issue and a.issue.startswith(("No heat", "Supply below target")) and (a.alerting or a.first_bad_at):
+    if a and a.issue and a.issue.startswith(("No heat", "Hot water cold")) and (a.alerting or a.first_bad_at):
         problems.append(a.issue)
+    elif row["state"] == "live" and c.get("loop_cold"):
+        problems.append(c["loop_cold"])               # supply / return under 80 F while calling, right now
     if a and a.alerting:
         problems.append(f"Phone alert open since {history.local(a.opened_at).strftime('%b %d %I:%M %p').replace(' 0', ' ')}"
                         if a.opened_at else "Phone alert open")
@@ -1047,7 +1049,7 @@ def _issues(row, now, events, alert_state):
         if ra and ra["level"] == "info":
             notes.append({"text": f"Box note: {ra['words']}, {ra['when']}", "tone": "info"})
     keys = ["inside", "out"] if row["state"] != "live" else (
-        ["stack", "aqua", "inside"] if problems else ["inside", "out"])
+        ["dsup", "supp", "retn"] if c.get("loop_cold") else ["stack", "aqua", "inside"] if problems else ["inside", "out"])
     return {"name": row["box"].name + (f" · {c['system_label']}" if c.get("system_label") else ""),
             "problems": problems, "notes": notes, "events": events,
             "keys": ",".join(keys), "url": f"/live/{row['box'].id}"}
@@ -1265,7 +1267,7 @@ def analytics_csv():
             ("burner_min_per_degree_day", "mpd"), ("x_fleet_median", "mpd_x"), ("change_vs_previous", "trend"),
             ("inside_avg_f", "in_avg"), ("inside_min_f", "in_min"), ("outside_avg_f", "out_avg"),
             ("desired_avg_f", "dit"), ("target_supply_avg_f", "target_avg"), ("supply_while_calling_avg_f", "supp_call_avg"),
-            ("hours_below_target", "short_h"), ("below_minimum_hours", "law_hours"),
+            ("hours_hot_water_cold", "short_h"), ("below_minimum_hours", "law_hours"),
             ("below_minimum_sensor_hours", "law_sensor_hours"), ("lowest_apartment_f", "apt_low"),
             ("safety_min", "safety"), ("trips", "trips"), ("dark_times", "dark"), ("overheated_hours", "overheat_hours"),
             ("heating_60f_plus_min", "warm_heat"), ("hot_water_min_per_day", "hw_day"),

@@ -299,21 +299,21 @@ def test_heating_system_from_the_box_settings():
     assert not legacy.ignition_ignored({"config": {"heatControlType": "1"}}) and not legacy.ignition_ignored({})
 
 
-def test_hot_water_target_next_to_the_supply():
-    st = {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75"}
-    data = {"status": st, "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}}
-    c = legacy.card(data)
-    assert (c["supp"], c["target"], c["target_gap"]) == (75, 140, 65)
-    assert c["tint"]["target"][0] == "cold" and "65 F below the target 140 F" in c["tint"]["target"][1]
-    ok = legacy.card({**data, "status": {**st, "systemTemperature0": "130"}})
-    assert ok["target"] == 140 and ok["target_gap"] is None and "target" not in ok["tint"]      # 10 F short: fine
+def test_hot_water_cold_loop_is_supply_or_return_under_80_while_calling():
+    st = {"callForHeat": "Circ Pump", "desiredSupplyTemp": "170", "systemTemperature0": "73", "systemTemperature1": "67"}
+    data = {"status": st, "names": {"systemSensorName0": "HWtS", "systemSensorName1": "HWtR"}, "config": {"heatControlType": "13"}}
+    c = legacy.card(data)                                                                      # 105-107 Terrace St, 2026-10-19
+    assert (c["target"], c["supp"], c["retn"]) == (170, 73, 67)
+    assert c["loop_cold"] == "Hot water cold: supply 73 F and return 67 F, under 80 F while calling for heat"
+    assert c["tint"]["supp"][0] == "cold" and "under 80 F while calling" in c["tint"]["supp"][1]
+    assert "target" not in c["tint"]                                                           # the target itself is never coloured
+    ret = legacy.card({**data, "status": {**st, "systemTemperature0": "112", "systemTemperature1": "74"}})
+    assert ret["loop_cold"].startswith("Hot water cold: return 74 F")                          # 24 Rockvale Circ: return alone
+    far = legacy.card({**data, "status": {**st, "systemTemperature0": "120", "systemTemperature1": "95"}})
+    assert far["loop_cold"] is None                                                            # 50 F under target, loop warm: fine
     idle = legacy.card({**data, "status": {**st, "callForHeat": "Outsd Sat"}})
-    assert idle["target_gap"] is None                                                          # not calling: no colour
+    assert idle["loop_cold"] is None                                                           # not calling: not a problem
+    nosens = legacy.card({**data, "status": {**st, "systemTemperature0": "0", "systemTemperature1": "0"}})
+    assert nosens["loop_cold"] is None                                                         # 0 = no sensor
     steam = legacy.card({**data, "config": {"heatControlType": "1"}})
-    assert steam["target"] is None                                                             # steam has no supply target
-
-
-def test_a_24_f_shortfall_is_not_way_below():
-    st = {"callForHeat": "Circ Pump", "desiredSupplyTemp": "175", "systemTemperature0": "151"}   # 635 Morris Ave SW Zone
-    c = legacy.card({"status": st, "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "11"}})
-    assert c["target"] == 175 and c["target_gap"] is None and legacy.TARGET_GAP == 25
+    assert steam["target"] is None and steam["loop_cold"] is None

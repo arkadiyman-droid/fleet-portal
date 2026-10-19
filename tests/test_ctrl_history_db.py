@@ -88,12 +88,12 @@ def test_alerts_page_has_controller_chart_buttons(app, session, ctrl, client):
 
 def test_controller_page_and_card_show_target_supply(app, session, ctrl, client):
     import app.models as m
-    raw = status(0) | {"heatCtrlType": 20, "dSupTemp": 160, "supTemp": 120, "hwrTemp": 100, "heatDemand": True}
+    raw = status(0) | {"heatCtrlType": 20, "dSupTemp": 160, "supTemp": 78, "hwrTemp": 100, "heatDemand": True}
     session.add(m.ControllerStatus(controller_id=ctrl.id, ok=True, polled_at=dt.datetime.utcnow(), raw_json=raw))
     session.commit()
     page = client.get(f"/fleet/{ctrl.id}").data.decode()
     assert "Target supply" in page and 'data-ctrl="%d"' % ctrl.id in page and "sensorchart.js" in page
-    assert 'class="lv-t t-cold" data-k="dsupp,supp"' in page and "supply 40 F short" in page
+    assert 'class="lv-t t-cold" data-k="dsupp,supp,hwr"' in page and "Hot water cold: supply 78 F, under 80 F" in page
     card = client.get("/overview").data.decode()
-    assert "Target supply" in card and "160°" in card and "-40" in card
+    assert "Target supply" in card and "160°" in card and 'class="v low" title="Hot water cold: supply 78 F' in card
 

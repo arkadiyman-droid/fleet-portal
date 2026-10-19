@@ -22,8 +22,7 @@
   .lv-row { display:grid; grid-template-columns:repeat(3, 1fr); text-align:center; padding:4px 6px; }
   .lv-row + .lv-row { border-top:1px solid #f1f5f9; }
   .lv-row .k { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
-  .lv-row .v { font-size:16px; font-weight:700; color:#111827; }
-  .lv-row .v .lv-gap { font-size:11px; font-weight:600; margin-left:3px; } .lv-row.small .v { font-size:13px; font-weight:600; }
+  .lv-row .v { font-size:16px; font-weight:700; color:#111827; } .lv-row.small .v { font-size:13px; font-weight:600; }
   .lv-row .v.cool { color:#1d4ed8; } .lv-row .v.hot { color:#dc2626; } .lv-row .v.mid { color:#0d9488; }
   .lv-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
@@ -131,7 +130,7 @@
         {% if r.state == 'live' %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
-        <td{{ tc(c, 'target') }}>{{ t(c.target) }}{% if c.target_gap %} <small>(-{{ c.target_gap }})</small>{% endif %}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
+        <td>{{ t(c.target) }}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% else %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
@@ -162,7 +161,7 @@
         <div class="lv-row"><div><div class="k">Out</div><div class="v lv-out">{{ t(c.out) }}°</div></div>
           <div><div class="k">Inside</div><div class="v{{ vc(c, 'inside') if live }}">{{ t(c.inside) }}°</div></div>
           <div><div class="k">DIT</div><div class="v">{{ t(c.dit) }}°</div></div></div>
-        {% if c.system == 'hot water' %}<div class="lv-row"><div><div class="k">Target</div><div class="v{{ vc(c, 'target') if live }}"{% if c.target is none %} title="No target: the box sets one only while calling for heat"{% endif %}>{{ t(c.target) }}{% if c.target_gap and live %}<small class="lv-gap">-{{ c.target_gap }}</small>{% endif %}</div></div>
+        {% if c.system == 'hot water' %}<div class="lv-row"><div><div class="k">Target</div><div class="v"{% if c.target is none %} title="No target: the box sets one only while calling for heat"{% endif %}>{{ t(c.target) }}</div></div>
           <div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
           <div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div></div>{% endif %}
         <div class="lv-row"><div><div class="k">Heat RT</div><div class="v">{{ hhmm(c.heat_rt) }}</div></div>

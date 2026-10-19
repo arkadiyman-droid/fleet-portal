@@ -185,7 +185,7 @@ def test_the_box_page_shows_the_target_above_the_supply(app, session, two, clien
     session.commit()
     page = client.get(f"/live/{cold.id}").data.decode()
     i, j = page.index(">Target supply<"), page.index(">Supply<")
-    assert i < j and 'class="lv-t t-cold" data-k="dsup,supp"' in page and "supply 65 F short" in page
+    assert i < j and 'data-k="dsup,supp,retn"' in page and "Hot water cold: supply 75 F, under 80 F while calling" in page
 
 
 def test_analytics_target_and_supply_while_calling(app, session, two, client):
@@ -208,4 +208,4 @@ def test_analytics_target_and_supply_while_calling(app, session, two, client):
     a = analytics.portfolio("7", now=NOW)
     r = next(r for r in a["rows"] if r["box"].id == cold.id)
     assert (r["target_avg"], r["supp_call_avg"], r["short_h"]) == (140, 70, 24)
-    assert any(f["cat"] == "Below target" and "24 h while calling" in f["text"] for f in a["findings"])
+    assert any(f["cat"] == "Hot water cold" and "under 80 F for 24 h while calling" in f["text"] for f in a["findings"])

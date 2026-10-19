@@ -192,10 +192,13 @@ class Wording:
         assert F.duration(90000) == "1 d 1 h" and F.duration(3700) == "1 h 1 min"
 
 
-def test_supply_vs_target_hot_water_only_and_gap_only_while_calling():
+def test_supply_vs_target_cold_loop_only_under_80_while_calling():
     d = {"heatCtrlType": 20, "dSupTemp": 150, "supTemp": 120, "hwrTemp": 101, "heatDemand": True}
-    assert F.supply_vs_target(d) == {"supplyTarget": 150, "supply": 120, "ret": 101, "supplyGap": 30}
-    assert F.supply_vs_target(d | {"heatDemand": False})["supplyGap"] is None        # not calling: no shortfall
-    assert F.supply_vs_target(d | {"supTemp": 130})["supplyGap"] is None             # 20 F: under the 25 F line
-    assert F.supply_vs_target(d | {"heatCtrlType": 1}) == {}                          # steam
+    warm = F.supply_vs_target(d)
+    assert (warm["supplyTarget"], warm["supply"], warm["ret"], warm["cold"]) == (150, 120, 101, None)   # 30 F short, warm: fine
+    cold = F.supply_vs_target(d | {"supTemp": 85, "hwrTemp": 72})
+    assert cold["cold"] == "Hot water cold: return 72 F, under 80 F while calling for heat"
+    assert cold["retCold"] and not cold["supplyCold"]
+    assert F.supply_vs_target(d | {"supTemp": 70, "heatDemand": False})["cold"] is None           # not calling
+    assert F.supply_vs_target(d | {"heatCtrlType": 1}) == {}                                       # steam
 

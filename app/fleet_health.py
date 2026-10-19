@@ -37,7 +37,6 @@ URGENT_ALARMS = {1: "ignition failure", 3: "safety", 11: "pump failure", 12: "va
                  23: "CO shutdown", 24: "burner lockout (Fireye)", 25: "boiler fault (Aerco C-More)",
                  26: "burner lockout (Honeywell)", 27: "boiler fault (Aerco Modulex)"}
 IGNITION_ALARM = 1
-SUPPLY_GAP = 25        # F a hot-water supply may sit under its target while calling (legacy.TARGET_GAP)
 
 
 def _temp(v):
@@ -46,14 +45,17 @@ def _temp(v):
 
 def supply_vs_target(d) -> dict:
     """Hot water: the controller's outdoor-reset target supply (dSupTemp),
-    the real supply and return, and how far short the supply is while
-    calling for heat (only when SUPPLY_GAP+). Empty for steam."""
+    the real supply and return, and - while calling for heat - which of
+    supply / return is under legacy.LOOP_COLD_F (the same rule as the 2010
+    boxes). Empty for steam."""
+    from app import legacy
     if heat_system(d) != "hot water":
         return {}
-    target, supply = _temp(d.get("dSupTemp")), _temp(d.get("supTemp"))
-    gap = target - supply if target and supply and d.get("heatDemand") else None
-    return {"supplyTarget": target, "supply": supply, "ret": _temp(d.get("hwrTemp")),
-            "supplyGap": round(gap) if gap is not None and gap >= SUPPLY_GAP else None}
+    target, supply, ret = _temp(d.get("dSupTemp")), _temp(d.get("supTemp")), _temp(d.get("hwrTemp"))
+    cold = legacy.loop_cold(supply, ret) if d.get("heatDemand") else []
+    return {"supplyTarget": target, "supply": supply, "ret": ret,
+            "cold": f"Hot water cold: {legacy.cold_words(cold)}, under {legacy.LOOP_COLD_F} F while calling for heat" if cold else None,
+            "supplyCold": ("supply", supply) in cold, "retCold": ("return", ret) in cold}
 
 
 def heat_system(d):

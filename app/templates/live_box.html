@@ -73,8 +73,8 @@
     </div></div>
     <div class="section"><h2>Plant</h2><div class="kv">
       {{ trow('Aquastat', c.aqua, 'aqua') }}
-      {% if c.system == 'hot water' %}{% set tg = (c.tint or {}).get('target') %}
-      <div class="k">Target supply</div><div class="v">{% if c.target %}<span class="lv-t{{ ' t-cold' if tg }}" data-k="dsup,supp" title="{{ tg[1] if tg else 'Outdoor-reset supply target while calling for heat' }}: click for the chart">{{ c.target }}</span>{% if c.target_gap %} <span class="card-sub">supply {{ c.target_gap }} F short</span>{% endif %}{% else %}<span class="card-sub">not calling for heat</span>{% endif %}</div>
+      {% if c.system == 'hot water' %}
+      <div class="k">Target supply</div><div class="v">{% if c.target %}<span class="lv-t" data-k="dsup,supp,retn" title="Outdoor-reset supply target while calling for heat: click for the chart">{{ c.target }}</span>{% else %}<span class="card-sub">not calling for heat</span>{% endif %}{% if c.loop_cold %} <span class="card-sub" style="color:#2675b9;font-weight:600">{{ c.loop_cold }}</span>{% endif %}</div>
       {% endif %}
       {{ trow('Supply', c.supp, 'supp') }}{{ trow('Return', c.retn, 'retn') }}
       {{ trow('Riser', c.risr, 'risr') }}{{ trow('Coil', c.coil, 'coil') }}{{ trow('Mix', c.mix, 'mix') }}

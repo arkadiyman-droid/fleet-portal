@@ -120,7 +120,7 @@
         <th>Inside avg</th><th>Desired</th>
         <th title="Hot water: the box's target supply, averaged over the period's heat calls">Target</th>
         <th title="Hot water: the real supply during those heat calls">Supply</th>
-        <th title="Hot water: hours the supply was 25+ F below its target while calling for heat">Short h</th>
+        <th title="Hot water: hours the supply and/or return was under 80 F while calling for heat">Cold h</th>
         <th title="Hours heating while the inside average was {{ law.OVERHEAT }}+ F above the desired temperature">Overheated h</th>
         <th title="Heating minutes with {{ law.WARM_OUTSIDE }} F or warmer outside">Heat 60F+</th>
         <th title="Hot-water burner run time per day">Hot water/day</th>
@@ -141,7 +141,7 @@
           <td data-v="{{ r.in_avg if r.in_avg is not none else -1 }}">{% if r.in_avg is not none %}<span class="lv-t" data-k="inside" title="Click for the chart">{{ n(r.in_avg, '%.1f') }}</span>{% else %}—{% endif %}</td>
           <td data-v="{{ r.dit if r.dit is not none else -1 }}">{% if r.dit is not none %}<span class="lv-t" data-k="dit" title="Click for the chart">{{ n(r.dit) }}</span>{% else %}—{% endif %}</td>
           <td data-v="{{ r.target_avg if r.target_avg is not none else -1 }}">{% if r.target_avg is not none %}<span class="lv-t" data-k="dsup,supp" title="Click for the target and supply chart">{{ n(r.target_avg) }}</span>{% else %}—{% endif %}</td>
-          <td data-v="{{ r.supp_call_avg if r.supp_call_avg is not none else -1 }}" class="{{ 'warn' if r.target_avg and r.supp_call_avg is not none and r.target_avg - r.supp_call_avg >= 25 }}">{% if r.supp_call_avg is not none %}<span class="lv-t" data-k="dsup,supp" title="Click for the target and supply chart">{{ n(r.supp_call_avg) }}</span>{% else %}—{% endif %}</td>
+          <td data-v="{{ r.supp_call_avg if r.supp_call_avg is not none else -1 }}" class="{{ 'warn' if r.supp_call_avg is not none and r.supp_call_avg < 80 }}">{% if r.supp_call_avg is not none %}<span class="lv-t" data-k="dsup,supp" title="Click for the target and supply chart">{{ n(r.supp_call_avg) }}</span>{% else %}—{% endif %}</td>
           <td data-v="{{ r.short_h }}" class="{{ 'bad' if r.short_h >= 6 else ('warn' if r.short_h >= 2 else '') }}">{{ ('%g' % r.short_h) if r.short_h else '—' }}</td>
           <td data-v="{{ r.overheat_hours }}" class="{{ 'warn' if r.overheat_hours >= 6 }}">{{ r.overheat_hours or '—' }}</td>
           <td data-v="{{ r.warm_heat }}" class="{{ 'warn' if r.warm_heat >= 60 }}">{{ hm(r.warm_heat) if r.warm_heat else '—' }}</td>
