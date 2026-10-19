@@ -327,3 +327,4 @@ def test_no_wireless_sensors_means_no_inside_reading():
     real = legacy.card({"status": {**st, "apartmentTemperature3": "65"}})
     assert not real["no_sensors"] and real["inside"] == 65 and real["tint"]["inside"][0] == "cold"   # a real 65 still counts
     assert legacy.no_sensors(None) and legacy.no_sensors([0, 0, None]) and not legacy.no_sensors([0, 71])
+    assert not legacy.card({})["no_sensors"] and not legacy.card({"status": {}})["no_sensors"]       # never read: unknown, not silent

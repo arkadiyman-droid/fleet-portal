@@ -280,7 +280,7 @@ def _card(data: dict) -> dict:
     # placeholder 65 F, not a reading (2026-10-19, 7 days of reads: all 4,500+
     # all-silent reads said exactly 65, and no other). Shown as "no sensors",
     # never coloured, charted or alerted on (see no_sensors()).
-    silent = no_sensors(apts)
+    silent = st.get("averageTemperature") is not None and no_sensors(apts)    # a box never read is not "no sensors"
     inside = None if silent else _int(st.get("averageTemperature"))
     return {
         "code": code, "status": phrase, "tone": tone, "no_sensors": silent,
