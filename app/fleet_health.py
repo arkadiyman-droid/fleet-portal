@@ -37,6 +37,23 @@ URGENT_ALARMS = {1: "ignition failure", 3: "safety", 11: "pump failure", 12: "va
                  23: "CO shutdown", 24: "burner lockout (Fireye)", 25: "boiler fault (Aerco C-More)",
                  26: "burner lockout (Honeywell)", 27: "boiler fault (Aerco Modulex)"}
 IGNITION_ALARM = 1
+SUPPLY_GAP = 25        # F a hot-water supply may sit under its target while calling (legacy.TARGET_GAP)
+
+
+def _temp(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
+
+
+def supply_vs_target(d) -> dict:
+    """Hot water: the controller's outdoor-reset target supply (dSupTemp),
+    the real supply and return, and how far short the supply is while
+    calling for heat (only when SUPPLY_GAP+). Empty for steam."""
+    if heat_system(d) != "hot water":
+        return {}
+    target, supply = _temp(d.get("dSupTemp")), _temp(d.get("supTemp"))
+    gap = target - supply if target and supply and d.get("heatDemand") else None
+    return {"supplyTarget": target, "supply": supply, "ret": _temp(d.get("hwrTemp")),
+            "supplyGap": round(gap) if gap is not None and gap >= SUPPLY_GAP else None}
 
 
 def heat_system(d):
@@ -177,7 +194,8 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
             "outdoor": d.get("outdoor"), "avgApt": d.get("avgAptTemp"), "target": d.get("tit"),
             "demand": d.get("heatDemand"), "bypass": d.get("bypass"),
             "blr1Hours": d.get("blr1LifetimeHours"), "blr2Hours": d.get("blr2LifetimeHours"),
-            "hasBlr2": d.get("hasBlr2"),
+            "hasBlr2": d.get("hasBlr2"), "system": heat_system(d),
+            **supply_vs_target(d),
         }
         if d.get("bypass"):
             issues.append(("warn", "Bypass is ON: the controller is not in charge of the boilers"))

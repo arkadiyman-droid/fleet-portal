@@ -4,6 +4,12 @@
 
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
 
+{% block head %}
+<style>
+  .kv .t-cold { background:#2675b9; color:#fff; border-radius:5px; padding:0 6px; font-weight:700; }   /* as on Live */
+</style>
+{% endblock %}
+
 {% block content %}
   {% set e = card.eval %}{% set c = card.ctrl %}
   <div class="crumbs"><a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
@@ -55,11 +61,16 @@
 
   <div class="sections">
     {% if e.heating %}{% set h = e.heating %}
-    <div class="section"><h2>Heating</h2><div class="kv">
+    <div class="section" data-ctrl="{{ c.id }}"><h2>Heating{% if h.system %} <span class="card-sub">· {{ h.system }}</span>{% endif %}</h2><div class="kv">
       {{ row('Mode', h.mode) }}{{ row('Why', h.reason) }}
-      {{ row('Outdoor', (h.outdoor ~ ' °F') if h.outdoor is not none else none) }}
-      {{ row('Apartments avg', ('%.1f °F'|format(h.avgApt)) if h.avgApt is not none else none) }}
+      <div class="k">Outdoor</div><div class="v">{% if h.outdoor is not none %}<span class="lv-t" data-k="out" title="Click for the chart">{{ h.outdoor }} °F</span>{% else %}—{% endif %}</div>
+      <div class="k">Apartments avg</div><div class="v">{% if h.avgApt is not none %}<span class="lv-t" data-k="inside,dit" title="Click for the chart">{{ '%.1f °F'|format(h.avgApt) }}</span>{% else %}—{% endif %}</div>
       {{ row('Target', (h.target ~ ' °F') if h.target else none) }}
+      {% if h.system == 'hot water' %}
+      <div class="k">Target supply</div><div class="v">{% if h.supplyTarget %}<span class="lv-t{{ ' t-cold' if h.supplyGap }}" data-k="dsupp,supp" title="{{ ('Supply %s F is %s F below the target %s F while calling for heat'|format(h.supply, h.supplyGap, h.supplyTarget)) if h.supplyGap else 'Outdoor-reset supply target' }}: click for the target and supply chart">{{ h.supplyTarget }} °F</span>{% if h.supplyGap %} <span class="card-sub">supply {{ h.supplyGap }} F short</span>{% endif %}{% else %}—{% endif %}</div>
+      <div class="k">Supply</div><div class="v">{% if h.supply %}<span class="lv-t" data-k="dsupp,supp" title="Click for the target and supply chart">{{ h.supply }} °F</span>{% else %}—{% endif %}</div>
+      <div class="k">Return</div><div class="v">{% if h.ret %}<span class="lv-t" data-k="supp,hwr" title="Click for the supply and return chart">{{ h.ret }} °F</span>{% else %}—{% endif %}</div>
+      {% endif %}
       {{ row('Calling for heat', 'yes' if h.demand else 'no') }}
       {{ row('Bypass', 'ON' if h.bypass else 'off') }}
       {{ row('Boiler 1 lifetime', (h.blr1Hours ~ ' h') if h.blr1Hours is not none else none) }}
@@ -122,4 +133,6 @@
     </table>
   </div>
   {% endif %}
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sensorchart.js') }}"></script>
 {% endblock %}

@@ -71,6 +71,13 @@
             {{ '%.0f'|format(h.avgApt) if h.avgApt is not none else '—' }}°<span class="card-sub"> / {{ h.target or '—' }}°</span></div></div>
         <div><div class="k">Heat</div><div class="v" style="font-size:14px;padding-top:3px">{{ h.mode or '—' }}{% if h.demand %} · <span style="color:var(--warn)">calling</span>{% endif %}</div></div>
       </div>
+      {% if h.system == 'hot water' %}
+      <div class="heat" style="margin-top:6px">
+        <div><div class="k">Target supply</div><div class="v{{ ' low' if h.supplyGap }}"{% if h.supplyGap %} title="Supply {{ h.supply }} F is {{ h.supplyGap }} F below the target {{ h.supplyTarget }} F while calling for heat"{% endif %}>{{ h.supplyTarget or '—' }}°{% if h.supplyGap %}<span class="card-sub"> -{{ h.supplyGap }}</span>{% endif %}</div></div>
+        <div><div class="k">Supply</div><div class="v">{{ h.supply or '—' }}°</div></div>
+        <div><div class="k">Return</div><div class="v">{{ h.ret or '—' }}°</div></div>
+      </div>
+      {% endif %}
       {% endif %}
 
       {% if e.health or e.backup %}

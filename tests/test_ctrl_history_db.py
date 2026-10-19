@@ -84,3 +84,16 @@ def test_alerts_page_has_controller_chart_buttons(app, session, ctrl, client):
     page = client.get("/alerts").data.decode()
     assert 'data-ctrl="%d"' % ctrl.id in page and 'data-k="inside,out"' in page             # offline
     assert 'data-k="stack1,aqua1,supp,inside"' in page and "sensorchart.js" in page          # heating alarm
+
+
+def test_controller_page_and_card_show_target_supply(app, session, ctrl, client):
+    import app.models as m
+    raw = status(0) | {"heatCtrlType": 20, "dSupTemp": 160, "supTemp": 120, "hwrTemp": 100, "heatDemand": True}
+    session.add(m.ControllerStatus(controller_id=ctrl.id, ok=True, polled_at=dt.datetime.utcnow(), raw_json=raw))
+    session.commit()
+    page = client.get(f"/fleet/{ctrl.id}").data.decode()
+    assert "Target supply" in page and 'data-ctrl="%d"' % ctrl.id in page and "sensorchart.js" in page
+    assert 'class="lv-t t-cold" data-k="dsupp,supp"' in page and "supply 40 F short" in page
+    card = client.get("/overview").data.decode()
+    assert "Target supply" in card and "160°" in card and "-40" in card
+

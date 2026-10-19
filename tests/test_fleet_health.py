@@ -190,3 +190,12 @@ class Wording:
         assert F.ago(None) == "never" and F.ago(5) == "just now"
         assert F.ago(240) == "4 min ago" and F.ago(7200) == "2 h ago" and F.ago(3 * 86400) == "3 d ago"
         assert F.duration(90000) == "1 d 1 h" and F.duration(3700) == "1 h 1 min"
+
+
+def test_supply_vs_target_hot_water_only_and_gap_only_while_calling():
+    d = {"heatCtrlType": 20, "dSupTemp": 150, "supTemp": 120, "hwrTemp": 101, "heatDemand": True}
+    assert F.supply_vs_target(d) == {"supplyTarget": 150, "supply": 120, "ret": 101, "supplyGap": 30}
+    assert F.supply_vs_target(d | {"heatDemand": False})["supplyGap"] is None        # not calling: no shortfall
+    assert F.supply_vs_target(d | {"supTemp": 130})["supplyGap"] is None             # 20 F: under the 25 F line
+    assert F.supply_vs_target(d | {"heatCtrlType": 1}) == {}                          # steam
+
