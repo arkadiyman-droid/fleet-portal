@@ -311,3 +311,9 @@ def test_hot_water_target_next_to_the_supply():
     assert idle["target_gap"] is None                                                          # not calling: no colour
     steam = legacy.card({**data, "config": {"heatControlType": "1"}})
     assert steam["target"] is None                                                             # steam has no supply target
+
+
+def test_a_24_f_shortfall_is_not_way_below():
+    st = {"callForHeat": "Circ Pump", "desiredSupplyTemp": "175", "systemTemperature0": "151"}   # 635 Morris Ave SW Zone
+    c = legacy.card({"status": st, "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "11"}})
+    assert c["target"] == 175 and c["target_gap"] is None and legacy.TARGET_GAP == 25

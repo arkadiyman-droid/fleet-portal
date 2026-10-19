@@ -119,7 +119,7 @@
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
     <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
-      <th>Supp</th><th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
+      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
@@ -130,12 +130,12 @@
         {% if r.state == 'live' %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
-        <td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'target') }}>{{ t(c.target) }}{% if c.target_gap %} <small>(-{{ c.target_gap }})</small>{% endif %}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
+        <td{{ tc(c, 'target') }}>{{ t(c.target) }}{% if c.target_gap %} <small>(-{{ c.target_gap }})</small>{% endif %}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% else %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td data-v="">{{ hhmm(c.heat_rt) }}</td><td data-v="">{{ hhmm(c.hw_rt) }}</td><td data-v="">{{ hhmm(c.total_rt) }}</td>
-        <td>{{ t(c.supp) }}</td><td>{{ t(c.target) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
+        <td>{{ t(c.target) }}</td><td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% endif %}
         <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
@@ -170,10 +170,11 @@
         <div class="lv-row small"><div><div class="k">Stack</div><div class="v{{ vc(c, 'stack') if live }}">{{ t(c.stack) }}</div></div>
           <div><div class="k">Hi stack</div><div class="v">{{ t(c.hi_stack) }}</div></div>
           <div><div class="k">Water</div><div class="v">{{ t(c.water) }}</div></div></div>
-        <div class="lv-row small"><div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
-          {% if c.system == 'hot water' %}<div><div class="k">Target</div><div class="v{{ vc(c, 'target') if live }}">{{ t(c.target) }}</div></div>
+        {% if c.system == 'hot water' %}<div class="lv-row small"><div><div class="k">Target</div><div class="v{{ vc(c, 'target') if live }}">{{ t(c.target) }}</div></div>
+          <div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
           <div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div></div>
-          {% else %}<div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div>
+        {% else %}<div class="lv-row small"><div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
+          <div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div>
           <div><div class="k">Risr</div><div class="v">{{ t(c.risr) }}</div></div></div>{% endif %}
         {% if c.oil_pct is not none %}<div class="lv-oil" title="Oil {{ c.oil_pct }}%"><div style="width:{{ [c.oil_pct, 100]|min }}%"></div></div>{% endif %}
       {% endif %}

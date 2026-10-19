@@ -293,8 +293,9 @@ def _card(data: dict) -> dict:
 # 180 F setpoint, not this). Shown next to the supply; a supply TARGET_GAP+
 # below it while calling for heat is coloured, and alerts when it lasts
 # (alerts.hydronic_below_target). Seen 2026-10-18: 105-107 Terrace St calling
-# with target 140 F and supply 75 F.
-TARGET_GAP = 20
+# with target 140 F and supply 75 F. 25 F, not 20 (the user, 2026-10-18): 151 F
+# supply under an ambitious 175 F target is not "way below".
+TARGET_GAP = 25
 
 
 def _target(data, supp, phrase, tone) -> dict:
