@@ -237,3 +237,54 @@ def test_a_hot_water_ignition_failure_sends_nothing(app, session, sent):
         session.add(row); session.commit()
         _check(app, session, minute)
     assert sent == []
+
+
+def _steam_reads(session, b, minutes, code, aqua, mix=None, hct="1"):
+    from app import history
+    reads = []
+    for k, (c, a) in enumerate(zip([code] * len(aqua) if isinstance(code, str) else code, aqua)):
+        st = {"callForHeat": c, "systemTemperature0": str(a), "boiler1HeatRunMinutes": str(5 * k)}
+        names = {"systemSensorName0": "Aqu1"}
+        if mix:
+            st["systemTemperature1"], names["systemSensorName1"] = str(mix[k]), "Mix"
+        reads.append(history.reading(b.id, T0 + dt.timedelta(minutes=minutes[k]),
+                                     {"status": st, "names": names, "config": {"heatControlType": hct}}))
+    history.save(reads, [], T0)
+
+
+def test_steam_no_heat_from_a_falling_aquastat(app, session, sent):
+    import app.models as m
+    from app import alerts
+    (b,) = _boxes(session, 1)
+    mins = list(range(0, 60, 5))
+    aqua = [160, 158, 157, 155, 153, 151, 149, 147, 145, 143, 141, 139]   # calling all along, still dropping
+    mix = [121, 120, 119, 118, 117, 116, 115, 114, 113, 112, 111, 110]
+    _steam_reads(session, b, mins, "Aqua Call", aqua, mix)
+    assert alerts.steam_no_heat(b.id, T0 + dt.timedelta(minutes=20)) is None             # 20 min: too early
+    line = alerts.steam_no_heat(b.id, T0 + dt.timedelta(minutes=55))
+    assert line.startswith("No heat: calling for heat 55 min (Aquastat Call) but the aquastat fell 160 -> 139 F")
+    assert "hot water mix 121 -> 110 F" in line
+    for minute in (40, 45, 50, 55):                    # the 30-min call is seen at 40 (drop 13); confirmed 9+ min later
+        row = session.get(m.LegacyStatus, b.id) or m.LegacyStatus(box_id=b.id)
+        at = T0 + dt.timedelta(minutes=minute)
+        row.polled_at, row.ok, row.last_ok_at = at, True, at
+        row.data = {"status": {"callForHeat": "Aqua Call"}, "alarm": None, "config": {"heatControlType": "1"}}
+        session.add(row); session.commit()
+        _check(app, session, minute)
+    assert len(sent) == 1 and sent[0][0] == "ALERT: 0 Bedell St" and sent[0][1].startswith("No heat: calling for heat")
+
+
+def test_a_normal_steam_call_and_hot_water_never_say_no_heat(app, session):
+    from app import alerts
+    rising, hot = _boxes(session, 2)
+    mins = list(range(0, 60, 5))
+    _steam_reads(session, rising, mins, "Aqua Call", [150, 149, 152, 160, 170, 180, 190, 195, 198, 200, 201, 202])
+    _steam_reads(session, hot, mins, "Aqua Call", [160 - 2 * k for k in range(12)], hct="13")
+    assert alerts.steam_no_heat(rising.id, T0 + dt.timedelta(minutes=55)) is None         # it lit: the aquastat climbs
+    import app.models as m
+    session.add(m.LegacyStatus(box_id=hot.id, polled_at=T0 + dt.timedelta(minutes=55), ok=True,
+                               last_ok_at=T0 + dt.timedelta(minutes=55),
+                               data={"status": {"callForHeat": "Aqua Call"}, "config": {"heatControlType": "13"}}))
+    session.commit()
+    alerts.check_legacy(app, now=T0 + dt.timedelta(minutes=55))
+    assert (session.get(m.LegacyAlertState, hot.id).issue or "") == ""                    # hot water: not this rule

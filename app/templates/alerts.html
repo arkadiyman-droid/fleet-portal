@@ -28,6 +28,7 @@
     {% if show_legacy %}<br>The 2010 boxes on <a href="{{ url_for('admin.live_page') }}">Live</a> alert when their status reads Safety (and, on steam,
     Ignition Failure) on three reads in a row, and when one that was reading stops answering for {{ legacy_dark_min }} minutes. A box alarm the box clears
     by itself sends nothing; a steam ignition failure with the aquastat or hot water really dropping goes out at once, with that evidence.
+    A steam building that has called for heat 30+ minutes while its aquastat fell 10 F (never rising 5) sends "No heat", with the readings.
     Hot-water buildings never alert on ignition failure. If many boxes stop together you get one message about the connection instead.{% endif %}
   </p>
 

@@ -68,6 +68,8 @@ def decide(st: dict, level: str, crit: list, now: _dt.datetime, cfg: dict):
         what = (st.get("issue") or "The problem").strip().rstrip(".")
         if what.startswith("Status: "):
             what = what[len("Status: "):]
+        if what.startswith("No heat"):
+            what = "No heat"
         st.update(alerting=False, opened_at=None, notified_at=None)
         # a problem that cleared quickly closes quietly: the alert already went out
         long_enough = secs >= _secs(cfg, "ALERT_RECOVERED_MIN_SECONDS", 1800)
@@ -338,6 +340,50 @@ def ignition_evidence(box_id, now):
     return "Evidence: " + "; ".join(parts) + f" - {verdict}.", falling
 
 
+# ── steam: calling for heat, but the aquastat keeps falling ───────────────────
+#
+# The 2010 box's run minutes count while it COMMANDS the burner, lit or not,
+# so they cannot prove heat. The aquastat can: during a normal steam call it
+# climbs within minutes (593 of 678 calls rose 5 F+, 2026-10-14..18). Calling
+# NOHEAT_CALL_MIN+ minutes with the aquastat never up NOHEAT_RISE and down
+# NOHEAT_DROP+ matched one call in four days on 32 steam buildings: 755
+# Southern Blvd, 11 hours of Aquastat Call while it fell 152 -> 91 F.
+NOHEAT_CALL_MIN = 30
+NOHEAT_RISE = 5
+NOHEAT_DROP = 10
+NOHEAT_LOOKBACK = _dt.timedelta(hours=3)
+_CALL_GAP = _dt.timedelta(minutes=12)
+
+
+def steam_no_heat(box_id, now):
+    """The "No heat" line for a steam box that has been calling for heat
+    while its aquastat falls, or None."""
+    from app import legacy
+    from app.models import LegacyReading
+    calling = {k for k, (_p, tone) in legacy.STATUS.items() if tone == "heat"}
+    rows = LegacyReading.query.filter(LegacyReading.box_id == box_id, LegacyReading.ts >= now - NOHEAT_LOOKBACK,
+                                      LegacyReading.ts <= now).order_by(LegacyReading.ts).all()
+    if not rows or rows[-1].code not in calling or now - rows[-1].ts > _CALL_GAP:
+        return None
+    run = [rows[-1]]                                   # the call going on now, read by read back to its start
+    for r in reversed(rows[:-1]):
+        if r.code not in calling or run[0].ts - r.ts > _CALL_GAP:
+            break
+        run.insert(0, r)
+    minutes = round((run[-1].ts - run[0].ts).total_seconds() / 60)
+    aq = [r.aqua for r in run if r.aqua]
+    if minutes < NOHEAT_CALL_MIN or len(aq) < 2:
+        return None
+    start, cur = aq[0], aq[-1]
+    if max(aq) - start >= NOHEAT_RISE or start - cur < NOHEAT_DROP:
+        return None
+    mix = [r.mix for r in run if r.mix]
+    mix_part = f"; hot water mix {mix[0]} -> {mix[-1]} F" if len(mix) >= 2 else ""
+    words = legacy.STATUS.get(run[-1].code, (run[-1].code, ""))[0]
+    return (f"No heat: calling for heat {minutes} min ({words}) but the aquastat fell {start} -> {cur} F"
+            f"{mix_part} - the burner is not making heat.")
+
+
 def legacy_message(kind: str, box, text: str):
     title = f"{_TITLES[kind]}: {box.name}"
     where = ""
@@ -405,6 +451,10 @@ def check_legacy(app, now=None) -> int:
         issues = None if (outage and b.id in dark_ids) else legacy_issues(st, now, dark_after)
         if issues is None:
             continue
+        if st is not None and st.ok and legacy.heat_system(st.data) == "steam":
+            no_heat = steam_no_heat(b.id, now)
+            if no_heat:
+                issues = issues + [no_heat]
         rule = dict(base)
         # A box alarm alone is not an alert: if the box clears it by the next
         # reads, nothing is sent (it stays in the building's history). It only

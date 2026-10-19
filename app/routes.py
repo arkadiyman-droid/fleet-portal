@@ -1010,6 +1010,8 @@ def _issues(row, now, events, alert_state):
     elif ra and ra["level"] in ("crit", "warn"):
         problems.append(f"Box alarm: {ra['words']}, {ra['when']}" + (" (still active)" if ra["active"] else ""))
     a = alert_state
+    if a and a.issue and a.issue.startswith("No heat") and (a.alerting or a.first_bad_at):
+        problems.append(a.issue)
     if a and a.alerting:
         problems.append(f"Phone alert open since {history.local(a.opened_at).strftime('%b %d %I:%M %p').replace(' 0', ' ')}"
                         if a.opened_at else "Phone alert open")
@@ -1064,6 +1066,7 @@ def _legacy_rows(now, boxes=None):
                      "firing": firing.get(b.id) if state == "live" else None,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
         rows[-1]["issues"] = _issues(rows[-1], now, events.get(b.id, []), astates.get(b.id))
+        rows[-1]["problem"] = rows[-1]["problem"] or bool(rows[-1]["issues"]["problems"])
     return rows
 
 
