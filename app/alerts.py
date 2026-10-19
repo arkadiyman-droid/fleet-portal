@@ -187,7 +187,11 @@ def legacy_issues(st, now, dark_after):
             return [f"The box refuses the portal's login (last read {since})."]
         return [f"Not answering since {since}."]
     c = legacy.card(st.data or {})
-    return [f"Status: {c['status']}."] if c["tone"] == "crit" else []
+    if c["tone"] != "crit":
+        return []
+    if c["code"] == "Ign Fail" and legacy.ignition_ignored(st.data):
+        return []                                        # hot water: no fuel-valve feedback to trust
+    return [f"Status: {c['status']}."]
 
 
 def legacy_fresh_alarm(data, last_key, now):
@@ -207,9 +211,41 @@ def legacy_fresh_alarm(data, last_key, now):
     info = legacy.alarm_info(a, now, legacy.clock_drift(data))
     if not info or info["level"] != "crit" or not info["utc"]:
         return key, None
+    if a.get("name") == "ignitionFail" and legacy.ignition_ignored(data):
+        return key, None                                 # hot water: see legacy.ignition_ignored
     if not -_dt.timedelta(minutes=15) <= now - info["utc"] <= _FRESH:
         return key, None
     return key, f"Box alarm: {info['words']} at {info['when']}."
+
+
+EVIDENCE_WINDOW = _dt.timedelta(minutes=45)
+
+
+def _trend(rows, attr, label):
+    vals = [(r.ts, getattr(r, attr)) for r in rows if getattr(r, attr)]
+    if len(vals) < 2:
+        return None, None
+    (t0, v0), (t1, v1) = vals[0], vals[-1]
+    d, mins = v1 - v0, round((t1 - t0).total_seconds() / 60)
+    word = "falling" if d <= -5 else "rising" if d >= 5 else "steady"
+    return f"{label} {v0} -> {v1} F in {mins} min ({word})", word
+
+
+def ignition_evidence(box_id, now):
+    """For a steam ignition failure: what the aquastat and the hot-water mix
+    did over the last 45 minutes. Falling means the burner really is not
+    making heat; holding means it may have relit or the alarm was a blip."""
+    from app.models import LegacyReading
+    rows = LegacyReading.query.filter(LegacyReading.box_id == box_id, LegacyReading.ts >= now - EVIDENCE_WINDOW,
+                                      LegacyReading.ts <= now).order_by(LegacyReading.ts).all()
+    aqua, aw = _trend(rows, "aqua", "Aquastat")
+    mix, mw = _trend(rows, "mix", "Hot water mix")
+    parts = [p for p in (aqua, mix) if p]
+    if not parts:
+        return None
+    verdict = ("looks real: the boiler is not making heat" if "falling" in (aw, mw)
+               else "aquastat holding: it may have relit, or the alarm was a blip")
+    return "Evidence: " + "; ".join(parts) + f" - {verdict}."
 
 
 def legacy_message(kind: str, box, text: str):
@@ -249,6 +285,7 @@ def _legacy_outage(outage: bool, n_dark: int, n_ever: int, dark_min: int, now) -
 def check_legacy(app, now=None) -> int:
     """Evaluate every shown 2010 box once, after its poll cycle (same lock).
     Returns how many notifications were attempted."""
+    from app import legacy
     from app.extensions import db
     from app.models import AlertEvent, LegacyAlertState, LegacyBox
     cfg = app.config
@@ -281,6 +318,11 @@ def check_legacy(app, now=None) -> int:
         if fresh and not row.alerting:
             issues = [fresh] + issues
             rule["ALERT_AFTER_SECONDS"] = 0              # a new trip goes out at once
+        if issues and any("gnition" in i for i in issues) and st is not None and \
+                legacy.heat_system(st.data) == "steam":
+            ev_line = ignition_evidence(b.id, now)       # steam: show whether it is really cold
+            if ev_line:
+                issues = issues + [ev_line]
         state = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until")}
         state["alerting"] = bool(state["alerting"])
         new, event = decide(state, "crit" if issues else "ok", issues, now, rule)

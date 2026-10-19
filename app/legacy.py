@@ -95,6 +95,41 @@ def fuel(data):
     return None if f is None else ("Gas" if f == 0 else "Oil")
 
 
+# The box's heatControlType (emsConfig, also in its status), as the EMS reads
+# the 2010 codes (EMS config.migrate_legacy_hct / control/system_types.py):
+# 1 steam, 5 vacuum steam, 7 the old DB-Interrupt (vacuum steam); 9 / 11 / 13
+# / 15 hot water (pump / mixing valve / boiler / condensing). Checked against
+# the boxes 2026-10-18: every box that ever said "Waiting for Pressure" (a
+# steam-only state) is coded 1, and no hot-water box ever did.
+STEAM_HCT = {1: "Steam", 5: "Vacuum steam", 7: "Vacuum steam"}
+HOT_WATER_HCT = {9: "Hot water (pump)", 11: "Hot water (mixing valve)", 13: "Hot water (boiler)",
+                 15: "Hot water (condensing)"}
+
+
+def heat_code(data):
+    d = data or {}
+    return _int((d.get("config") or {}).get("heatControlType")) or _int((d.get("status") or {}).get("heatControlType"))
+
+
+def heat_system(data):
+    """'steam', 'hot water', or None when the box has not said."""
+    hct = heat_code(data)
+    return "steam" if hct in STEAM_HCT else "hot water" if hct in HOT_WATER_HCT else None
+
+
+def heat_label(data):
+    hct = heat_code(data)
+    return STEAM_HCT.get(hct) or HOT_WATER_HCT.get(hct)
+
+
+# Ignition failures are not alerted on hot-water buildings: several boilers,
+# and not all have their fuel valve wired back, so the box cannot tell a
+# boiler that failed to light from one that was never asked (the user,
+# 2026-10-18). On steam they matter most, and the alert carries the evidence.
+def ignition_ignored(data) -> bool:
+    return heat_system(data) == "hot water"
+
+
 def status_code(raw) -> str:
     """The box's heat-mode code. Now and then a box drops the first letters
     of it ("afety", "tsd Sat", "utsd Sat": once each in a night, 2026-10-15),
@@ -181,7 +216,7 @@ def alarm_info(alarm, now=None, drift=_dt.timedelta(0)):
     except ValueError:
         pass
     return {"words": words, "level": level, "when": when, "recent": recent, "utc": utc,
-            "active": bool(alarm.get("active"))}
+            "active": bool(alarm.get("active")), "name": alarm.get("name")}
 
 
 def _int(v):
@@ -236,6 +271,7 @@ def card(data: dict) -> dict:
         "oil_pct": level if (gallons or level) else None,
         "boilers": [(i, h, w) for i, h, w in runs if h or w],     # per boiler, those that ran today
         "n_boilers": boilers(data), "fuel": fuel(data),
+        "system": heat_system(data), "system_label": heat_label(data),
         "temps": temps, "apartments": [a for a in apts if a],
         # (sensor number from 0, reading) of the apartment sensors that read, for the charts
         "apt_list": sorted((int(k[20:]), _int(v)) for k, v in st.items()

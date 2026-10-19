@@ -300,7 +300,7 @@ def _tone(code):
     return legacy.STATUS.get(code or "", (code, "idle"))[1]
 
 
-def hour_row(box_id, hour, prev, cur, fleet_out, poll_min) -> dict:
+def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False) -> dict:
     """The hourly row for one box: prev = its last read before the hour (or
     None), cur = its reads inside the hour, oldest first."""
     seq = ([prev] if prev is not None else []) + cur
@@ -322,7 +322,8 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min) -> dict:
         apt_avg.pop()
     apt_all = [v for r in cur for v in (r.apt or []) if _ok(v, 35, 110) is not None]
     req = law_minimum(hour, out)
-    minutes = lambda tone: min(60, sum(poll_min for r in cur if _tone(r.code) == tone))
+    minutes = lambda tone: min(60, sum(poll_min for r in cur if _tone(r.code) == tone
+                                       and not (ignore_ignition and r.code == "Ign Fail")))
     fuel = used(seq, "fuel_count", counter=True) if any(r.fuel_count for r in cur) else None
     water = used(seq, "water_count", counter=True) if any(r.water_count for r in cur) else None
     return {
@@ -364,7 +365,13 @@ def rollup_hour(hour, poll_min=5) -> int:
     outs = [o for o in outs if o is not None]
     fleet_out = round(statistics.median(outs), 1) if outs else None
     db.session.query(LegacyHourly).filter(LegacyHourly.hour == hour).delete()
-    out = [hour_row(box_id, hour, prev, cur, fleet_out, poll_min) for box_id, (prev, cur) in groups.items()]
+    # hot-water boxes: an "Ign Fail" status is not counted as Safety time (legacy.ignition_ignored)
+    from app import legacy
+    from app.models import LegacyStatus
+    hot = {s.box_id for s in LegacyStatus.query.filter(LegacyStatus.box_id.in_(list(groups) or [-1])).all()
+           if legacy.ignition_ignored(s.data)}
+    out = [hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=box_id in hot)
+           for box_id, (prev, cur) in groups.items()]
     if out:
         db.session.execute(insert(LegacyHourly), out)
     return len(out)

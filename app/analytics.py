@@ -115,8 +115,12 @@ def portfolio(key, now=None, poll_min=5):
         p = prev.get(box_id)
         p_mpd = (int(p["heat"] or 0) / _f(p["hdd"])) if p and (_f(p["hdd"]) or 0) >= MIN_HDD else None
         kinds = ev.get(box_id, [])
-        entries = sum(c for k, code, c in kinds if k == "status" and code in ("Safety", "Ign Fail"))
-        alarms = sum(c for k, code, c in kinds if k == "alarm" and code in ("safetyActive", "ignitionFail"))
+        # hot water: ignition failures are not trips (legacy.ignition_ignored)
+        hot = legacy.ignition_ignored(b.status.data if b.status else None)
+        trip_codes = ("Safety",) if hot else ("Safety", "Ign Fail")
+        alarm_codes = ("safetyActive",) if hot else ("safetyActive", "ignitionFail")
+        entries = sum(c for k, code, c in kinds if k == "status" and code in trip_codes)
+        alarms = sum(c for k, code, c in kinds if k == "alarm" and code in alarm_codes)
         rows.append({
             "box": b, "hours": a["hours"], "n": a["n"], "days": days,
             "uptime": min(1.0, (a["n"] or 0) / (span_h * 60 / poll_min)),

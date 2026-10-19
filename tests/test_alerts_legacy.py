@@ -53,3 +53,21 @@ def test_only_new_trip_alarms_are_sent():
     assert k2 != key and line == "Box alarm: Safety at Oct 14 5:56 PM."
     assert alerts.legacy_fresh_alarm({"alarm": None}, key, NOW) == (key, None)    # an empty answer is not news
     assert alerts.legacy_fresh_alarm({"alarm": old}, key, NOW)[1] is None           # nor is the same alarm again
+
+
+def _st_sys(code, hct):
+    s = st(code=code)
+    s.data["config"] = {"heatControlType": str(hct)}
+    return s
+
+
+def test_ignition_on_hot_water_is_not_alerted_but_on_steam_it_is():
+    assert alerts.legacy_issues(_st_sys("Ign Fail", 13), NOW, DARK) == []                    # hot water
+    assert alerts.legacy_issues(_st_sys("Ign Fail", 1), NOW, DARK) == ["Status: Ignition Failure."]   # steam
+    assert alerts.legacy_issues(_st_sys("Safety", 13), NOW, DARK) == ["Status: Safety."]     # Safety always
+    hot = {"alarm": alarm("ignitionFail", 4), "config": {"heatControlType": "11"}}
+    steam = {"alarm": alarm("ignitionFail", 4), "config": {"heatControlType": "1"}}
+    assert alerts.legacy_fresh_alarm(hot, "x@y", NOW)[1] is None
+    assert alerts.legacy_fresh_alarm(steam, "x@y", NOW)[1] == "Box alarm: Ignition failure at Oct 14 5:56 PM."
+    safety_hot = {"alarm": alarm("safetyActive", 4), "config": {"heatControlType": "11"}}
+    assert alerts.legacy_fresh_alarm(safety_hot, "x@y", NOW)[1] is not None

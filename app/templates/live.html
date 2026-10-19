@@ -89,7 +89,7 @@
   {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.when }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
 
   <div class="lv-bar">
-    {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login))] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
+    {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
       <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="card-sub" style="margin-left:8px">Sort:</span>
@@ -124,7 +124,7 @@
     {% for r in rows %}{% set c = r.c or {} %}
       <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
-        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel %} <span class="card-sub">{{ c.fuel }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
+        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
@@ -152,7 +152,7 @@
         {% if r.state == 'live' %}<button type="button" class="lv-badge lv-iss-open {{ 'alarm' if np }}" data-issues="{{ r.issues|tojson|forceescape }}" title="{{ ('%d problem%s: click to see' % (np, 's' if np != 1 else '')) if np else 'No problems: click for details' }}">{{ np if np else 'Ok' }}</button>
         {% else %}<button type="button" class="lv-badge lv-iss-open {{ r.state }}" data-issues="{{ r.issues|tojson|forceescape }}" title="Click to see why">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</button>{% endif %}
         <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
-        {% if c.fuel %}<span class="card-sub" style="font-size:11px" title="{{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ c.fuel }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
+        {% if c.fuel or c.system %}<span class="card-sub" style="font-size:11px" title="{{ c.system_label or 'Heating system not reported' }} · {{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ {'steam': 'Steam', 'hot water': 'HW'}.get(c.system, '') }}{% if c.system and c.fuel %}·{% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
         {{ flame(r) }}
       </div>
       {% if r.state == 'live' or r.c %}

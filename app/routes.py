@@ -993,12 +993,18 @@ def _issues(row, now, events, alert_state):
     their reasons, and the last day's changes."""
     from app import history
     c, problems, notes = row["c"] or {}, [], []
+    hot_water = c.get("system") == "hot water"
+    IGN = " (not alerted on hot-water buildings: no fuel-valve feedback)"
     if row["state"] != "live":
         problems.append(row["why"] or "Not reading")
+    elif c.get("tone") == "crit" and c.get("code") == "Ign Fail" and hot_water:
+        notes.append({"text": f"Status now: {c['status']}" + IGN, "tone": "info"})
     elif c.get("tone") == "crit":
         problems.append(f"Status now: {c['status']}")
     ra = row["recent_alarm"]
-    if ra and ra["level"] in ("crit", "warn"):
+    if ra and ra["level"] in ("crit", "warn") and ra.get("name") == "ignitionFail" and hot_water:
+        notes.append({"text": f"Box alarm: {ra['words']}, {ra['when']}" + IGN, "tone": "info"})
+    elif ra and ra["level"] in ("crit", "warn"):
         problems.append(f"Box alarm: {ra['words']}, {ra['when']}" + (" (still active)" if ra["active"] else ""))
     a = alert_state
     if a and a.alerting:
@@ -1015,7 +1021,8 @@ def _issues(row, now, events, alert_state):
             notes.append({"text": f"Box note: {ra['words']}, {ra['when']}", "tone": "info"})
     keys = ["inside", "out"] if row["state"] != "live" else (
         ["stack", "aqua", "inside"] if problems else ["inside", "out"])
-    return {"name": row["box"].name, "problems": problems, "notes": notes, "events": events,
+    return {"name": row["box"].name + (f" · {c['system_label']}" if c.get("system_label") else ""),
+            "problems": problems, "notes": notes, "events": events,
             "keys": ",".join(keys), "url": f"/live/{row['box'].id}"}
 
 
@@ -1044,8 +1051,11 @@ def _legacy_rows(now, boxes=None):
         drift = legacy.clock_drift(st.data) if st and st.data else None
         alarm = legacy.alarm_info((c or {}).get("alarm"), now, drift or timedelta(0))
         recent_alarm = alarm if alarm and alarm["recent"] else None
-        problem = (state in ("dark", "login", "other") or bool(c and c["tone"] == "crit")
-                   or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")))
+        ign_ok = bool(c and c.get("system") == "hot water")       # hot water: ignition is not a problem
+        problem = (state in ("dark", "login", "other")
+                   or bool(c and c["tone"] == "crit" and not (ign_ok and c["code"] == "Ign Fail"))
+                   or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")
+                           and not (ign_ok and recent_alarm.get("name") == "ignitionFail")))
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
                      "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
                      "firing": firing.get(b.id) if state == "live" else None,
@@ -1075,7 +1085,9 @@ def live_page():
     summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows), "hidden": len(hidden),
                "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
-               "problems": sum(r["problem"] for r in rows)}
+               "problems": sum(r["problem"] for r in rows),
+               "steam": sum(1 for r in rows if (r["c"] or {}).get("system") == "steam"),
+               "hotwater": sum(1 for r in rows if (r["c"] or {}).get("system") == "hot water")}
     newest = max((r for r in rows if r["recent_alarm"] and r["recent_alarm"]["level"] in ("crit", "warn")
                   and r["recent_alarm"]["utc"]), key=lambda r: r["recent_alarm"]["utc"], default=None)
     show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
@@ -1087,6 +1099,9 @@ def live_page():
         rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"]
     elif show == "hidden":
         rows = _legacy_rows(now, hidden)
+    elif show in ("steam", "hotwater"):
+        want = "steam" if show == "steam" else "hot water"
+        rows = [r for r in rows if (r["c"] or {}).get("system") == want]
     else:
         show = "all"
     if q:

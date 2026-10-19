@@ -77,6 +77,8 @@
       {% if c.oil_pct is not none %}{{ row('Oil', (c.oil_pct ~ ' %')) }}{% endif %}
     </div></div>
     <div class="section"><h2>Box</h2><div class="kv">
+      {{ row('Heating system', (c.system_label ~ (' · ' ~ c.fuel if c.fuel else '') ~ ' · ' ~ c.n_boilers ~ ' boiler' ~ ('s' if c.n_boilers > 1 else '')) if c.system_label else none) }}
+      {% if c.system == 'hot water' %}{{ row('Ignition alerts', 'off: hot-water boilers here have no fuel-valve feedback') }}{% elif c.system == 'steam' %}{{ row('Ignition alerts', 'on, with the aquastat / hot-water evidence') }}{% endif %}
       {{ row('Address', b.host ~ ':' ~ b.port) }}{{ row('Identity', b.identity) }}
       {{ row('Last good read', r.last_ok.strftime('%Y-%m-%d %H:%M UTC') if r.last_ok else none) }}
       {% set off = (' (' ~ ('+' if r.drift_min > 0 else '') ~ r.drift_min ~ ' min off: alarm times corrected)') if r.drift_min else '' %}

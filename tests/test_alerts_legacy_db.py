@@ -158,3 +158,36 @@ def test_mute_and_hide(app, session, sent, client):
     assert not session.get(m.LegacyAlertState, b.id).alerting       # closed quietly
     assert len(sent) == 1
     assert "Muted until" in client.get(f"/live/{a.id}").data.decode()
+
+
+def test_a_steam_ignition_alert_carries_the_evidence(app, session, sent):
+    import app.models as m
+    from app import history
+    (b,) = _boxes(session, 1)
+    reads = []
+    for k in range(0, 45, 5):                                       # aquastat and hot water sliding down
+        data = {"status": {"callForHeat": "Ign Fail", "boiler1HeatRunMinutes": "100",
+                           "systemTemperature0": str(170 - k), "systemTemperature1": str(122 - k // 3)},
+                "names": {"systemSensorName0": "Aqu1", "systemSensorName1": "Mix"}, "config": {"heatControlType": "1"}}
+        reads.append(history.reading(b.id, T0 + dt.timedelta(minutes=k), data))
+    history.save(reads, [], T0)
+    for minute in (40, 45):
+        row = session.get(m.LegacyStatus, b.id) or m.LegacyStatus(box_id=b.id)
+        row.polled_at, row.ok, row.last_ok_at = T0 + dt.timedelta(minutes=minute), True, T0 + dt.timedelta(minutes=minute)
+        row.data = {"status": {"callForHeat": "Ign Fail"}, "alarm": None, "config": {"heatControlType": "1"}}
+        session.add(row); session.commit()
+        _check(app, session, minute)
+    assert len(sent) == 1 and "Status: Ignition Failure." in sent[0][1]
+    assert "Aquastat 170 -> 130 F in 40 min (falling)" in sent[0][1] and "looks real" in sent[0][1]
+
+
+def test_a_hot_water_ignition_failure_sends_nothing(app, session, sent):
+    import app.models as m
+    (b,) = _boxes(session, 1)
+    for minute in (0, 5, 10):
+        row = session.get(m.LegacyStatus, b.id) or m.LegacyStatus(box_id=b.id)
+        row.polled_at, row.ok, row.last_ok_at = T0 + dt.timedelta(minutes=minute), True, T0 + dt.timedelta(minutes=minute)
+        row.data = {"status": {"callForHeat": "Ign Fail"}, "alarm": None, "config": {"heatControlType": "13"}}
+        session.add(row); session.commit()
+        _check(app, session, minute)
+    assert sent == []

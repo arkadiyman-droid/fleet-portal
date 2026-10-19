@@ -284,3 +284,16 @@ def test_a_status_code_missing_its_first_letters():
     assert legacy.status_code("Sat") == "Sat"                                    # too short to guess
     assert legacy.status_code("Byp On") == "Byp On"                              # ends three codes: no guess
     assert legacy.card({"status": {"callForHeat": "afety"}})["tone"] == "crit"
+
+
+# ── steam or hot water (heatControlType, 2026-10-18) ─────────────────────────
+
+def test_heating_system_from_the_box_settings():
+    sys_of = lambda code, where="config": legacy.heat_system({where: {"heatControlType": str(code)}})
+    assert [sys_of(c) for c in (1, 5, 7)] == ["steam"] * 3
+    assert [sys_of(c) for c in (9, 11, 13, 15)] == ["hot water"] * 4
+    assert sys_of(13, "status") == "hot water" and sys_of(2) is None and legacy.heat_system({}) is None
+    c = legacy.card({"status": {"callForHeat": "Ign Fail"}, "config": {"heatControlType": "11"}})
+    assert (c["system"], c["system_label"]) == ("hot water", "Hot water (mixing valve)")
+    assert legacy.ignition_ignored({"config": {"heatControlType": "13"}})
+    assert not legacy.ignition_ignored({"config": {"heatControlType": "1"}}) and not legacy.ignition_ignored({})
