@@ -67,6 +67,8 @@ SELECT h.box_id,
            AS water_night,
        sum(h.fuel) AS fuel,
        bool_and(h.out_fleet) AS no_out_sensor,
+       count(*) FILTER (WHERE h.n > 0 AND h.in_avg IS NULL) AS no_sensor_hours,
+       count(*) FILTER (WHERE h.n > 0) AS answered_hours,
        avg(h.dsup_avg) AS target_avg, avg(h.supp_call_avg) AS supp_call_avg,
        coalesce(sum(h.short_min), 0) AS short_min,
        min(h.hour) AS first_hour
@@ -137,6 +139,7 @@ def portfolio(key, now=None, poll_min=5):
             "stack_fire": _f(a["stack_fire"]), "hi_stack": a["hi_stack"],
             "water": a["water"], "water_night": a["water_night"], "fuel": a["fuel"],
             "no_out_sensor": bool(a["no_out_sensor"]),
+            "no_sensor_hours": a["no_sensor_hours"] or 0, "answered_hours": a["answered_hours"] or 0,
             "target_avg": _f(a["target_avg"]), "supp_call_avg": _f(a["supp_call_avg"]),
             "short_h": round((a["short_min"] or 0) / 60, 1),
         })
@@ -248,6 +251,12 @@ def findings(rows, fleet, law, sensors, boxes):
         if r["trend"] and r["trend"] >= TREND_FLAG:
             add("warn", r, "Efficiency", f"burner time per degree-day up {r['trend'] * 100:.0f}% on the previous period",
                 450 + r["trend"] * 100)
+        if r["answered_hours"] and r["no_sensor_hours"] >= max(6, r["answered_hours"] / 2):
+            share = r["no_sensor_hours"] / r["answered_hours"]
+            add("info", r, "No apartment sensors",
+                ("no wireless sensor reported the whole period" if share >= 0.98 else
+                 f"no wireless sensor reported for {r['no_sensor_hours']} of {r['answered_hours']} hours")
+                + ": heating on outdoor reset, inside average not known (never alerted)", 100 + share * 10)
         if r["short_h"] >= 2:
             add("warn", r, "Hot water cold", f"supply or return under {loop_cold_f()} F for {r['short_h']:g} h while calling for heat"
                 + (f" (average supply {r['supp_call_avg']:.0f} F"

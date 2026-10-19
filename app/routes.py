@@ -1048,6 +1048,9 @@ def _issues(row, now, events, alert_state):
             notes.append({"text": f"Inside average: {why}" if k == "inside" else why, "tone": tone, "k": _TINT_KEYS.get(k)})
         if ra and ra["level"] == "info":
             notes.append({"text": f"Box note: {ra['words']}, {ra['when']}", "tone": "info"})
+        if c.get("no_sensors"):
+            from app import legacy
+            notes.append({"text": legacy.NO_SENSORS_NOTE, "tone": "info"})
     keys = ["inside", "out"] if row["state"] != "live" else (
         ["dsup", "supp", "retn"] if c.get("loop_cold") else ["stack", "aqua", "inside"] if problems else ["inside", "out"])
     return {"name": row["box"].name + (f" · {c['system_label']}" if c.get("system_label") else ""),

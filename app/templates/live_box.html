@@ -63,7 +63,7 @@
 
   <div class="sections" style="margin-top:14px">
     <div class="section"><h2>Building</h2><div class="kv">
-      {{ trow('Outside', c.out, 'out') }}{{ trow('Inside average', c.inside, 'inside') }}{{ trow('Desired inside (DIT)', c.dit, 'dit') }}
+      {{ trow('Outside', c.out, 'out') }}{% if c.no_sensors %}<div class="k">Inside average</div><div class="v"><span class="card-sub">no sensors reporting: the box shows a placeholder 65 F, not alerted</span></div>{% else %}{{ trow('Inside average', c.inside, 'inside') }}{% endif %}{{ trow('Desired inside (DIT)', c.dit, 'dit') }}
       {{ row('Status code', c.code) }}
       <div class="k">Apartment sensors</div><div class="v">{% for i, v in (c.apt_list or []) %}<span class="lv-t" data-k="apt{{ i }}" title="Apartment sensor #{{ i + 1 }}: click for the chart">{{ v }}</span>{% if not loop.last %}, {% endif %}{% else %}—{% endfor %}</div>
     </div></div>

@@ -317,3 +317,13 @@ def test_hot_water_cold_loop_is_supply_or_return_under_80_while_calling():
     assert nosens["loop_cold"] is None                                                         # 0 = no sensor
     steam = legacy.card({**data, "config": {"heatControlType": "1"}})
     assert steam["target"] is None and steam["loop_cold"] is None
+
+
+def test_no_wireless_sensors_means_no_inside_reading():
+    st = {"callForHeat": "Circ Pump", "averageTemperature": "65", "targetInsideTemperature": "70",
+          **{f"apartmentTemperature{i}": "0" for i in range(32)}}
+    c = legacy.card({"status": st})                                     # 145 Terrace, 2026-10-19
+    assert c["no_sensors"] and c["inside"] is None and "inside" not in c["tint"]   # not "5 F below desired"
+    real = legacy.card({"status": {**st, "apartmentTemperature3": "65"}})
+    assert not real["no_sensors"] and real["inside"] == 65 and real["tint"]["inside"][0] == "cold"   # a real 65 still counts
+    assert legacy.no_sensors(None) and legacy.no_sensors([0, 0, None]) and not legacy.no_sensors([0, 71])

@@ -240,6 +240,16 @@ def card(data: dict) -> dict:
     return c
 
 
+NO_SENSORS_NOTE = "No wireless apartment sensor is reporting: the box shows a placeholder 65 F, not a measurement. It heats on outdoor reset. Not alerted."
+
+
+def no_sensors(apts) -> bool:
+    """True when not one wireless apartment sensor reports (all 0 / missing):
+    the inside average is then the box's placeholder, not a measurement.
+    Batteries are hard to get changed, so this is information, never an alert."""
+    return not any(a for a in (apts or []) if a)
+
+
 def _card(data: dict) -> dict:
     """The Anagha-style card from one box's stored reading (LegacyStatus.data)."""
     st = (data or {}).get("status") or {}
@@ -266,9 +276,15 @@ def _card(data: dict) -> dict:
     gallons, level = _int(st.get("gallons")), _int(st.get("fuelLevel"))
     apts = [_int(st[k]) for k in sorted(st, key=lambda k: int(k[20:] or 0) if k[20:].isdigit() else 0)
             if k.startswith("apartmentTemperature")]
+    # Every apartment sensor silent (0): the box's averageTemperature is then a
+    # placeholder 65 F, not a reading (2026-10-19, 7 days of reads: all 4,500+
+    # all-silent reads said exactly 65, and no other). Shown as "no sensors",
+    # never coloured, charted or alerted on (see no_sensors()).
+    silent = no_sensors(apts)
+    inside = None if silent else _int(st.get("averageTemperature"))
     return {
-        "code": code, "status": phrase, "tone": tone,
-        "out": role.get("out"), "inside": _int(st.get("averageTemperature")), "dit": _int(st.get("targetInsideTemperature")),
+        "code": code, "status": phrase, "tone": tone, "no_sensors": silent,
+        "out": role.get("out"), "inside": inside, "dit": _int(st.get("targetInsideTemperature")),
         "heat_rt": heat, "hw_rt": hw, "total_rt": (heat or 0) + (hw or 0) if heat is not None or hw is not None else None,
         "aqua": role.get("aqua"), "coil": role.get("coil"), "mix": role.get("mix"),
         "stack": _int(st.get("stackTemperature")), "hi_stack": _int(st.get("highStackTemp")),
@@ -284,7 +300,7 @@ def _card(data: dict) -> dict:
                            if k.startswith("apartmentTemperature") and k[20:].isdigit() and _int(v)),
         "alarm": (data or {}).get("alarm"),
         "box_time": st.get("serverTime"),
-    } | {"tint": tint(role, _int(st.get("averageTemperature")), _int(st.get("targetInsideTemperature")),
+    } | {"tint": tint(role, inside, _int(st.get("targetInsideTemperature")),
                       _int(st.get("stackTemperature")), temps)} | _target(data, role.get("supp"), role.get("retn"), tone)
 
 

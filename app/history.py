@@ -307,7 +307,8 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False
     seq = ([prev] if prev is not None else []) + cur
     outs = _vals(cur, "out", -40, 130)
     out = _mean(outs) if outs else fleet_out
-    ins = _vals(cur, "inside", 35, 110)
+    from app import legacy
+    ins = _vals([r for r in cur if not legacy.no_sensors(r.apt)], "inside", 35, 110)   # not the no-sensor 65
     dits = _vals(cur, "dit", 40, 90)
     aq = _vals(cur, "aqua", 0, 260)
     stk = _vals(cur, "stack", 0, 1500)

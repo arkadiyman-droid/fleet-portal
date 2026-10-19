@@ -22,7 +22,8 @@
   .lv-row { display:grid; grid-template-columns:repeat(3, 1fr); text-align:center; padding:4px 6px; }
   .lv-row + .lv-row { border-top:1px solid #f1f5f9; }
   .lv-row .k { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
-  .lv-row .v { font-size:16px; font-weight:700; color:#111827; } .lv-row.small .v { font-size:13px; font-weight:600; }
+  .lv-row .v { font-size:16px; font-weight:700; color:#111827; }
+  .lv-nosens { font-size:11px; font-weight:600; color:var(--muted); background:#f1f5f9; border-radius:8px; padding:1px 6px; white-space:nowrap; cursor:help; } .lv-row.small .v { font-size:13px; font-weight:600; }
   .lv-row .v.cool { color:#1d4ed8; } .lv-row .v.hot { color:#dc2626; } .lv-row .v.mid { color:#0d9488; }
   .lv-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
@@ -76,6 +77,7 @@
   .lv-table thead th.s-asc::after { content:" \25B4"; } .lv-table thead th.s-desc::after { content:" \25BE"; }
 </style>{% endblock %}
 
+{% set nosens = "No wireless apartment sensor is reporting: the box shows a placeholder 65 F, not a measurement. It heats on outdoor reset. Not alerted." %}
 {% macro t(v) %}{{ '—' if v is none else v }}{% endmacro %}
 {% macro tc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} class="t-{{ x[0] }}" title="{{ x[1] }}"{% endif %}{% endmacro %}
 {% macro vc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} t-{{ x[0] }}" title="{{ x[1] }}{% endif %}{% endmacro %}
@@ -128,7 +130,7 @@
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
-        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td><td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
+        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
@@ -159,7 +161,7 @@
         <div class="lv-pill {{ c.tone if r.state == 'live' else 'dark' }}">{{ c.status if r.state == 'live' else 'Last known' }}</div>
         {% set live = r.state == 'live' %}
         <div class="lv-row"><div><div class="k">Out</div><div class="v lv-out">{{ t(c.out) }}°</div></div>
-          <div><div class="k">Inside</div><div class="v{{ vc(c, 'inside') if live }}">{{ t(c.inside) }}°</div></div>
+          <div><div class="k">Inside</div>{% if c.no_sensors %}<div class="v" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></div>{% else %}<div class="v{{ vc(c, 'inside') if live }}">{{ t(c.inside) }}°</div>{% endif %}</div>
           <div><div class="k">DIT</div><div class="v">{{ t(c.dit) }}°</div></div></div>
         {% if c.system == 'hot water' %}<div class="lv-row"><div><div class="k">Target</div><div class="v"{% if c.target is none %} title="No target: the box sets one only while calling for heat"{% endif %}>{{ t(c.target) }}</div></div>
           <div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>

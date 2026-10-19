@@ -209,3 +209,20 @@ def test_analytics_target_and_supply_while_calling(app, session, two, client):
     r = next(r for r in a["rows"] if r["box"].id == cold.id)
     assert (r["target_avg"], r["supp_call_avg"], r["short_h"]) == (140, 70, 24)
     assert any(f["cat"] == "Hot water cold" and "under 80 F for 24 h while calling" in f["text"] for f in a["findings"])
+
+
+def test_no_sensor_reads_stay_out_of_the_inside_average(app, session, two):
+    import app.models as m
+    from app import history
+    box, _ = two
+    reads = []
+    for k in range(12):                                    # half the hour every sensor silent (the box says 65)
+        silent = k % 2 == 0
+        apts = {f"apartmentTemperature{i}": "0" if silent else "71" for i in range(4)}
+        reads.append(history.reading(box.id, START + dt.timedelta(minutes=5 * k),
+                                     {"status": {"averageTemperature": "65" if silent else "71", "callForHeat": "Outsd Sat", **apts}}))
+    history.save(reads, [], NOW)
+    assert m.LegacyReading.query.filter_by(box_id=box.id, ts=START).one().inside is None      # stored as no reading
+    history.rollup(NOW, poll_min=5, max_hours=100)
+    h = session.get(m.LegacyHourly, (box.id, START))
+    assert h.in_avg == 71 and h.in_min == 71
