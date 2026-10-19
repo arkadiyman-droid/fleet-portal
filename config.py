@@ -30,8 +30,18 @@ class Config:
         # Fleet alerts — see app/alerts.py and app/notify.py. Alerts are always
         # decided and recorded; they are only SENT where a channel is set.
         self.ALERTS_ENABLED = os.environ.get("ALERTS_ENABLED", "1") not in ("0", "false", "False")
-        self.ALERT_AFTER_SECONDS = int(os.environ.get("ALERT_AFTER_SECONDS", "300"))
-        self.ALERT_REPEAT_HOURS = float(os.environ.get("ALERT_REPEAT_HOURS", "24"))
+        # No nuisance alerts (the user, 2026-10-18: ~300 pushes a day, nearly all
+        # "trip, then back to normal after 4 min", makes people switch it off):
+        # a problem must last 10 minutes; "recovered" is sent only for problems
+        # that lasted RECOVERED_MIN and says what cleared; a building with
+        # FLAP_OPENS alerts in FLAP_HOURS gets one "keeps tripping" message and
+        # is paused; no per-item reminders: one morning digest at DIGEST_HOUR.
+        self.ALERT_AFTER_SECONDS = int(os.environ.get("ALERT_AFTER_SECONDS", "600"))
+        self.ALERT_REPEAT_HOURS = float(os.environ.get("ALERT_REPEAT_HOURS", "0"))
+        self.ALERT_RECOVERED_MIN_SECONDS = int(os.environ.get("ALERT_RECOVERED_MIN_SECONDS", "1800"))
+        self.ALERT_FLAP_OPENS = int(os.environ.get("ALERT_FLAP_OPENS", "3"))
+        self.ALERT_FLAP_HOURS = float(os.environ.get("ALERT_FLAP_HOURS", "6"))
+        self.ALERT_DIGEST_HOUR = int(os.environ.get("ALERT_DIGEST_HOUR", "8"))       # New York time; -1 = off
         self.ALERT_NTFY_SERVER = os.environ.get("ALERT_NTFY_SERVER", "https://ntfy.sh")
         self.ALERT_NTFY_TOPIC = os.environ.get("ALERT_NTFY_TOPIC", "")
         self.ALERT_NTFY_TOKEN = os.environ.get("ALERT_NTFY_TOKEN", "")
@@ -51,7 +61,7 @@ class Config:
         # dark after LEGACY_DARK_MINUTES; when LEGACY_OUTAGE_SHARE of the boxes
         # go dark together it is the portal's own connection: one message.
         self.LEGACY_ALERTS_ENABLED = os.environ.get("LEGACY_ALERTS_ENABLED", "1") not in ("0", "false", "False")
-        self.LEGACY_ALERT_AFTER_SECONDS = int(os.environ.get("LEGACY_ALERT_AFTER_SECONDS", "240"))
+        self.LEGACY_ALERT_AFTER_SECONDS = int(os.environ.get("LEGACY_ALERT_AFTER_SECONDS", "540"))   # 3 reads in a row
         self.LEGACY_DARK_MINUTES = int(os.environ.get("LEGACY_DARK_MINUTES", "30"))
         self.LEGACY_OUTAGE_SHARE = float(os.environ.get("LEGACY_OUTAGE_SHARE", "0.3"))
         # Their history (app/history.py): every read kept this many days (whole

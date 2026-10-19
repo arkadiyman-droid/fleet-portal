@@ -63,10 +63,48 @@ def decide(st: dict, level: str, crit: list, now: _dt.datetime, cfg: dict):
 
     st["first_bad_at"] = None
     if st.get("alerting"):
-        lasted = fleet_health.duration((now - (st.get("opened_at") or now)).total_seconds())
+        secs = (now - (st.get("opened_at") or now)).total_seconds()
+        lasted = fleet_health.duration(secs)
+        what = (st.get("issue") or "The problem").strip().rstrip(".")
+        if what.startswith("Status: "):
+            what = what[len("Status: "):]
         st.update(alerting=False, opened_at=None, notified_at=None)
-        return st, {"kind": "recovered", "send": not muted, "text": f"Back to normal after {lasted}."}
+        # a problem that cleared quickly closes quietly: the alert already went out
+        long_enough = secs >= _secs(cfg, "ALERT_RECOVERED_MIN_SECONDS", 1800)
+        return st, {"kind": "recovered", "send": not muted and long_enough,
+                    "quiet": None if long_enough else f"cleared after {lasted}: closed quietly",
+                    "text": f"{what}: cleared after {lasted}."}
     return st, None
+
+
+# ── flapping: one message for a building that keeps tripping ──────────────────
+
+def flap_gate(event, owner, now, cfg, name, issue):
+    """Turn a would-be "open" or "recovered" into something calmer when the
+    building keeps tripping: the third alert in ALERT_FLAP_HOURS becomes one
+    "keeps tripping" message, and nothing else is sent for that building until
+    ALERT_FLAP_HOURS after it. owner: AlertEvent filter (controller_id= or
+    legacy_box_id=). Returns (event, extra_event_or_None)."""
+    from app.models import AlertEvent
+    hours = _secs(cfg, "ALERT_FLAP_HOURS", 6)
+    need = int(_secs(cfg, "ALERT_FLAP_OPENS", 3))
+    if not event or hours <= 0 or need <= 0 or event["kind"] not in ("open", "recovered"):
+        return event, None
+    since = now - _dt.timedelta(hours=hours)
+    q = AlertEvent.query.filter_by(**owner).filter(AlertEvent.created_at >= since)
+    paused = q.filter(AlertEvent.kind == "flapping").order_by(AlertEvent.created_at.desc()).first()
+    if paused:
+        until = paused.created_at + _dt.timedelta(hours=hours)
+        event = dict(event, send=False, quiet=f"paused until {_local(until)}: keeps tripping")
+        return event, None
+    if event["kind"] == "open" and q.filter(AlertEvent.kind == "open").count() >= need - 1:
+        n = q.filter(AlertEvent.kind == "open").count() + 1
+        flap = {"kind": "flapping", "send": True,
+                "text": f"{n} alerts in {hours:g} hours ({(issue or 'tripping').strip().rstrip('.')}). "
+                        f"Alerts for this building are paused for {hours:g} hours; it stays on the Alerts page "
+                        f"and in the morning summary."}
+        return dict(event, send=False, quiet="folded into the keeps-tripping message"), flap
+    return event, None
 
 
 def _where(ctrl):
@@ -76,7 +114,7 @@ def _where(ctrl):
     return " · ".join(x for x in (c.name if c else None, p.name if p else None, b.name if b else None) if x)
 
 
-_TITLES = {"open": "ALERT", "reminder": "Still in alarm", "recovered": "Recovered"}
+_TITLES = {"open": "ALERT", "reminder": "Still in alarm", "recovered": "Recovered", "flapping": "Keeps tripping"}
 
 
 def message(kind: str, ctrl, text: str):
@@ -102,9 +140,10 @@ def check_all(app, now=None) -> int:
         ev = fleet_health.evaluate(ctrl, ctrl.status, now_dt=now)
         crit = [t for lvl, t in ev["issues"] if lvl == "crit"]
         row = db.session.get(AlertState, ctrl.id) or AlertState(controller_id=ctrl.id)
-        st = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until")}
+        st = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until", "issue")}
         st["alerting"] = bool(st["alerting"])
         new, event = decide(st, ev["level"], crit, now, cfg)
+        new.pop("issue", None)
         for k, v in new.items():
             setattr(row, k, v)
         if ev["level"] == "crit" and crit:
@@ -112,16 +151,19 @@ def check_all(app, now=None) -> int:
         elif not new["alerting"]:
             row.issue = None
         db.session.add(row)
-        if event:
-            title, body = message(event["kind"], ctrl, event["text"])
-            delivered = "muted: not sent"
-            if event["send"]:
-                delivered = notify.send(title, body, urgent=event["kind"] != "recovered",
-                                        good_news=event["kind"] == "recovered", path=f"/fleet/{ctrl.id}")
+        event, extra = flap_gate(event, {"controller_id": ctrl.id}, now, cfg, ctrl.name, row.issue or st.get("issue"))
+        for e in (event, extra):
+            if not e:
+                continue
+            title, body = message(e["kind"], ctrl, e["text"])
+            delivered = e.get("quiet") or "muted: not sent"
+            if e["send"]:
+                delivered = notify.send(title, body, urgent=e["kind"] not in ("recovered",),
+                                        good_news=e["kind"] == "recovered", path=f"/fleet/{ctrl.id}")
                 sent += 1
-            db.session.add(AlertEvent(controller_id=ctrl.id, controller_name=ctrl.name[:200], kind=event["kind"],
+            db.session.add(AlertEvent(controller_id=ctrl.id, controller_name=ctrl.name[:200], kind=e["kind"],
                                       title=title[:200], text=body[:1000], delivered=delivered[:300], created_at=now))
-            log.info("Alert %s for %s: %s", event["kind"], ctrl.name, delivered)
+            log.info("Alert %s for %s: %s", e["kind"], ctrl.name, delivered)
     # a controller archived while in alarm: close it quietly
     for row in AlertState.query.filter(AlertState.alerting.is_(True)).all():
         if row.controller_id not in seen:
@@ -242,10 +284,11 @@ def ignition_evidence(box_id, now):
     mix, mw = _trend(rows, "mix", "Hot water mix")
     parts = [p for p in (aqua, mix) if p]
     if not parts:
-        return None
-    verdict = ("looks real: the boiler is not making heat" if "falling" in (aw, mw)
+        return None, False
+    falling = "falling" in (aw, mw)
+    verdict = ("looks real: the boiler is not making heat" if falling
                else "aquastat holding: it may have relit, or the alarm was a blip")
-    return "Evidence: " + "; ".join(parts) + f" - {verdict}."
+    return "Evidence: " + "; ".join(parts) + f" - {verdict}.", falling
 
 
 def legacy_message(kind: str, box, text: str):
@@ -294,8 +337,9 @@ def check_legacy(app, now=None) -> int:
     now = now or _dt.datetime.utcnow()
     dark_min = int(cfg.get("LEGACY_DARK_MINUTES", 30))
     dark_after = _dt.timedelta(minutes=dark_min)
-    base = {"ALERT_AFTER_SECONDS": cfg.get("LEGACY_ALERT_AFTER_SECONDS", 240),
-            "ALERT_REPEAT_HOURS": cfg.get("ALERT_REPEAT_HOURS", 24)}
+    base = {"ALERT_AFTER_SECONDS": cfg.get("LEGACY_ALERT_AFTER_SECONDS", 540),
+            "ALERT_REPEAT_HOURS": cfg.get("ALERT_REPEAT_HOURS", 0),
+            "ALERT_RECOVERED_MIN_SECONDS": cfg.get("ALERT_RECOVERED_MIN_SECONDS", 1800)}
     boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)).all()
     ever = [b for b in boxes if b.status is not None and b.status.last_ok_at]
     dark_ids = {b.id for b in ever if legacy_dark(b.status, now, dark_after)}
@@ -315,36 +359,105 @@ def check_legacy(app, now=None) -> int:
         if issues is None:
             continue
         rule = dict(base)
+        # A box alarm alone is not an alert: if the box clears it by the next
+        # reads, nothing is sent (it stays in the building's history). It only
+        # helps confirm what the status already says.
         if fresh and not row.alerting:
             issues = [fresh] + issues
-            rule["ALERT_AFTER_SECONDS"] = 0              # a new trip goes out at once
         if issues and any("gnition" in i for i in issues) and st is not None and \
                 legacy.heat_system(st.data) == "steam":
-            ev_line = ignition_evidence(b.id, now)       # steam: show whether it is really cold
+            ev_line, falling = ignition_evidence(b.id, now)   # steam: show whether it is really cold
             if ev_line:
                 issues = issues + [ev_line]
-        state = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until")}
+            if falling and not row.alerting:
+                rule["ALERT_AFTER_SECONDS"] = 0          # the aquastat / hot water is really dropping: at once
+        state = {k: getattr(row, k) for k in ("alerting", "first_bad_at", "opened_at", "notified_at", "muted_until",
+                                              "issue")}
         state["alerting"] = bool(state["alerting"])
         new, event = decide(state, "crit" if issues else "ok", issues, now, rule)
+        new.pop("issue", None)
         for k, v in new.items():
             setattr(row, k, v)
         if issues:
             row.issue = issues[0][:300]
         elif not new["alerting"]:
             row.issue = None
-        if event:
-            title, body = legacy_message(event["kind"], b, event["text"])
-            delivered = "muted: not sent"
-            if event["send"]:
-                delivered = notify.send(title, body, urgent=event["kind"] != "recovered",
-                                        good_news=event["kind"] == "recovered", path=f"/live/{b.id}")
+        if event and event["kind"] == "recovered" and st is not None and st.ok:
+            event = dict(event, text=event["text"] + f"\nStatus now: {legacy.card(st.data or {})['status']}.")
+        event, extra = flap_gate(event, {"legacy_box_id": b.id}, now, cfg, b.name, row.issue or state.get("issue"))
+        for e in (event, extra):
+            if not e:
+                continue
+            title, body = legacy_message(e["kind"], b, e["text"])
+            delivered = e.get("quiet") or "muted: not sent"
+            if e["send"]:
+                delivered = notify.send(title, body, urgent=e["kind"] != "recovered",
+                                        good_news=e["kind"] == "recovered", path=f"/live/{b.id}")
                 sent += 1
-            db.session.add(AlertEvent(legacy_box_id=b.id, controller_name=b.name[:200], kind=event["kind"],
+            db.session.add(AlertEvent(legacy_box_id=b.id, controller_name=b.name[:200], kind=e["kind"],
                                       title=title[:200], text=body[:1000], delivered=delivered[:300], created_at=now))
-            log.info("Legacy alert %s for %s: %s", event["kind"], b.name, delivered)
+            log.info("Legacy alert %s for %s: %s", e["kind"], b.name, delivered)
     # a box hidden or deleted while in alarm: close it quietly
     for row in LegacyAlertState.query.filter(LegacyAlertState.alerting.is_(True)).all():
         if row.box_id not in seen:
             row.alerting, row.opened_at, row.notified_at, row.first_bad_at = False, None, None, None
     db.session.commit()
     return sent
+
+
+# ── one morning summary instead of per-item reminders ─────────────────────────
+
+def daily_digest(app, now=None) -> bool:
+    """Once a day at ALERT_DIGEST_HOUR (New York): what is still in alarm,
+    who is paused for tripping, and what tripped and cleared in the last 24
+    hours. Sent only when there is something to say. True when sent."""
+    from app import legacy
+    from app.extensions import db
+    from app.models import AlertEvent, AlertState, Controller, LegacyAlertState, LegacyBox
+    hour = int(app.config.get("ALERT_DIGEST_HOUR", 8))
+    if hour < 0 or not app.config.get("ALERTS_ENABLED", True):
+        return False
+    now = now or _dt.datetime.utcnow()
+    lt = now.replace(tzinfo=_dt.timezone.utc).astimezone(legacy.LOCAL)
+    if lt.hour < hour:
+        return False
+    today = lt.replace(hour=hour, minute=0, second=0, microsecond=0).astimezone(_dt.timezone.utc).replace(tzinfo=None)
+    if AlertEvent.query.filter(AlertEvent.kind == "digest", AlertEvent.created_at >= today).first():
+        return False
+    still = []
+    for s in LegacyAlertState.query.join(LegacyBox, LegacyBox.id == LegacyAlertState.box_id) \
+            .filter(LegacyAlertState.alerting.is_(True), LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)):
+        still.append((s.opened_at or now, f"{s.box.name}: {(s.issue or 'in alarm').rstrip('.')}"
+                      f" (since {_local(s.opened_at) if s.opened_at else '?'})"))
+    for s in AlertState.query.join(Controller).filter(AlertState.alerting.is_(True), Controller.is_active.is_(True)):
+        still.append((s.opened_at or now, f"{s.controller.name}: {(s.issue or 'in alarm').rstrip('.')}"
+                      f" (since {_local(s.opened_at) if s.opened_at else '?'})"))
+    since = now - _dt.timedelta(hours=24)
+    recent = AlertEvent.query.filter(AlertEvent.created_at >= since, AlertEvent.kind.in_(("open", "flapping"))).all()
+    paused = sorted({e.controller_name for e in recent if e.kind == "flapping" and e.controller_name})
+    trips = {}
+    for e in recent:
+        if e.kind == "open" and e.controller_name:
+            trips[e.controller_name] = trips.get(e.controller_name, 0) + 1
+    still_names = {line.split(":")[0] for _t, line in still}
+    cleared = sorted(((n, c) for n, c in trips.items() if n not in still_names), key=lambda x: -x[1])
+    if not still and not paused and not cleared:
+        return False
+    lines = []
+    if still:
+        lines.append(f"Still in alarm ({len(still)}):")
+        lines += ["- " + line for _t, line in sorted(still)[:15]]
+        if len(still) > 15:
+            lines.append(f"- and {len(still) - 15} more")
+    if paused:
+        lines.append(f"Kept tripping, alerts paused ({len(paused)}): " + ", ".join(paused[:10]))
+    if cleared:
+        lines.append(f"Tripped and cleared in the last 24 h ({len(cleared)}): "
+                     + ", ".join(f"{n} x{c}" if c > 1 else n for n, c in cleared[:10]))
+    title = f"Morning summary: {len(still)} in alarm" if still else "Morning summary: nothing in alarm"
+    body = "\n".join(lines)
+    delivered = notify.send(title, body, urgent=False, path="/alerts")
+    db.session.add(AlertEvent(kind="digest", title=title[:200], text=body[:1000], delivered=delivered[:300],
+                              created_at=now))
+    db.session.commit()
+    return True

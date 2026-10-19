@@ -63,15 +63,15 @@ def _alarm(name, at):
     return {"name": name, "at": at.strftime("%Y-%m-%dT%H:%M:%SZ"), "active": True}
 
 
-def test_safety_two_reads_then_recovered(app, session, sent, client):
+def test_safety_three_reads_then_a_clear_recovered(app, session, sent, client):
     import app.models as m
     (b,) = _boxes(session, 1)
-    for minute, code in ((0, "Outsd Sat"), (5, "Safety")):
+    for minute, code in ((0, "Outsd Sat"), (5, "Safety"), (10, "Safety")):
         _read(session, b, T0 + dt.timedelta(minutes=minute), code=code)
         _check(app, session, minute)
-    assert sent == []                                                  # one read is not enough
-    _read(session, b, T0 + dt.timedelta(minutes=10), code="Safety")
-    _check(app, session, 10)
+    assert sent == []                                                  # two reads are not enough
+    _read(session, b, T0 + dt.timedelta(minutes=15), code="Safety")
+    _check(app, session, 15)
     assert len(sent) == 1 and sent[0][0] == "ALERT: 0 Bedell St" and "Status: Safety." in sent[0][1]
     assert sent[0][2]["path"] == f"/live/{b.id}" and sent[0][2]["urgent"]
 
@@ -80,17 +80,64 @@ def test_safety_two_reads_then_recovered(app, session, sent, client):
     assert 'data-box="%d"' % b.id in page and 'data-k="stack,aqua,inside"' in page and "sensorchart.js" in page
     assert "In alarm" in client.get(f"/live/{b.id}").data.decode()
 
-    _read(session, b, T0 + dt.timedelta(minutes=15), code="Safety")
-    _check(app, session, 15)
-    assert len(sent) == 1                                              # no repeat inside 24 h
-    _read(session, b, T0 + dt.timedelta(minutes=20), code="Outsd Sat")
+    _read(session, b, T0 + dt.timedelta(minutes=20), code="Safety")
     _check(app, session, 20)
+    assert len(sent) == 1                                              # no repeats
+    _read(session, b, T0 + dt.timedelta(minutes=50), code="Outsd Sat")
+    _check(app, session, 50)
     assert len(sent) == 2 and sent[1][0] == "Recovered: 0 Bedell St" and sent[1][2]["good_news"]
+    assert "Safety: cleared after 35 min." in sent[1][1] and "Status now: Outside Temp. Satisfied." in sent[1][1]
     kinds = [e.kind for e in m.AlertEvent.query.filter_by(legacy_box_id=b.id).order_by(m.AlertEvent.id)]
     assert kinds == ["open", "recovered"]
 
 
-def test_old_alarms_never_sent_new_trip_sent_at_once(app, session, sent):
+def test_a_short_safety_alert_closes_quietly(app, session, sent):
+    import app.models as m
+    (b,) = _boxes(session, 1)
+    for minute, code in ((0, "Safety"), (5, "Safety"), (10, "Safety"), (15, "Outsd Sat")):
+        _read(session, b, T0 + dt.timedelta(minutes=minute), code=code)
+        _check(app, session, minute)
+    assert [s[0] for s in sent] == ["ALERT: 0 Bedell St"]                # no "back to normal after 5 min"
+    quiet = m.AlertEvent.query.filter_by(legacy_box_id=b.id, kind="recovered").one()
+    assert "closed quietly" in quiet.delivered
+
+
+def test_a_building_that_keeps_tripping_gets_one_message(app, session, sent):
+    import app.models as m
+    (b,) = _boxes(session, 1)
+    minute = 0
+    for _trip in range(5):                                             # Safety 15 min, then fine 45 min, five times
+        for code in ("Safety", "Safety", "Safety", "Outsd Sat"):
+            _read(session, b, T0 + dt.timedelta(minutes=minute), code=code)
+            _check(app, session, minute)
+            minute += 5
+        minute += 40
+    titles = [s[0] for s in sent]
+    assert titles == ["ALERT: 0 Bedell St", "ALERT: 0 Bedell St", "Keeps tripping: 0 Bedell St"]
+    assert "3 alerts in 6 hours" in sent[2][1] and "paused" in sent[2][1]
+    later = m.AlertEvent.query.filter_by(legacy_box_id=b.id, kind="open").order_by(m.AlertEvent.id).all()[-1]
+    assert "paused until" in later.delivered                           # trips 4 and 5: recorded, not sent
+
+
+def test_the_morning_summary(app, session, sent):
+    import app.models as m
+    from app import alerts
+    a, c = _boxes(session, 2)
+    session.add(m.LegacyAlertState(box_id=a.id, alerting=True, opened_at=T0, issue="Status: Safety."))
+    session.add(m.AlertEvent(legacy_box_id=c.id, controller_name=c.name, kind="open", title="ALERT", text="x",
+                             delivered="ntfy ok", created_at=T0))
+    session.commit()
+    seven = dt.datetime(2026, 10, 14, 11, 0)                             # 7 am New York (EDT)
+    eight = dt.datetime(2026, 10, 14, 12, 5)
+    assert alerts.daily_digest(app, now=seven) is False and sent == []
+    assert alerts.daily_digest(app, now=eight) is True
+    assert alerts.daily_digest(app, now=eight + dt.timedelta(hours=3)) is False      # once a day
+    title, body, _kw = sent[0]
+    assert title == "Morning summary: 1 in alarm"
+    assert "- 0 Bedell St: Status: Safety" in body and "Tripped and cleared in the last 24 h (1): 1 Bedell St" in body
+
+
+def test_old_alarms_never_sent_a_trip_the_box_clears_itself_is_not_sent(app, session, sent):
     (b,) = _boxes(session, 1)
     old = _alarm("ignitionFail", T0 - dt.timedelta(days=9))
     _read(session, b, T0, alarm=old)
@@ -101,10 +148,9 @@ def test_old_alarms_never_sent_new_trip_sent_at_once(app, session, sent):
     new = _alarm("ignitionFail", T0 + dt.timedelta(minutes=8))
     _read(session, b, T0 + dt.timedelta(minutes=10), alarm=new)       # status already fine again
     _check(app, session, 10)
-    assert len(sent) == 1 and "Box alarm: Ignition failure" in sent[0][1]
     _read(session, b, T0 + dt.timedelta(minutes=15), alarm=new)
     _check(app, session, 15)
-    assert len(sent) == 2 and sent[1][0].startswith("Recovered")
+    assert sent == []                                                  # a one-off the box cleared: history only
 
 
 def test_dark_after_reading_but_never_answered_is_quiet(app, session, sent):
@@ -112,7 +158,7 @@ def test_dark_after_reading_but_never_answered_is_quiet(app, session, sent):
     reading, never = _boxes(session, 2)
     session.add(m.LegacyStatus(box_id=never.id, polled_at=T0, ok=False)); session.commit()
     _read(session, reading, T0)
-    for minute in (5, 20, 35, 40):
+    for minute in (5, 20, 35, 40, 45):
         _read(session, reading, T0 + dt.timedelta(minutes=minute), ok=False)
         _check(app, session, minute)
     assert len(sent) == 1 and sent[0][0] == "ALERT: 0 Bedell St" and "Not answering since" in sent[0][1]
@@ -121,9 +167,9 @@ def test_dark_after_reading_but_never_answered_is_quiet(app, session, sent):
         macro = render_template_string(open("app/templates/alerts.html", encoding="utf-8").read().split("{% block content %}")[0]
                                        .split("{% macro ckeys")[1].join(["{% macro ckeys", ""]) + "{{ ckeys('Not answering since 5 PM.') }}")
     assert macro.strip() == "inside,out"                                      # a quiet box: where its data stops
-    _read(session, reading, T0 + dt.timedelta(minutes=45))
-    _check(app, session, 45)
-    assert sent[-1][0] == "Recovered: 0 Bedell St"
+    _read(session, reading, T0 + dt.timedelta(minutes=80))
+    _check(app, session, 80)
+    assert sent[-1][0] == "Recovered: 0 Bedell St" and "Not answering since" in sent[-1][1]
 
 
 def test_many_dark_together_is_one_outage_message(app, session, sent):

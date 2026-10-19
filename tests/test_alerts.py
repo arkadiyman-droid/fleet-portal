@@ -47,12 +47,21 @@ def test_a_blip_pages_nobody():
     assert st["first_bad_at"] == T0 + dt.timedelta(minutes=3)
 
 
-def test_recovered_says_how_long_it_lasted():
+def test_recovered_says_what_cleared_and_how_long_it_lasted():
     st, _ = run([(0, "crit", OFFLINE), (5, "crit", OFFLINE)])
+    st["issue"] = "Status: Safety."
     st, ev = alerts.decide(st, "ok", [], T0 + dt.timedelta(minutes=95), CFG)
     assert ev["kind"] == "recovered" and ev["send"] is True
-    assert ev["text"] == "Back to normal after 1 h 30 min."
+    assert ev["text"] == "Safety: cleared after 1 h 30 min."                # not "back to normal" from what?
     assert not st["alerting"] and st["first_bad_at"] is None
+
+
+def test_a_short_problem_closes_quietly():
+    """~300 pushes a day were "trip ... back to normal after 4 min" (2026-10-18):
+    the alert already went out; its all-clear is not worth a second push."""
+    st, _ = run([(0, "crit", OFFLINE), (5, "crit", OFFLINE)])
+    st, ev = alerts.decide(st, "ok", [], T0 + dt.timedelta(minutes=20), {**CFG, "ALERT_RECOVERED_MIN_SECONDS": 1800})
+    assert ev["kind"] == "recovered" and ev["send"] is False and "closed quietly" in ev["quiet"]
 
 
 def test_a_reminder_each_day_while_still_red():

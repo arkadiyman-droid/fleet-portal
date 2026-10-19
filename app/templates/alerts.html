@@ -20,11 +20,15 @@
   </div>
 
   <p class="card-sub" style="margin:0 0 14px">
-    A controller that stays red for {{ after_min }} minutes sends an alert{% if repeat_h %}, a reminder every {{ repeat_h|int }} hours while it stays red,{% endif %}
-    and an all-clear when it recovers. Yellow never pages anyone. Mute a controller from its own page during a service visit.
-    {% if show_legacy %}<br>The 2010 boxes on <a href="{{ url_for('admin.live_page') }}">Live</a> alert when their status reads Safety or Ignition Failure
-    on two reads in a row, at once on a new safety or ignition alarm, and when one that was reading stops answering for {{ legacy_dark_min }} minutes.
-    If many stop together you get one message about the connection instead. Boxes that never answered, and hidden ones, never alert.{% endif %}
+    Only problems that last reach your phone: something must stay red for {{ after_min }} minutes before an alert goes out.
+    "Recovered" is sent only for a problem that lasted {{ recovered_min }}+ minutes, and says what cleared; shorter ones close quietly
+    (they stay in the history below). A building that alerts {{ flap_opens }} times in {{ flap_hours|int }} hours gets one
+    "keeps tripping" message and is paused for {{ flap_hours|int }} hours. No repeated reminders: one morning summary{% if digest_hour >= 0 %} at {{ digest_hour }} am{% endif %}
+    lists what is still in alarm and what tripped overnight. Yellow never pages anyone. Mute a building or controller from its own page during a service visit.
+    {% if show_legacy %}<br>The 2010 boxes on <a href="{{ url_for('admin.live_page') }}">Live</a> alert when their status reads Safety (and, on steam,
+    Ignition Failure) on three reads in a row, and when one that was reading stops answering for {{ legacy_dark_min }} minutes. A box alarm the box clears
+    by itself sends nothing; a steam ignition failure with the aquastat or hot water really dropping goes out at once, with that evidence.
+    Hot-water buildings never alert on ignition failure. If many boxes stop together you get one message about the connection instead.{% endif %}
   </p>
 
   {% if not channels.ntfy and not channels.email %}
@@ -96,9 +100,9 @@
       {% for ev in events %}
         <tr{% if ev.legacy_box_id %} data-box="{{ ev.legacy_box_id }}"{% elif ev.controller_id %} data-ctrl="{{ ev.controller_id }}"{% endif %}>
           <td style="white-space:nowrap">{{ ev.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
-          <td><span class="chip {{ {'open':'crit','reminder':'crit','recovered':'ok','test':'info','mute':'info','outage':'crit','outage-end':'ok'}.get(ev.kind, 'info') }}">{{ {'open':'Alert','reminder':'Reminder','recovered':'Recovered','test':'Test','mute':'Mute','outage':'Outage','outage-end':'Back'}.get(ev.kind, ev.kind) }}</span></td>
+          <td><span class="chip {{ {'open':'crit','reminder':'crit','recovered':'ok','test':'info','mute':'info','outage':'crit','outage-end':'ok','flapping':'warn','digest':'info'}.get(ev.kind, 'info') }}">{{ {'open':'Alert','reminder':'Reminder','recovered':'Recovered','test':'Test','mute':'Mute','outage':'Outage','outage-end':'Back','flapping':'Keeps tripping','digest':'Morning summary'}.get(ev.kind, ev.kind) }}</span></td>
           <td>{% if ev.legacy_box_id %}<a href="{{ url_for('admin.live_box', box_id=ev.legacy_box_id) }}">{{ ev.controller_name }}</a> <span class="chip info">2010 box</span><span class="lv-t lv-chartbtn" data-k="{{ ckeys(ev.text) }}" title="Open this building's chart (sensors for this alarm, burner run time underneath)">chart</span>{% elif ev.controller_id %}<a href="{{ url_for('admin.fleet_controller', controller_id=ev.controller_id) }}">{{ ev.controller_name }}</a><span class="lv-t lv-chartbtn" data-k="{{ ckeys_c(ev.text) }}" title="Open this controller's chart (sensors for this alarm, burner run time underneath)">chart</span>{% else %}{{ ev.controller_name or '—' }}{% endif %}</td>
-          <td style="white-space:pre-line">{{ ev.title }}{% if ev.kind in ('open', 'reminder', 'recovered', 'outage', 'outage-end') %}
+          <td style="white-space:pre-line">{{ ev.title }}{% if ev.kind in ('open', 'reminder', 'recovered', 'outage', 'outage-end', 'flapping', 'digest') %}
 {{ ev.text }}{% endif %}</td>
           <td class="card-sub">{{ ev.delivered }}</td>
         </tr>

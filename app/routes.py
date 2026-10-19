@@ -752,8 +752,11 @@ def alerts_page():
                            legacy_dark_min=cfg.get("LEGACY_DARK_MINUTES", 30),
                            events=events.order_by(AlertEvent.created_at.desc()).limit(100).all(),
                            channels=notify.channels(), now=now,
-                           after_min=round(cfg.get("ALERT_AFTER_SECONDS", 300) / 60),
-                           repeat_h=cfg.get("ALERT_REPEAT_HOURS", 24),
+                           after_min=round(cfg.get("ALERT_AFTER_SECONDS", 600) / 60),
+                           repeat_h=cfg.get("ALERT_REPEAT_HOURS", 0),
+                           recovered_min=round(cfg.get("ALERT_RECOVERED_MIN_SECONDS", 1800) / 60),
+                           flap_opens=cfg.get("ALERT_FLAP_OPENS", 3), flap_hours=cfg.get("ALERT_FLAP_HOURS", 6),
+                           digest_hour=cfg.get("ALERT_DIGEST_HOUR", 8),
                            ntfy_server=cfg.get("ALERT_NTFY_SERVER", "https://ntfy.sh"),
                            ntfy_topic=cfg.get("ALERT_NTFY_TOPIC", "") if is_superuser() else "",
                            email_to=cfg.get("ALERT_EMAIL_TO", "") if is_superuser() else "")

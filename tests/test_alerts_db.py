@@ -66,11 +66,11 @@ class Paging:
 
     def test_offline_pages_once_then_recovers(self, app, session, ctrl, sent, client):
         import app.models as m
-        for minute in (0, 1, 2, 3, 4):
+        for minute in (0, 1, 2, 5, 9):
             _tick(app, session, ctrl, minute, ok=False)
-        assert sent == []                                           # not yet: under five minutes
-        _tick(app, session, ctrl, 5, ok=False)
-        _tick(app, session, ctrl, 6, ok=False)
+        assert sent == []                                           # not yet: under ten minutes
+        _tick(app, session, ctrl, 10, ok=False)
+        _tick(app, session, ctrl, 11, ok=False)
         assert len(sent) == 1
         title, body, kw = sent[0]
         assert title == "ALERT: Boiler room (12 Main St)" and body.startswith("Offline")

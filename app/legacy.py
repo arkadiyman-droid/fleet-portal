@@ -501,6 +501,7 @@ class LegacyPoller:
                                     try:
                                         from app import alerts
                                         alerts.check_legacy(app)
+                                        alerts.daily_digest(app)
                                     except Exception as e:
                                         db.session.rollback()
                                         log.warning("Legacy alert check failed: %s", e)
