@@ -14,6 +14,7 @@
   .hx-legend { display:flex; gap:10px; align-items:center; font-size:11px; color:var(--muted); margin:4px 0 0 42px; flex-wrap:wrap; }
   .hx-legend i { display:inline-block; width:18px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px; }
   table.hx-days td, table.hx-days th { padding:5px 8px; font-size:12.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  .kv .t-cold { background:#2675b9; color:#fff; border-radius:5px; padding:0 6px; font-weight:700; }   /* as on Live */
 </style>
 {% endblock %}
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
@@ -71,7 +72,11 @@
       {% if (c.boilers or [])|length > 1 %}{% for i, h, w in c.boilers %}{{ row('Boiler ' ~ i, 'heat ' ~ hhmm(h) ~ ' · hot water ' ~ hhmm(w)) }}{% endfor %}{% endif %}
     </div></div>
     <div class="section"><h2>Plant</h2><div class="kv">
-      {{ trow('Aquastat', c.aqua, 'aqua') }}{{ trow('Supply', c.supp, 'supp') }}{{ trow('Return', c.retn, 'retn') }}
+      {{ trow('Aquastat', c.aqua, 'aqua') }}
+      {% if c.system == 'hot water' %}{% set tg = (c.tint or {}).get('target') %}
+      <div class="k">Target supply</div><div class="v">{% if c.target %}<span class="lv-t{{ ' t-cold' if tg }}" data-k="dsup,supp" title="{{ tg[1] if tg else 'Outdoor-reset supply target while calling for heat' }}: click for the chart">{{ c.target }}</span>{% if c.target_gap %} <span class="card-sub">supply {{ c.target_gap }} F short</span>{% endif %}{% else %}<span class="card-sub">not calling for heat</span>{% endif %}</div>
+      {% endif %}
+      {{ trow('Supply', c.supp, 'supp') }}{{ trow('Return', c.retn, 'retn') }}
       {{ trow('Riser', c.risr, 'risr') }}{{ trow('Coil', c.coil, 'coil') }}{{ trow('Mix', c.mix, 'mix') }}
       {{ trow('Stack', c.stack, 'stack') }}{{ trow('High stack', c.hi_stack, 'hi_stack') }}{{ row('Water meter', c.water) }}
       {% if c.oil_pct is not none %}{{ row('Oil', (c.oil_pct ~ ' %')) }}{% endif %}

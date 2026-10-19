@@ -174,3 +174,15 @@ def test_the_live_pop_up_chart(app, session, two, client):
     assert 'data-box="%d"' % cold.id in page and "sensorchart.js" in page and "http-equiv" not in page
     box = client.get(f"/live/{cold.id}").data.decode()                       # the box page: same chart, by click
     assert "sensorchart.js" in box and 'data-k="apt1"' in box and 'data-k="sys0"' in box and 'data-k="inside"' in box
+
+
+def test_the_box_page_shows_the_target_above_the_supply(app, session, two, client):
+    import app.models as m
+    good, cold = two
+    data = {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140", "systemTemperature0": "75"},
+            "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}}
+    session.add(m.LegacyStatus(box_id=cold.id, polled_at=NOW, ok=True, last_ok_at=NOW, data=data))
+    session.commit()
+    page = client.get(f"/live/{cold.id}").data.decode()
+    i, j = page.index(">Target supply<"), page.index(">Supply<")
+    assert i < j and 'class="lv-t t-cold" data-k="dsup,supp"' in page and "supply 65 F short" in page
