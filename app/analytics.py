@@ -67,6 +67,8 @@ SELECT h.box_id,
            AS water_night,
        sum(h.fuel) AS fuel,
        bool_and(h.out_fleet) AS no_out_sensor,
+       avg(h.dsup_avg) AS target_avg, avg(h.supp_call_avg) AS supp_call_avg,
+       coalesce(sum(h.short_min), 0) AS short_min,
        min(h.hour) AS first_hour
 FROM legacy_hourly h
 WHERE h.hour >= :s AND h.hour < :e
@@ -135,6 +137,8 @@ def portfolio(key, now=None, poll_min=5):
             "stack_fire": _f(a["stack_fire"]), "hi_stack": a["hi_stack"],
             "water": a["water"], "water_night": a["water_night"], "fuel": a["fuel"],
             "no_out_sensor": bool(a["no_out_sensor"]),
+            "target_avg": _f(a["target_avg"]), "supp_call_avg": _f(a["supp_call_avg"]),
+            "short_h": round((a["short_min"] or 0) / 60, 1),
         })
     fleet = {
         "mpd": _median(r["mpd"] for r in rows),
@@ -212,6 +216,11 @@ def sensor_health(now, boxes):
     return sorted(out, key=lambda s: (s["box"].name.lower(), s["sensor"]))
 
 
+def legacy_gap():
+    from app import legacy
+    return legacy.TARGET_GAP
+
+
 def _hm(minutes):
     minutes = int(round(minutes or 0))
     return f"{minutes // 60} h {minutes % 60:02d} min" if minutes >= 60 else f"{minutes} min"
@@ -239,6 +248,10 @@ def findings(rows, fleet, law, sensors, boxes):
         if r["trend"] and r["trend"] >= TREND_FLAG:
             add("warn", r, "Efficiency", f"burner time per degree-day up {r['trend'] * 100:.0f}% on the previous period",
                 450 + r["trend"] * 100)
+        if r["short_h"] >= 2:
+            add("warn", r, "Below target", f"supply {legacy_gap()}+ F below its target for {r['short_h']:g} h while calling for heat"
+                + (f" (average supply {r['supp_call_avg']:.0f} F vs target {r['target_avg']:.0f} F)"
+                   if r["supp_call_avg"] is not None and r["target_avg"] is not None else ""), 600 + r["short_h"])
         if r["overheat_hours"] >= 6:
             add("warn", r, "Waste", f"heated for {r['overheat_hours']} hour(s) while {history.OVERHEAT}+ F above "
                 f"its desired temperature", 400 + r["overheat_hours"])

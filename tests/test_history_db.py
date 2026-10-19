@@ -186,3 +186,26 @@ def test_the_box_page_shows_the_target_above_the_supply(app, session, two, clien
     page = client.get(f"/live/{cold.id}").data.decode()
     i, j = page.index(">Target supply<"), page.index(">Supply<")
     assert i < j and 'class="lv-t t-cold" data-k="dsup,supp"' in page and "supply 65 F short" in page
+
+
+def test_analytics_target_and_supply_while_calling(app, session, two, client):
+    import app.models as m
+    from app import analytics, history
+    good, cold = two
+    reads = []
+    for k in range(0, 24 * 12 + 12):                       # a day: hot water, calling all day, supply 70 F against 140 F
+        ts = START + dt.timedelta(minutes=5 * k)
+        reads.append(history.reading(cold.id, ts, {"status": {"callForHeat": "Circ Pump", "desiredSupplyTemp": "140",
+                                                            "systemTemperature0": "70", "averageTemperature": "66"},
+                                                 "names": {"systemSensorName0": "HWtS"}, "config": {"heatControlType": "13"}}))
+    history.save(reads, [], NOW)
+    session.add(m.LegacyStatus(box_id=cold.id, polled_at=NOW, ok=True, last_ok_at=NOW,
+                               data={"status": {"callForHeat": "Circ Pump"}, "config": {"heatControlType": "13"}}))
+    session.commit()
+    history.rollup(NOW, poll_min=5, max_hours=100)
+    h = session.get(m.LegacyHourly, (cold.id, START + dt.timedelta(hours=3)))
+    assert (h.dsup_avg, h.supp_call_avg, h.short_min) == (140, 70, 60)
+    a = analytics.portfolio("7", now=NOW)
+    r = next(r for r in a["rows"] if r["box"].id == cold.id)
+    assert (r["target_avg"], r["supp_call_avg"], r["short_h"]) == (140, 70, 24)
+    assert any(f["cat"] == "Below target" and "24 h while calling" in f["text"] for f in a["findings"])

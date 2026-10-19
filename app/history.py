@@ -301,7 +301,7 @@ def _tone(code):
     return legacy.STATUS.get(code or "", (code, "idle"))[1]
 
 
-def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False) -> dict:
+def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False, hot_water=False) -> dict:
     """The hourly row for one box: prev = its last read before the hour (or
     None), cur = its reads inside the hour, oldest first."""
     seq = ([prev] if prev is not None else []) + cur
@@ -340,11 +340,25 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False
         "heat_min": min(32767, sum(used(seq, f"heat{i}") for i in range(1, 5))),
         "hw_min": min(32767, sum(used(seq, f"hw{i}") for i in range(1, 5))),
         "calling_min": minutes("heat"), "safety_min": minutes("crit"), "bypass_min": minutes("warn"),
+        **_target_stats(cur, poll_min, hot_water),
         "fuel": fuel, "water": water,
         "hdd": round(max(0.0, HDD_BASE - out) / 24, 4) if out is not None else 0.0,
         "law_req": req, "law_low": sum(1 for a in apt_avg if a is not None and req and a < req),
         "apt_low": min(apt_all) if apt_all else None, "apt_avg": apt_avg or None,
     }
+
+
+def _target_stats(cur, poll_min, hot_water) -> dict:
+    """Hot water, the reads calling for heat with a target: average target,
+    average supply, and minutes the supply was legacy.TARGET_GAP+ short."""
+    from app import legacy
+    if not hot_water:
+        return {"dsup_avg": None, "supp_call_avg": None, "short_min": 0}
+    calls = [r for r in cur if r.dsup and _tone(r.code) == "heat"]
+    supps = [r.supp for r in calls if _ok(r.supp, 1, 260) is not None]
+    short = sum(1 for r in calls if r.supp and r.dsup - r.supp >= legacy.TARGET_GAP)
+    return {"dsup_avg": _mean([r.dsup for r in calls]), "supp_call_avg": _mean(supps),
+            "short_min": min(60, short * poll_min)}
 
 
 def rollup_hour(hour, poll_min=5) -> int:
@@ -371,7 +385,7 @@ def rollup_hour(hour, poll_min=5) -> int:
     from app.models import LegacyStatus
     hot = {s.box_id for s in LegacyStatus.query.filter(LegacyStatus.box_id.in_(list(groups) or [-1])).all()
            if legacy.ignition_ignored(s.data)}
-    out = [hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=box_id in hot)
+    out = [hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=box_id in hot, hot_water=box_id in hot)
            for box_id, (prev, cur) in groups.items()]
     if out:
         db.session.execute(insert(LegacyHourly), out)

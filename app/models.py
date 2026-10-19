@@ -641,6 +641,11 @@ class LegacyHourly(db.Model):
     hdd = db.Column(db.Float, nullable=False, default=0)             # heating degree-days (65 F base)
     law_req = db.Column(db.SmallInteger)                             # heat-season minimum this hour, if any
     law_low = db.Column(db.SmallInteger, nullable=False, default=0)  # apartment sensors averaging below it
+    # hot water while calling for heat: the box's target supply, the real supply,
+    # and the minutes the supply was legacy.TARGET_GAP+ under the target
+    dsup_avg = db.Column(db.Float)
+    supp_call_avg = db.Column(db.Float)
+    short_min = db.Column(db.SmallInteger, nullable=False, default=0)
     apt_low = db.Column(db.SmallInteger)                             # lowest apartment read in the hour
     apt_avg = db.Column(ARRAY(db.SmallInteger))                      # per sensor, the hour's average (null = none)
 
