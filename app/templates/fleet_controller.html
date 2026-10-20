@@ -64,7 +64,7 @@
     <div class="section" data-ctrl="{{ c.id }}"><h2>Heating{% if h.system %} <span class="card-sub">· {{ h.system }}</span>{% endif %}</h2><div class="kv">
       {{ row('Mode', h.mode) }}{{ row('Why', h.reason) }}
       <div class="k">Outdoor</div><div class="v">{% if h.outdoor is not none %}<span class="lv-t" data-k="out" title="Click for the chart">{{ h.outdoor }} °F</span>{% else %}—{% endif %}</div>
-      <div class="k">Apartments avg</div><div class="v">{% if h.avgApt is not none %}<span class="lv-t" data-k="inside,dit" title="Click for the chart">{{ '%.1f °F'|format(h.avgApt) }}</span>{% else %}—{% endif %}</div>
+      <div class="k">Apartments avg</div><div class="v">{% if h.noSensors %}<span class="card-sub">no sensors reporting: the 65 F is a placeholder, not alerted</span>{% elif h.avgApt is not none %}<span class="lv-t" data-k="inside,dit" title="Click for the chart">{{ '%.1f °F'|format(h.avgApt) }}</span>{% else %}—{% endif %}</div>
       {{ row('Target', (h.target ~ ' °F') if h.target else none) }}
       {% if h.system == 'hot water' %}
       <div class="k">Target supply</div><div class="v">{% if h.supplyTarget %}<span class="lv-t" data-k="dsupp,supp,hwr" title="Outdoor-reset supply target: click for the target, supply and return chart">{{ h.supplyTarget }} °F</span>{% else %}—{% endif %}{% if h.cold %} <span class="card-sub" style="color:#2675b9;font-weight:600">{{ h.cold }}</span>{% endif %}</div>

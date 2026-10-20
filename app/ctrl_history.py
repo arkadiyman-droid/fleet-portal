@@ -49,7 +49,10 @@ def _num(v):
 
 def snapshot(payload) -> dict:
     """The compact row kept from one /api/status reply."""
+    from app import fleet_health
     vals = {key: _num(payload.get(field)) for key, field, _l in FIELDS}
+    if fleet_health.no_sensors(payload):
+        vals["inside"] = None              # the 65 F no-sensor placeholder is not a reading
     for kind, fields in COUNTERS.items():
         for i, f in enumerate(fields, 1):
             vals[f"{kind}{i}"] = _num(payload.get(f))

@@ -67,8 +67,9 @@
       <div class="heat">
         <div><div class="k">Outdoor</div><div class="v">{{ h.outdoor if h.outdoor is not none else '—' }}°</div></div>
         <div><div class="k">Apts avg</div>
-          <div class="v {% if h.avgApt and h.target %}{{ 'low' if h.avgApt < h.target - 2 else ('high' if h.avgApt > h.target + 3 else '') }}{% endif %}">
-            {{ '%.0f'|format(h.avgApt) if h.avgApt is not none else '—' }}°<span class="card-sub"> / {{ h.target or '—' }}°</span></div></div>
+          {% if h.noSensors %}<div class="v" title="No wireless apartment sensor is reporting: the controller's 65 F is a placeholder, not a measurement. Not alerted."><span style="font-size:12px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:1px 6px;cursor:help">no sensors</span><span class="card-sub"> / {{ h.target or '—' }}°</span></div>
+          {% else %}<div class="v {% if h.avgApt and h.target %}{{ 'low' if h.avgApt < h.target - 2 else ('high' if h.avgApt > h.target + 3 else '') }}{% endif %}">
+            {{ '%.0f'|format(h.avgApt) if h.avgApt is not none else '—' }}°<span class="card-sub"> / {{ h.target or '—' }}°</span></div>{% endif %}</div>
         <div><div class="k">Heat</div><div class="v" style="font-size:14px;padding-top:3px">{{ h.mode or '—' }}{% if h.demand %} · <span style="color:var(--warn)">calling</span>{% endif %}</div></div>
       </div>
       {% if h.system == 'hot water' %}

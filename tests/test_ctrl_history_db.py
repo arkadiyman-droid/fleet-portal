@@ -97,3 +97,14 @@ def test_controller_page_and_card_show_target_supply(app, session, ctrl, client)
     card = client.get("/overview").data.decode()
     assert "Target supply" in card and "160°" in card and 'class="v low" title="Hot water cold: supply 78 F' in card
 
+
+def test_no_sensor_snapshots_keep_no_inside_and_say_so(app, session, ctrl, client):
+    import app.models as m
+    from app import ctrl_history
+    silent = status(0) | {"avgAptTemp": 65.0, "goodSens": 0, "aptTemps": [0] * 128}
+    assert "inside" not in ctrl_history.snapshot(silent)["values"]                    # the placeholder is not charted
+    assert ctrl_history.snapshot(status(0) | {"goodSens": 2})["values"]["inside"] == 68.4
+    session.add(m.ControllerStatus(controller_id=ctrl.id, ok=True, polled_at=dt.datetime.utcnow(), raw_json=silent))
+    session.commit()
+    assert "no sensors reporting" in client.get(f"/fleet/{ctrl.id}").data.decode()
+    assert "no sensors</span>" in client.get("/overview").data.decode()

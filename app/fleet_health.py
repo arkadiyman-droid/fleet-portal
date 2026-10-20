@@ -39,6 +39,26 @@ URGENT_ALARMS = {1: "ignition failure", 3: "safety", 11: "pump failure", 12: "va
 IGNITION_ALARM = 1
 
 
+NO_SENSORS_NOTE = ("No wireless apartment sensor is reporting: the controller's 65 F apartment average is a "
+                   "placeholder (it keeps calling for heat on it), not a measurement. Not alerted.")
+
+
+def no_sensors(d) -> bool:
+    """True when not one apartment sensor reports. EMS sensor_manager then sets
+    avgAptTemp to NO_SENSOR_FALLBACK_TEMP_F (65) so heat still gets called;
+    the portal must not read that as a measurement (same as the 2010 boxes,
+    legacy.no_sensors). goodSens is the count of sensors in the average;
+    a status without it falls back to every aptTemps slot being 0."""
+    d = d or {}
+    if d.get("goodSens") is not None:
+        try:
+            return int(d.get("goodSens")) == 0
+        except (TypeError, ValueError):
+            return False
+    apts = d.get("aptTemps")
+    return isinstance(apts, list) and d.get("avgAptTemp") is not None and not any(apts)
+
+
 def _temp(v):
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 else None
 
@@ -193,7 +213,8 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
     if d:
         out["heating"] = {
             "mode": d.get("heatMode"), "reason": d.get("heatModeReason"),
-            "outdoor": d.get("outdoor"), "avgApt": d.get("avgAptTemp"), "target": d.get("tit"),
+            "outdoor": d.get("outdoor"), "avgApt": None if no_sensors(d) else d.get("avgAptTemp"),
+            "noSensors": no_sensors(d), "target": d.get("tit"),
             "demand": d.get("heatDemand"), "bypass": d.get("bypass"),
             "blr1Hours": d.get("blr1LifetimeHours"), "blr2Hours": d.get("blr2LifetimeHours"),
             "hasBlr2": d.get("hasBlr2"), "system": heat_system(d),
@@ -201,6 +222,8 @@ def evaluate(ctrl, status, now=None, now_dt=None) -> dict:
         }
         if d.get("bypass"):
             issues.append(("warn", "Bypass is ON: the controller is not in charge of the boilers"))
+        if no_sensors(d):
+            issues.append(("info", NO_SENSORS_NOTE))       # batteries are hard to change: information, never paged
         for a in d.get("recentAlarms") or []:
             if a.get("active"):
                 out["alarms"].append(a)

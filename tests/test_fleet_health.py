@@ -202,3 +202,13 @@ def test_supply_vs_target_cold_loop_only_under_80_while_calling():
     assert F.supply_vs_target(d | {"supTemp": 70, "heatDemand": False})["cold"] is None           # not calling
     assert F.supply_vs_target(d | {"heatCtrlType": 1}) == {}                                       # steam
 
+
+def test_no_sensors_is_a_note_not_a_reading():
+    raw = healthy_raw() | {"avgAptTemp": 65.0, "goodSens": 0, "aptTemps": [0] * 32}
+    e = ev(status(raw=raw))
+    assert e["heating"]["noSensors"] and e["heating"]["avgApt"] is None              # not "65, below 74"
+    assert e["level"] == "info" and ("info", F.NO_SENSORS_NOTE) in e["issues"]        # a note, never red / paged
+    up = ev(status(raw=healthy_raw() | {"avgAptTemp": 65.0, "goodSens": 3}))
+    assert not up["heating"]["noSensors"] and up["heating"]["avgApt"] == 65.0         # a real 65 is a reading
+    assert F.no_sensors({"avgAptTemp": 65, "aptTemps": [0, 0]})                       # older firmware: no goodSens
+    assert not F.no_sensors({"avgAptTemp": 70}) and not F.no_sensors(None)
