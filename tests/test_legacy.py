@@ -328,3 +328,14 @@ def test_no_wireless_sensors_means_no_inside_reading():
     assert not real["no_sensors"] and real["inside"] == 65 and real["tint"]["inside"][0] == "cold"   # a real 65 still counts
     assert legacy.no_sensors(None) and legacy.no_sensors([0, 0, None]) and not legacy.no_sensors([0, 71])
     assert not legacy.card({})["no_sensors"] and not legacy.card({"status": {}})["no_sensors"]       # never read: unknown, not silent
+
+
+def test_loop_hot_rule():
+    from app import legacy
+    assert legacy.loop_hot(150, 145) is True      # both hot
+    assert legacy.loop_hot(96, 70) is True        # peak >= 95
+    assert legacy.loop_hot(92, 70) is True        # supply >=90 and >=10 over return
+    assert legacy.loop_hot(94, 90) is False       # under 95 and delta < 10
+    assert legacy.loop_hot(72, 68) is False       # plainly cold
+    assert legacy.loop_hot(0, 0) is False         # no sensors
+    assert legacy.loop_hot(None, None) is False

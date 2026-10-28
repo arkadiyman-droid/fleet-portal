@@ -317,11 +317,34 @@ def _card(data: dict) -> dict:
 # (alerts.hydronic_loop_cold).
 LOOP_COLD_F = 80
 
+# A loop that is actually hot -- used to tell a latched/nuisance Safety trip
+# that is still delivering heat from one that has really stopped the building.
+# Same rule the Anagha heat-test settled on: the loop is hot if either side is
+# at/above LOOP_HOT_F, or the supply is clearly driving the return (supply at
+# least LOOP_DRIVE_F and at least LOOP_DELTA_F over the return -- hot water
+# circulating). Chosen so a boiler cycling around its target, whose flame drops
+# out for a beat while the water stays hot, still reads as hot.
+LOOP_HOT_F   = 95
+LOOP_DRIVE_F = 90
+LOOP_DELTA_F = 10
+
 
 def loop_cold(supp, retn) -> list:
     """[("supply", 73), ("return", 67)]: the loop readings under LOOP_COLD_F
     (0 or None = no sensor, never cold)."""
     return [(n, v) for n, v in (("supply", supp), ("return", retn)) if v and 0 < v < LOOP_COLD_F]
+
+
+def loop_hot(supp, retn) -> bool:
+    """True when the loop is clearly delivering heat (0/None = no sensor)."""
+    s = supp if (supp and supp > 0) else None
+    r = retn if (retn and retn > 0) else None
+    peak = max([v for v in (s, r) if v is not None], default=None)
+    if peak is not None and peak >= LOOP_HOT_F:
+        return True
+    if s is not None and r is not None and s >= LOOP_DRIVE_F and (s - r) >= LOOP_DELTA_F:
+        return True
+    return False
 
 
 def cold_words(cold) -> str:

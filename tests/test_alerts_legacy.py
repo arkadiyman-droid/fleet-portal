@@ -64,10 +64,35 @@ def _st_sys(code, hct):
 def test_ignition_on_hot_water_is_not_alerted_but_on_steam_it_is():
     assert alerts.legacy_issues(_st_sys("Ign Fail", 13), NOW, DARK) == []                    # hot water
     assert alerts.legacy_issues(_st_sys("Ign Fail", 1), NOW, DARK) == ["Status: Ignition Failure."]   # steam
-    assert alerts.legacy_issues(_st_sys("Safety", 13), NOW, DARK) == ["Status: Safety."]     # Safety always
+    assert alerts.legacy_issues(_st_sys("Safety", 13), NOW, DARK) == ["Status: Safety."]     # Safety, cold/absent loop
     hot = {"alarm": alarm("ignitionFail", 4), "config": {"heatControlType": "11"}}
     steam = {"alarm": alarm("ignitionFail", 4), "config": {"heatControlType": "1"}}
     assert alerts.legacy_fresh_alarm(hot, "x@y", NOW)[1] is None
     assert alerts.legacy_fresh_alarm(steam, "x@y", NOW)[1] == "Box alarm: Ignition failure at Oct 14 5:56 PM."
     safety_hot = {"alarm": alarm("safetyActive", 4), "config": {"heatControlType": "11"}}
     assert alerts.legacy_fresh_alarm(safety_hot, "x@y", NOW)[1] is not None
+
+
+def _st_loop(code, supp, retn, hct=None):
+    """A box reporting status `code` with a supply/return loop. The loop comes
+    from systemTemperature readings matched by sensor name (card()'s ROLES):
+    a sensor named "Supply"/"Return" is the supply/return."""
+    s = st(code=code)
+    s.data["status"].update(systemTemperature0=supp, systemTemperature1=retn)
+    s.data["names"] = {"systemSensorName0": "Supply", "systemSensorName1": "Return"}
+    if hct is not None:
+        s.data["config"] = {"heatControlType": str(hct)}
+    return s
+
+
+def test_safety_with_a_hot_loop_does_not_page():
+    # A Safety trip whose loop is still hot is latched/nuisance, still heating:
+    # it should not page (it did on 2026-10-28, burying the ones that matter).
+    assert alerts.legacy_issues(_st_loop("Safety", 150, 145), NOW, DARK) == []   # clearly hot
+    assert alerts.legacy_issues(_st_loop("Safety", 96, 72), NOW, DARK) == []     # peak >= 95
+    assert alerts.legacy_issues(_st_loop("Safety", 92, 70), NOW, DARK) == []     # supply drives return (delta)
+    # but a Safety with a cold loop is a real lockout -- still pages.
+    assert alerts.legacy_issues(_st_loop("Safety", 72, 68), NOW, DARK) == ["Status: Safety."]
+    assert alerts.legacy_issues(_st_loop("Safety", 0, 0), NOW, DARK) == ["Status: Safety."]   # no sensors
+    # the hot-loop pass is Safety-only: a steam ignition failure still pages hot.
+    assert alerts.legacy_issues(_st_loop("Ign Fail", 150, 145, hct=1), NOW, DARK) == ["Status: Ignition Failure."]

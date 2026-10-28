@@ -283,6 +283,14 @@ def legacy_issues(st, now, dark_after):
         return []
     if c["code"] == "Ign Fail" and legacy.ignition_ignored(st.data):
         return []                                        # hot water: no fuel-valve feedback to trust
+    if c["code"] == "Safety" and legacy.loop_hot(c.get("supp"), c.get("retn")):
+        # A Safety trip whose loop is hot is still delivering heat: a latched
+        # or nuisance limit/pressuretrol trip, not a building losing heat. It
+        # paged the same as a real lockout and buried the ones that matter --
+        # nine Safety pages on 2026-10-28, several at 140-160 F loops. Don't
+        # page it; the Live wall still shows the Safety state and the analytics
+        # "trips" view still counts it.
+        return []
     return [f"Status: {c['status']}."]
 
 
