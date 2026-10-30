@@ -41,7 +41,7 @@ def _bloom_entry(name, ba):
     st = ba.status
     if not (st and st.ok and st.data):
         return _blank(name, "Bloom", url)
-    c = bloom.card(st.data)
+    c = bloom.card(st.data, ba.view, ba.plant_tag)
     return {"name": name, "source": "Bloom", "status": c["tone"], "out": c["outside_f"],
             "sup": c["supply_f"], "ret": c["return_f"], "rt": _hhmm(c["heat_rt"]),
             "dhw": c["dhw_supply_f"], "spt": c["setpoint_f"], "mode": c["mode"],

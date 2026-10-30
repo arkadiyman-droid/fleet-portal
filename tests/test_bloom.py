@@ -128,3 +128,58 @@ def test_extract_token_unwraps_common_shapes():
     assert bloom._extract_token({"data": {"access_token": "deep"}}) == "deep"
     assert bloom._extract_token("bare.jwt") == "bare.jwt"
     assert bloom._extract_token({"nope": 1}) is None
+
+
+# A single Bloom feed covering TWO towers/buildings (Whitney Young: 354 + 358).
+_TWO_TOWER = {
+    "asset": {
+        "name": "354-358 Nepperhan Ave", "locid": "354-358-nepperhan-ave",
+        "sensors": [
+            _s("space-t", 70, name="354 - 1A"),
+            _s("space-t", 33, name="354 - 5E"),              # dead/offline sensor
+            _s("space-t", 74, name="358 - 3E"),
+            _s("space-h", 55, name="354 - 1A"),
+            _s("space-h", 50, name="358 - 3E"),
+            _s("gen-t", 94.4, name="PDT BLDG A SUPPLY"),
+            _s("gen-t", 94.3, name="PDT BLDG A RETURN"),
+            _s("gen-t", 52.1, assoc={"type": "zone", "key": "zone-a"}, name="PDT BLDG A SUPPLY"),  # cooling copy
+            _s("gen-t", 97.4, name="PDT BLDG B SUPPLY"),
+            _s("gen-t", 93.8, name="PDT BLDG B RETURN"),
+            _s("diff-pr", 30.1, name="PDT DIFFERENTIAL PRESSURE"),   # shared, no tower
+            _s("binary", 1, name="PDT WATER AVAILABLE"),             # shared, no tower
+        ],
+    },
+    "alarms": [
+        {"type": "pmp-run-manual", "end": None,
+         "txt": "Tower A - Glycol Dual Temperature Pump 2 did not start when commanded"},
+    ],
+}
+
+
+def test_view_scopes_shared_feed_to_each_building():
+    a = bloom.card(_TWO_TOWER, view="354", plant_tag="A")
+    b = bloom.card(_TWO_TOWER, view="358", plant_tag="B")
+    # supply/return from each tower's UN-zoned PDT BLDG loop (not the cooling copy)
+    assert (a["supply_f"], a["return_f"]) == (94.4, 94.3)
+    assert (b["supply_f"], b["return_f"]) == (97.4, 93.8)
+    assert a["spaces"] == 2 and b["spaces"] == 1
+    # space avg/min ignore the dead (<40F) 354 sensor
+    assert a["space_avg_f"] == 70.0 and a["space_min_f"] == 70
+    # a Tower A alarm is 354's, not 358's
+    assert a["n_alarms"] == 1 and b["n_alarms"] == 0
+    # a whole-feed read (no view) sees everything
+    assert bloom.card(_TWO_TOWER)["spaces"] == 3
+
+
+def test_detail_view_filters_apartments_and_plant():
+    da = bloom.detail(_TWO_TOWER, view="354", plant_tag="A")
+    db_ = bloom.detail(_TWO_TOWER, view="358", plant_tag="B")
+    assert {ap["name"] for ap in da["apartments"]} == {"354 - 1A", "354 - 5E"}
+    assert {ap["name"] for ap in db_["apartments"]} == {"358 - 3E"}
+    assert any(ap["rh"] == 55 for ap in da["apartments"])          # humidity joined
+    names_a = {p["name"] for p in da["plant"]}
+    names_b = {p["name"] for p in db_["plant"]}
+    assert "PDT BLDG A SUPPLY" in names_a and "PDT BLDG B SUPPLY" not in names_a
+    assert "PDT BLDG B SUPPLY" in names_b and "PDT BLDG A SUPPLY" not in names_b
+    assert "PDT DIFFERENTIAL PRESSURE" in names_a and "PDT DIFFERENTIAL PRESSURE" in names_b  # shared
+    assert da["alarms"] and not db_["alarms"]

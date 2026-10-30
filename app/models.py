@@ -745,13 +745,23 @@ class BloomAsset(db.Model):
     Client -> Property -> Building hierarchy (Skyline Properties), nullable so
     an asset can exist before it is placed, like a LegacyBox."""
     __tablename__ = "bloom_assets"
-    __table_args__ = (db.UniqueConstraint("account_id", "asset_key", name="uq_bloom_asset_key"),)
+    # (account, asset_key, view) is unique: several rows may share ONE Bloom feed
+    # when that feed covers more than one building (e.g. a two-tower plant). Each
+    # such row carries a distinct `view` so it scopes the shared feed to its own
+    # sub-building; a normal whole-feed asset uses view="".
+    __table_args__ = (db.UniqueConstraint("account_id", "asset_key", "view", name="uq_bloom_asset_view"),)
 
     id = db.Column(db.Integer, primary_key=True)
     account_id = db.Column(db.Integer, db.ForeignKey("bloom_accounts.id", ondelete="CASCADE"), nullable=False)
     asset_key = db.Column(db.String(200), nullable=False)           # Bloom asset id / slug
     name = db.Column(db.String(200), nullable=False)                # e.g. "631 Alan Page Dr"
     address = db.Column(db.Text)
+    # Scoping a shared feed to one sub-building. view = "" for a normal asset;
+    # otherwise the apartment/space name prefix to keep (e.g. "354" / "358").
+    # plant_tag = the plant's building letter (e.g. "A"/"B") used to pick the
+    # right "PDT BLDG <tag> SUPPLY/RETURN" and to drop the other tower's points.
+    view = db.Column(db.String(20), nullable=False, default="", server_default="")
+    plant_tag = db.Column(db.String(8))
     building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
     # Hidden (is_active False): kept but not shown/polled. Deleted (deleted_at
     # set): gone from the portal, the row stays only so a re-import skips it.

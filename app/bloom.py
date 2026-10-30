@@ -32,6 +32,7 @@ derived at read time by card(), so a Bloom-side change rarely needs a migration.
 """
 import datetime as _dt
 import logging
+import re
 import threading
 import time
 
@@ -235,16 +236,58 @@ def _named_num(building, *contains):
     return None
 
 
-def _space_count(building):
-    """(reporting space sensors, below-setpoint count)."""
-    spaces = [s for s in building.get("sensors") or []
-              if s.get("type") == "space-t" and s.get("name")]
+DEAD_SPACE_F = 40.0        # a wireless space sensor below this is dead/offline
+
+
+def _view_spaces(building, view=""):
+    """The space-t apartment sensors, scoped to a sub-building when `view` is set
+    (names starting with that prefix, e.g. '354')."""
+    return [s for s in building.get("sensors") or []
+            if s.get("type") == "space-t" and s.get("name")
+            and (not view or (s.get("name") or "").startswith(view))]
+
+
+# A sensor/alarm name like 'PDT BLDG A SUPPLY', 'Tower B pump', 'Ret to Roof A'
+# is tagged to one tower/building; a name with no such marker is plant-wide.
+_TOWER_RE = re.compile(r"(?:tower|bldg|roof|-)\s+([a-z])\b")
+
+
+def _name_tower(name):
+    """The tower/building letter a name is tagged with (lowercase), or None when
+    it carries no tower marker (a shared / plant-wide point)."""
+    m = _TOWER_RE.search((name or "").lower())
+    return m.group(1) if m else None
+
+
+def _in_view(name, plant_tag):
+    """Does this named point/alarm belong to this view's tower? True for shared
+    (un-tagged) names and for names tagged with THIS tower; False for a sibling
+    tower. With no plant_tag (a whole-feed asset) everything belongs."""
+    if not plant_tag:
+        return True
+    t = _name_tower(name)
+    return t is None or t == plant_tag.lower()
+
+
+def _scope_alarms(alarms, plant_tag):
+    """Open alarms minus any tagged to a sibling tower (plant-wide ones stay)."""
+    if not plant_tag:
+        return alarms
+    return [a for a in alarms if _in_view(_alarm_text(a), plant_tag)]
+
+
+def _space_count(building, view=""):
+    """(reporting space sensors, below-setpoint count), scoped to `view`."""
+    spaces = _view_spaces(building, view)
     below = sum(1 for s in spaces if ((s.get("stats") or {}).get("belowSetpoint")))
     return len(spaces), below
 
 
-def _points(building):
-    """One Bloom building object -> the normalised point dict the card/tests use."""
+def _points(building, view="", plant_tag=None):
+    """One Bloom building object -> the normalised point dict the card/tests use.
+    `view`/`plant_tag` scope a shared feed to one sub-building (a two-tower plant
+    on a single feed): apartments are filtered by name prefix, space aggregates
+    recomputed from them, and supply/return taken from that tower's PDT loop."""
     pv, pumps = _sensor_index(building)
     pump_list = []
     for key in sorted(pumps):
@@ -257,7 +300,7 @@ def _points(building):
             "run_min": int(rt // 60) if rt is not None else None,
         })
     heat_rt = sum((p["run_min"] or 0) for p in pump_list) if pump_list else None
-    n_spaces, n_below = _space_count(building)
+    n_spaces, n_below = _space_count(building, view)
     out = {"name": building.get("name"), "locid": building.get("locid"),
            "mode": MODE.get(_int(_num(pv.get("cur-mode")))),
            "cfh": _truthy(pv.get("cfh")),
@@ -270,16 +313,25 @@ def _points(building):
     # (oat-act); fall back to Bloom's weather-service outdoor (oat-web).
     if out["outside_f"] is None:
         out["outside_f"] = _num(pv.get("oat-web"))
+    # Scoped to a sub-building, the feed-level avg/min/max cover BOTH towers;
+    # recompute from this view's apartments (ignoring dead/offline sensors).
+    if view:
+        vals = [v for v in (_num(s.get("pv")) for s in _view_spaces(building, view))
+                if v is not None and v >= DEAD_SPACE_F]
+        if vals:
+            out["space_avg_f"] = round(sum(vals) / len(vals), 1)
+            out["space_min_f"], out["space_max_f"] = min(vals), max(vals)
     # Heat-pump / dual-temp plants carry no boiler supply/return (ht-supply-t,
     # ht-ret-t). Fall back to the Primary Dual Temp building-distribution loop
     # — confirmed against the Reliable Controls plant graphic — using the
-    # un-zoned 'PDT BLDG A SUPPLY/RETURN' heating temps (the zoned copies are
+    # un-zoned 'PDT BLDG <tag> SUPPLY/RETURN' heating temps (the zoned copies are
     # the cooling side; _named_num skips them). A boiler plant has no such
     # named points, so this stays None and nothing changes there.
+    tag = (plant_tag or "a").lower()
     if out["supply_f"] is None:
-        out["supply_f"] = _named_num(building, "bldg a", "supply")
+        out["supply_f"] = _named_num(building, f"bldg {tag}", "supply")
     if out["return_f"] is None:
-        out["return_f"] = _named_num(building, "bldg a", "return")
+        out["return_f"] = _named_num(building, f"bldg {tag}", "return")
     return out
 
 
@@ -351,12 +403,14 @@ POINT_LABELS = {
 _FLAG_SUFFIX = ("-alm", "-fail", "-fail-all", "-triggered")
 
 
-def detail(data: dict) -> dict:
+def detail(data: dict, view="", plant_tag=None) -> dict:
     """Everything pullable from Bloom for one building, from BloomStatus.data
-    ({asset:{...}, alarms:[...]}). Used by the per-building page. Derived."""
+    ({asset:{...}, alarms:[...]}). Used by the per-building page. Derived.
+    `view`/`plant_tag` scope a shared feed to one sub-building: apartments by
+    name prefix, and the plant list drops the other tower's tagged points."""
     data = data or {}
     building = data.get("asset") or {}
-    c = card(data)
+    c = card(data, view, plant_tag)
     pv, pumps = _sensor_index(building)
 
     # Per-apartment humidity (space-h), joined to the space-t grid by sensor name.
@@ -367,7 +421,7 @@ def detail(data: dict) -> dict:
         ({"name": s.get("name"), "pv": _num(s.get("pv")),
           "rh": rh_by_name.get(s.get("name")),
           "below": bool((s.get("stats") or {}).get("belowSetpoint"))}
-         for s in (building.get("sensors") or []) if s.get("type") == "space-t" and s.get("name")),
+         for s in _view_spaces(building, view)),
         key=lambda a: a["name"] or "")
     n_active = sum(1 for a in apartments if a["pv"] is not None)
 
@@ -376,11 +430,14 @@ def detail(data: dict) -> dict:
     # a `name`, so _sensor_index() drops them from the single-value map; surface
     # them raw here so a heat-pump plant's detail page is not mostly blank.
     # A point may appear un-zoned and again per zone (different readings), so keep
-    # each (name, zone) pair.
+    # each (name, zone) pair. When scoped to one tower, drop the sibling tower's
+    # tagged points (shared points, with no tower marker, stay on both).
     plant = []
     for s in (building.get("sensors") or []):
         nm, t = s.get("name"), s.get("type")
         if not nm or t in ("space-t", "space-h"):
+            continue
+        if not _in_view(nm, plant_tag):
             continue
         assoc = s.get("assoc") or {}
         plant.append({
@@ -412,7 +469,8 @@ def detail(data: dict) -> dict:
             readings.append({"type": t, "label": label, "value": v})
 
     alarms = [{"text": _alarm_text(a), "severity": a.get("severity"), "start": a.get("start"),
-               "type": a.get("type")} for a in (data.get("alarms") or []) if isinstance(a, dict)]
+               "type": a.get("type")}
+              for a in _scope_alarms(data.get("alarms") or [], plant_tag) if isinstance(a, dict)]
 
     return {"name": building.get("name"), "locid": building.get("locid"),
             "card": c, "apartments": apartments, "n_active": n_active,
@@ -433,13 +491,15 @@ def _boilers_firing(building) -> bool:
     return running or bool(pct and pct > 0)
 
 
-def card(data: dict) -> dict:
+def card(data: dict, view="", plant_tag=None) -> dict:
     """The wall card from one building's stored reading (BloomStatus.data =
-    {asset:{...building...}, alarms:[...open alarms...]}). Derived, never stored."""
+    {asset:{...building...}, alarms:[...open alarms...]}). Derived, never stored.
+    `view`/`plant_tag` scope a shared feed to one sub-building (see _points)."""
     data = data or {}
     building = data.get("asset") or {}
-    alarms = data.get("alarms") or []
-    p = _points(building)
+    # Scoped to one tower, a sibling tower's alarms aren't this building's.
+    alarms = _scope_alarms(data.get("alarms") or [], plant_tag)
+    p = _points(building, view, plant_tag)
 
     pump_on = any(x["on"] for x in p["pumps"])
     loop = loop_hot(p["supply_f"], p["return_f"])

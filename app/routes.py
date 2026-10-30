@@ -1145,7 +1145,7 @@ def _bloom_live_rows(now_dt):
               .order_by(BloomAsset.name).all())
     for a in assets:
         st = a.status
-        card = bloom.card(st.data) if st and st.ok and st.data else None
+        card = bloom.card(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
         last_ok = st.last_ok_at if st else None
         url = url_for("admin.skyline_building", asset_id=a.id)
         if not card or not last_ok or now_dt - last_ok > stale:
@@ -1328,7 +1328,7 @@ def _bloom_rows(now, assets=None):
     rows = []
     for a in assets:
         st = a.status
-        c = bloom.card(st.data) if st and st.ok and st.data else None
+        c = bloom.card(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
         last_ok = st.last_ok_at if st else None
         if not last_ok or now - last_ok > stale:
             state = "dark"
@@ -1382,7 +1382,7 @@ def skyline_building(asset_id):
     from app import bloom
     a = BloomAsset.query.get_or_404(asset_id)
     st = a.status
-    d = bloom.detail(st.data) if st and st.ok and st.data else None
+    d = bloom.detail(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
     read_ago = (fleet_health.ago((datetime.utcnow() - st.last_ok_at).total_seconds())
                 if st and st.last_ok_at else None)
     ref = request.referrer or ""
