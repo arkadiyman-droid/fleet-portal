@@ -89,19 +89,19 @@
     {% if d.locid %}<a class="bd-ext" href="https://my.empoweredbuildings.com/property/{{ d.locid }}" target="_blank" rel="noopener">Open in Bloom ↗</a>{% endif %}
   </div>
 
-  <div class="bd-sections">
+  <div class="bd-sections" data-box="b{{ a.id }}" data-src="bloom">
     <section class="bd-card">
-      <h2>Readings</h2>
+      <h2>Readings <span class="card-sub" style="text-transform:none;font-weight:400">· click a value for its history</span></h2>
       <div class="bd-metrics">
-        <div><div class="k">Outside</div><div class="v cool">{{ tt(c.outside_f) }}</div></div>
-        <div><div class="k">Space avg</div><div class="v">{{ tt(c.space_avg_f) }}</div></div>
-        <div><div class="k">Setpoint</div><div class="v">{{ tt(c.setpoint_f) }}</div></div>
-        <div><div class="k">Supply</div><div class="v {{ 'hot' if c.supply_f and c.supply_f>=95 }}">{{ tt(c.supply_f) }}</div></div>
-        <div><div class="k">Return</div><div class="v">{{ tt(c.return_f) }}</div></div>
-        <div><div class="k">Htg setpt</div><div class="v">{{ tt(c.supply_sp_f) }}</div></div>
-        <div><div class="k">Boiler %</div><div class="v">{{ tt(c.boiler_pct, '%') }}</div></div>
-        <div><div class="k">DHW</div><div class="v {{ 'hot' if c.dhw_supply_f and c.dhw_supply_f>=140 }}">{{ tt(c.dhw_supply_f) }}</div></div>
-        <div><div class="k">Space min/max</div><div class="v" style="font-size:14px">{{ tt(c.space_min_f) }} / {{ tt(c.space_max_f) }}</div></div>
+        <div><div class="k">Outside</div><div class="v cool{{ ' lv-t' if c.outside_f is not none }}"{% if c.outside_f is not none %} data-k="out"{% endif %}>{{ tt(c.outside_f) }}</div></div>
+        <div><div class="k">Space avg</div><div class="v{{ ' lv-t' if c.space_avg_f is not none }}"{% if c.space_avg_f is not none %} data-k="inside"{% endif %}>{{ tt(c.space_avg_f) }}</div></div>
+        <div><div class="k">Setpoint</div><div class="v{{ ' lv-t' if c.setpoint_f is not none }}"{% if c.setpoint_f is not none %} data-k="dit"{% endif %}>{{ tt(c.setpoint_f) }}</div></div>
+        <div><div class="k">Supply</div><div class="v {{ 'hot' if c.supply_f and c.supply_f>=95 }}{{ ' lv-t' if c.supply_f is not none }}"{% if c.supply_f is not none %} data-k="supp"{% endif %}>{{ tt(c.supply_f) }}</div></div>
+        <div><div class="k">Return</div><div class="v{{ ' lv-t' if c.return_f is not none }}"{% if c.return_f is not none %} data-k="retn"{% endif %}>{{ tt(c.return_f) }}</div></div>
+        <div><div class="k">Htg setpt</div><div class="v{{ ' lv-t' if c.supply_sp_f is not none }}"{% if c.supply_sp_f is not none %} data-k="target"{% endif %}>{{ tt(c.supply_sp_f) }}</div></div>
+        <div><div class="k">Boiler %</div><div class="v{{ ' lv-t' if c.boiler_pct is not none }}"{% if c.boiler_pct is not none %} data-k="boiler"{% endif %}>{{ tt(c.boiler_pct, '%') }}</div></div>
+        <div><div class="k">DHW</div><div class="v {{ 'hot' if c.dhw_supply_f and c.dhw_supply_f>=140 }}{{ ' lv-t' if c.dhw_supply_f is not none }}"{% if c.dhw_supply_f is not none %} data-k="mix"{% endif %}>{{ tt(c.dhw_supply_f) }}</div></div>
+        <div><div class="k">Space min/max</div><div class="v{{ ' lv-t' if (c.space_min_f is not none or c.space_max_f is not none) }}"{% if c.space_min_f is not none or c.space_max_f is not none %} data-k="smin,smax"{% endif %} style="font-size:14px">{{ tt(c.space_min_f) }} / {{ tt(c.space_max_f) }}</div></div>
       </div>
     </section>
 
@@ -138,9 +138,9 @@
 
     {% if d.apartments %}
     <section class="bd-card bd-wide">
-      <h2>Apartment / space temps ({{ d.n_active }} of {{ d.apartments|length }} reporting)</h2>
+      <h2>Apartment / space temps ({{ d.n_active }} of {{ d.apartments|length }} reporting) <span class="card-sub" style="text-transform:none;font-weight:400">· click a temperature for its history</span></h2>
       <div class="bd-apts">
-        {% for ap in d.apartments %}<div class="bd-apt {{ 'below' if ap.below }}"><div class="n">{{ ap.name }}</div><div class="t">{{ tt(ap.pv) }}</div>{% if ap.rh is not none %}<div class="n" style="margin-top:2px">{{ "%.0f"|format(ap.rh) }}% RH</div>{% endif %}</div>{% endfor %}
+        {% for ap in d.apartments %}<div class="bd-apt {{ 'below' if ap.below }}"><div class="n">{{ ap.name }}</div><div class="t{{ ' lv-t' if ap.pv is not none }}"{% if ap.pv is not none %} data-k="apt:{{ ap.name }}"{% endif %}>{{ tt(ap.pv) }}</div>{% if ap.rh is not none %}<div class="n" style="margin-top:2px">{{ "%.0f"|format(ap.rh) }}% RH</div>{% endif %}</div>{% endfor %}
       </div>
     </section>
     {% endif %}
@@ -167,4 +167,6 @@
     </section>
   </div>
 {% endif %}
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sensorchart.js') }}"></script>
 {% endblock %}
