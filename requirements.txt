@@ -8,3 +8,4 @@ cryptography>=42.0.0
 requests>=2.31.0
 stripe>=7.0.0,<8.0.0
 segno>=1.6.0
+playwright>=1.44.0   # headless scrape of the Reliable Controls MACH-ProWeb DHW UI (app/rc_dhw.py); drives the system chromium, no browser download

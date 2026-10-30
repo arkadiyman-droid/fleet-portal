@@ -56,6 +56,28 @@
   <h1>{{ a.name }} <span class="bd-src">Skyline · Bloom</span></h1>
 </div>
 
+{% if dhw %}
+{% set g = dhw.data or {} %}
+<section class="bd-card bd-wide" style="margin-bottom:14px">
+  <h2>DHW System {{ a.plant_tag or '' }} — Reliable Controls{% if dhw.alarm %} <span class="bd-pill crit" style="margin-left:8px">ALARM</span>{% endif %}</h2>
+  <div class="bd-metrics" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+    <div><div class="k">Supply to bldg</div><div class="v {{ 'hot' if dhw.supply_f and dhw.supply_f>=120 }}">{{ tt(dhw.supply_f) }}</div></div>
+    <div><div class="k">Return from bldg</div><div class="v">{{ tt(dhw.return_f) }}</div></div>
+    <div><div class="k">&Delta;T</div><div class="v">{% if dhw.supply_f is not none and dhw.return_f is not none %}{{ "%.1f"|format(dhw.supply_f - dhw.return_f) }}°{% else %}—{% endif %}</div></div>
+    <div><div class="k">Pump</div><div class="v" style="font-size:14px">{% if dhw.pump_running is none %}—{% elif dhw.pump_running %}<b style="color:var(--bd-heat)">RUNNING</b>{% else %}off{% endif %}</div></div>
+  </div>
+  <div class="bd-kv">
+    {% if g.get('gel_220') %}<div class="k">Flow</div><div class="v">{{ g.get('gel_220') }}</div>{% endif %}
+    {% if g.get('gel_204') %}<div class="k">Mixing-valve temp</div><div class="v">{{ g.get('gel_204') }}</div>{% endif %}
+    {% if g.get('gel_216') %}<div class="k">HX leaving (1/2/3)</div><div class="v">{{ g.get('gel_216') }} / {{ g.get('gel_212') }} / {{ g.get('gel_200') }}</div>{% endif %}
+    {% if g.get('gel_192') %}<div class="k">HX entering (1/2/3)</div><div class="v">{{ g.get('gel_192') }} / {{ g.get('gel_188') }} / {{ g.get('gel_196') }}</div>{% endif %}
+    <div class="k">DHW pump alarms</div><div class="v">{% if dhw.alarm %}<b style="color:var(--bd-crit)">alarm</b>{% else %}OK{% endif %}</div>
+    {% if dhw_ago %}<div class="k">Read</div><div class="v">{{ dhw_ago }}</div>{% endif %}
+  </div>
+  <div class="card-sub" style="margin-top:8px">Scraped from the Reliable Controls MACH-ProWeb controller (not in Bloom).</div>
+</section>
+{% endif %}
+
 {% if not d %}
   <div class="banner warn">Not reading right now{% if st and st.error %} — {{ st.error }}{% endif %}. Last good read {{ read_ago or 'never' }}.</div>
 {% else %}

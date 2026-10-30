@@ -75,6 +75,9 @@ def create_app():
     from app.bloom import bloom_poller
     bloom_poller.start(app)
 
+    from app.rc_dhw import rc_dhw_poller
+    rc_dhw_poller.start(app)
+
     @app.cli.command("hash-password")
     def hash_password():
         """Prompt for a password and print its werkzeug hash, for pasting into .env as ADMIN_PASSWORD_HASH."""
@@ -141,5 +144,65 @@ def create_app():
         from app.bloom import bloom_poller
         bloom_poller._run_cycle(app)
         click.echo("Bloom poll cycle done (see log for per-account detail).")
+
+    @app.cli.command("rc-dhw-add")
+    @click.argument("label")
+    @click.argument("base_url")
+    def rc_dhw_add(label, base_url):
+        """Create (or update) a Reliable Controls MACH-ProWeb controller and
+        verify the login with a headless Chromium. Prompts for the controller
+        username/password; they are encrypted at rest. See app/rc_dhw.py.
+        Example: flask rc-dhw-add whitney-young http://162.184.200.208:47002"""
+        from app.extensions import db
+        from app.models import RcController
+        from app import rc_dhw
+        username = input("Controller username: ").strip()
+        password = getpass.getpass("Controller password: ")
+        ctrl = RcController.query.filter_by(label=label).first() or RcController(label=label)
+        ctrl.base_url, ctrl.username, ctrl.password, ctrl.is_active = base_url.rstrip("/"), username, password, True
+        db.session.add(ctrl)
+        db.session.commit()
+        # Verify by scraping whatever towers already exist (or just logging in).
+        from app.models import RcDhwTower
+        towers = RcDhwTower.query.filter_by(controller_id=ctrl.id, is_active=True).all()
+        try:
+            if towers:
+                res = rc_dhw.scrape(app, ctrl, towers)
+                okc = sum(1 for r in res.values() if r.get("ok"))
+                click.echo(f"OK — controller id {ctrl.id}; scraped {okc}/{len(towers)} towers.")
+            else:
+                # No towers yet: just prove the login works via a throwaway scrape of none.
+                rc_dhw.scrape(app, ctrl, [])
+                click.echo(f"OK — logged in (controller id {ctrl.id}). No towers configured yet; "
+                           f"run deploy/setup-rc-dhw.py to create them.")
+        except Exception as e:
+            click.echo(f"Saved controller id {ctrl.id}, but login/scrape FAILED: {e}")
+
+    @app.cli.command("rc-dhw-poll-once")
+    def rc_dhw_poll_once():
+        """Run one RC DHW poll cycle now and report, for testing. See app/rc_dhw.py."""
+        from app.rc_dhw import rc_dhw_poller
+        rc_dhw_poller._run_cycle(app)
+        click.echo("RC DHW poll cycle done (see log for per-controller detail).")
+
+    @app.cli.command("rc-dhw-dump")
+    @click.argument("label")
+    def rc_dhw_dump(label):
+        """Scrape once and print the full gel map + parsed fields per tower, for
+        mapping new points. See app/rc_dhw.py."""
+        import json
+        from app.models import RcController, RcDhwTower
+        from app import rc_dhw
+        ctrl = RcController.query.filter_by(label=label).first()
+        if not ctrl:
+            click.echo(f"No RC controller labelled {label!r}.")
+            return
+        towers = RcDhwTower.query.filter_by(controller_id=ctrl.id, is_active=True).all()
+        res = rc_dhw.scrape(app, ctrl, towers)
+        for t in towers:
+            r = res.get(t.id, {})
+            click.echo(f"\n== tower {t.tower} (device {t.device}, {t.group}) ok={r.get('ok')} ==")
+            click.echo(f"parsed: {r.get('parsed')}")
+            click.echo(json.dumps(r.get('gels', {}), indent=2))
 
     return app

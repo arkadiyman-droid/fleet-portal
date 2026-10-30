@@ -76,6 +76,17 @@ class Config:
         self.BLOOM_POLL_INTERVAL_SECONDS = int(os.environ.get("BLOOM_POLL_INTERVAL_SECONDS", "60"))
         self.BLOOM_POLL_TIMEOUT_SECONDS = int(os.environ.get("BLOOM_POLL_TIMEOUT_SECONDS", "20"))
 
+        # Reliable Controls MACH-ProWeb DHW scrape (app/rc_dhw.py) — a headless
+        # Chromium reads the DHW System A/B graphics. Credentials live per
+        # controller in the DB (RcController), encrypted with
+        # FLEET_TOKEN_ENCRYPTION_KEY above — no secret env here. Slow source, so
+        # it polls every 5 min; one Chromium is launched per cycle.
+        self.RC_DHW_POLLER_ENABLED = os.environ.get("RC_DHW_POLLER_ENABLED", "1") not in ("0", "false", "False")
+        self.RC_DHW_POLL_INTERVAL_SECONDS = int(os.environ.get("RC_DHW_POLL_INTERVAL_SECONDS", "300"))
+        self.RC_DHW_PAGE_TIMEOUT_SECONDS = int(os.environ.get("RC_DHW_PAGE_TIMEOUT_SECONDS", "45"))
+        self.RC_DHW_SETTLE_MS = int(os.environ.get("RC_DHW_SETTLE_MS", "1500"))
+        self.RC_DHW_CHROMIUM_PATH = os.environ.get("RC_DHW_CHROMIUM_PATH", "/usr/bin/chromium")
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

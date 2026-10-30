@@ -800,3 +800,85 @@ class BloomStatus(db.Model):
 
     def __repr__(self):
         return f"<BloomStatus asset_id={self.asset_id} ok={self.ok}>"
+
+
+class RcController(db.Model):
+    """One Reliable Controls MACH-ProWeb controller we read, view-only, by
+    driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are
+    only available through RC's proprietary bulk protocol, decoded client-side by
+    the controller's own JavaScript — so we run that JavaScript in a headless
+    Chromium and read the rendered values, rather than replicating the protocol.
+    The username/password are a real credential, encrypted at rest. Nothing here
+    ever writes to the controller (we never click an editable point)."""
+    __tablename__ = "rc_controllers"
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(60), nullable=False, unique=True)
+    base_url = db.Column(db.String(200), nullable=False)             # e.g. http://162.184.200.208:47002
+    username = db.Column(EncryptedString, nullable=False)
+    password = db.Column(EncryptedString, nullable=False)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    towers = db.relationship(
+        "RcDhwTower", back_populates="controller", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    def __repr__(self):
+        return f"<RcController {self.id} {self.label!r}>"
+
+
+class RcDhwTower(db.Model):
+    """One DHW plant 'view' on a controller — a single MACH-ProWeb graphic page
+    whose rendered points we scrape. Whitney Young has two: Tower A (358, device
+    200000, group 200000GRP2) and Tower B (354, device 100000, group 100000GRP2);
+    both share the same graphic template, so the same gel-id map (app/rc_dhw.py)
+    reads either. `group` is the page's RC group id; the URL hash is base64(group).
+    building_id ties the reading into Client -> Property -> Building (nullable, like
+    a LegacyBox/BloomAsset, so a tower can exist before it is placed)."""
+    __tablename__ = "rc_dhw_towers"
+    __table_args__ = (db.UniqueConstraint("controller_id", "group", name="uq_rc_dhw_tower_group"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    controller_id = db.Column(db.Integer, db.ForeignKey("rc_controllers.id", ondelete="CASCADE"), nullable=False)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
+    tower = db.Column(db.String(8), nullable=False)                  # "A" / "B" (display)
+    device = db.Column(db.String(16), nullable=False)                # RC device instance, e.g. "200000"
+    group = db.Column(db.String(32), nullable=False)                 # RC group id, e.g. "200000GRP2"
+    label = db.Column(db.String(120))                                # e.g. "DHW System Tower A 358"
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    controller = db.relationship("RcController", back_populates="towers")
+    building = db.relationship("Building")
+    status = db.relationship(
+        "RcDhwStatus", uselist=False, back_populates="tower", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return f"<RcDhwTower {self.id} {self.tower!r} dev={self.device}>"
+
+
+class RcDhwStatus(db.Model):
+    """The latest DHW reading for one tower (overwritten each poll). The full
+    gel-id -> value map is kept as raw JSON (`data`) so a graphic change never
+    needs a migration; the handful of promoted numbers (supply/return/pump/alarm)
+    are derived at scrape time from the confirmed gel map. Mirrors BloomStatus."""
+    __tablename__ = "rc_dhw_statuses"
+
+    tower_id = db.Column(db.Integer, db.ForeignKey("rc_dhw_towers.id", ondelete="CASCADE"), primary_key=True)
+    polled_at = db.Column(db.DateTime, nullable=False)
+    ok = db.Column(db.Boolean, nullable=False, default=False)
+    error = db.Column(db.String(300))
+    response_ms = db.Column(db.Integer)
+    last_ok_at = db.Column(db.DateTime)
+    supply_f = db.Column(db.Float)                                   # DHW Supply To Building
+    return_f = db.Column(db.Float)                                   # DHW Return From Building
+    pump_running = db.Column(db.Boolean)
+    alarm = db.Column(db.Boolean)                                    # any DHW HWP alarm not "Normal"
+    data = db.Column(JSONB)                                          # {gel_id: "value text", ...}
+
+    tower = db.relationship("RcDhwTower", back_populates="status")
+
+    def __repr__(self):
+        return f"<RcDhwStatus tower_id={self.tower_id} ok={self.ok}>"

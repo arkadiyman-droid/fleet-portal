@@ -1385,10 +1385,22 @@ def skyline_building(asset_id):
     d = bloom.detail(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
     read_ago = (fleet_health.ago((datetime.utcnow() - st.last_ok_at).total_seconds())
                 if st and st.last_ok_at else None)
+    # DHW System A/B, scraped from the Reliable Controls MACH-ProWeb BAS
+    # (app/rc_dhw.py) — not in Bloom. Attached by the building this asset is on.
+    dhw = dhw_ago = None
+    if a.building_id:
+        from app.models import RcDhwTower
+        tw = (RcDhwTower.query
+              .filter_by(building_id=a.building_id, is_active=True).first())
+        if tw and tw.status and tw.status.ok:
+            dhw = tw.status
+            dhw_ago = (fleet_health.ago((datetime.utcnow() - dhw.last_ok_at).total_seconds())
+                       if dhw.last_ok_at else None)
     ref = request.referrer or ""
     back = ref if (ref and urlparse(ref).netloc == request.host
                    and "/skyline/" not in urlparse(ref).path) else url_for("admin.live_page")
-    return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back, read_ago=read_ago)
+    return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back,
+                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago)
 
 
 @admin_bp.route("/portfolio")
