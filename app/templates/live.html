@@ -81,7 +81,7 @@
 {% macro t(v) %}{{ '—' if v is none else v }}{% endmacro %}
 {% macro tc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} class="t-{{ x[0] }}" title="{{ x[1] }}"{% endif %}{% endmacro %}
 {% macro vc(c, k) %}{% set x = (c.tint or {}).get(k) %}{% if x %} t-{{ x[0] }}" title="{{ x[1] }}{% endif %}{% endmacro %}
-{% macro flame(r) %}{% if r.state == 'live' %}<svg class="lv-fire {{ 'on' if r.firing else 'off' }}" viewBox="0 0 16 16" fill="currentColor" role="img"><title>{{ ('Burner fired since the last read: ' ~ r.firing) if r.firing else 'Burner not firing (no run time since the last read)' }}</title><path d="M8 0c.4 2.6-1.1 4-2.4 5.4C4.3 6.9 3 8.4 3 10.6 3 13.6 5.2 16 8 16s5-2.4 5-5.4c0-2.2-1-3.9-2.2-5.2.1 1.4-.4 2.6-1.4 3.2.2-3.4-.9-6.4-1.4-8.6z"/></svg>{% endif %}{% endmacro %}
+{% macro flame(r) %}{% if r.state == 'live' and r.source != 'echotherm' %}<svg class="lv-fire {{ 'on' if r.firing else 'off' }}" viewBox="0 0 16 16" fill="currentColor" role="img"><title>{{ ('Burner fired since the last read: ' ~ r.firing) if r.firing else 'Burner not firing (no run time since the last read)' }}</title><path d="M8 0c.4 2.6-1.1 4-2.4 5.4C4.3 6.9 3 8.4 3 10.6 3 13.6 5.2 16 8 16s5-2.4 5-5.4c0-2.2-1-3.9-2.2-5.2.1 1.4-.4 2.6-1.4 3.2.2-3.4-.9-6.4-1.4-8.6z"/></svg>{% endif %}{% endmacro %}
 
 {% block content %}
   <div class="page-head"><h1>Live <span class="card-sub">· installed gateways, read every {{ poll_min }} min</span></h1>
@@ -91,15 +91,20 @@
   {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.when }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
 
   <div class="lv-bar">
-    {% for key, label in [('all', 'All ' ~ summary.total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
-      <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
+    {% for key, label in [('all', 'All sources ' ~ summary.total), ('2010', '2010 boxes ' ~ summary.s2010), ('bloom', 'Bloom ' ~ summary.bloom), ('echotherm', 'EchoTherm ' ~ summary.echo)] %}
+      <a class="f {{ 'on' if source == key }}" href="{{ url_for('admin.live_page', show=show, source=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
+    {% endfor %}
+  </div>
+  <div class="lv-bar">
+    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
+      <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="card-sub" style="margin-left:8px">Sort:</span>
     {% for key, label in [('problems', 'Problems first'), ('name', 'Name'), ('hi_stack', 'Hi stack'), ('aqua', 'Aquastat'), ('coil', 'Coil')] %}
-      <a class="f {{ 'on' if sort == key }}" href="{{ url_for('admin.live_page', show=show, sort=key, view=view, q=q) }}">{{ label }}</a>
+      <a class="f {{ 'on' if sort == key }}" href="{{ url_for('admin.live_page', show=show, source=source, sort=key, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
-    <a class="f" style="margin-left:auto" href="{{ url_for('admin.live_page', show=show, sort=sort, view=('cards' if view == 'table' else 'table'), q=q) }}">{{ 'Cards' if view == 'table' else 'Table' }}</a>
-    <form method="get" action="{{ url_for('admin.live_page') }}"><input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="view" value="{{ view }}">
+    <a class="f" style="margin-left:auto" href="{{ url_for('admin.live_page', show=show, source=source, sort=sort, view=('cards' if view == 'table' else 'table'), q=q) }}">{{ 'Cards' if view == 'table' else 'Table' }}</a>
+    <form method="get" action="{{ url_for('admin.live_page') }}"><input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="source" value="{{ source }}"><input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="view" value="{{ view }}">
       <input name="q" value="{{ q }}" placeholder="Search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px"></form>
   </div>
 
@@ -117,7 +122,7 @@
     <span class="card-sub">With the ticked boxes:</span>
     {% if show == 'hidden' %}<button class="btn plain" name="action" value="show" type="submit">Show again</button>
     {% else %}<button class="btn plain" name="action" value="hide" type="submit">Hide</button>{% endif %}
-    <button class="btn danger" name="action" value="delete" type="submit" onclick="return confirm('Delete the selected boxes from the portal? They stop being read, disappear from Live, and a re-import will not bring them back.')">Delete</button>
+    <button class="btn danger" name="action" value="delete" type="submit" onclick="return lvConfirmBulkDelete(this.form)">Delete</button>
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
     <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
@@ -125,8 +130,8 @@
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
-        <td class="pin1"><input type="checkbox" name="box_id" value="{{ r.box.id }}"></td>
-        <td class="pin2"><a href="{{ url_for('admin.live_box', box_id=r.box.id) }}">{{ r.box.name }}</a>{% if c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
+        <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
+        <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
@@ -153,8 +158,8 @@
         {% set np = r.issues.problems|length %}
         {% if r.state == 'live' %}<button type="button" class="lv-badge lv-iss-open {{ 'alarm' if np }}" data-issues="{{ r.issues|tojson|forceescape }}" title="{{ ('%d problem%s: click to see' % (np, 's' if np != 1 else '')) if np else 'No problems: click for details' }}">{{ np if np else 'Ok' }}</button>
         {% else %}<button type="button" class="lv-badge lv-iss-open {{ r.state }}" data-issues="{{ r.issues|tojson|forceescape }}" title="Click to see why">{{ {'dark':'Dark','login':'Login','other':'?'}[r.state] }}</button>{% endif %}
-        <a href="{{ url_for('admin.live_box', box_id=r.box.id) }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
-        {% if c.fuel or c.system %}<span class="card-sub" style="font-size:11px" title="{{ c.system_label or 'Heating system not reported' }} · {{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ {'steam': 'Steam', 'hot water': 'HW'}.get(c.system, '') }}{% if c.system and c.fuel %}·{% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
+        <a href="{{ r.detail_url }}" title="{{ r.box.name }}">{{ r.box.name }}</a>
+        {% if r.source != '2010' %}<span class="card-sub" style="font-size:11px">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %}<span class="card-sub" style="font-size:11px" title="{{ c.system_label or 'Heating system not reported' }} · {{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ {'steam': 'Steam', 'hot water': 'HW'}.get(c.system, '') }}{% if c.system and c.fuel %}·{% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
         {{ flame(r) }}
       </div>
       {% if r.state == 'live' or r.c %}
@@ -185,11 +190,11 @@
         <form method="post" action="{{ url_for('admin.live_action') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="box_id" value="{{ r.box.id }}"><input type="hidden" name="next" value="{{ request.full_path }}">
           <button class="btn plain" name="action" value="show" type="submit" style="padding:2px 8px;font-size:12px">Show again</button>
-          <button class="btn danger" name="action" value="delete" type="submit" style="padding:2px 8px;font-size:12px" onclick='return confirm({{ ("Delete " ~ r.box.name ~ " from the portal for good?")|tojson }})'>Delete</button></form></div>
+          <button class="btn danger" name="action" value="delete" type="submit" style="padding:2px 8px;font-size:12px" onclick="return lvConfirmDelete({{ r.box.name|tojson }})">Delete</button></form></div>
       {% elif r.state != 'live' %}<div class="lv-foot alarm" style="display:flex;gap:6px;align-items:center"><span style="flex:1">{{ r.why }}</span>
-        <form method="post" action="{{ url_for('admin.live_action') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if r.source == '2010' %}<form method="post" action="{{ url_for('admin.live_action') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input type="hidden" name="box_id" value="{{ r.box.id }}"><input type="hidden" name="next" value="{{ request.full_path }}">
-          <button class="btn plain" name="action" value="hide" type="submit" style="padding:2px 8px;font-size:12px" title="Stop reading it and move it to Hidden">Hide</button></form></div>
+          <button class="btn plain" name="action" value="hide" type="submit" style="padding:2px 8px;font-size:12px" title="Stop reading it and move it to Hidden">Hide</button></form>{% endif %}</div>
       {% elif r.recent_alarm %}<div class="lv-foot {{ 'alarm' if r.recent_alarm.level != 'info' }}">{{ r.recent_alarm.when }}: {{ r.recent_alarm.words }}{% if r.recent_alarm.active and r.recent_alarm.level != 'info' %} (active){% endif %}</div>
       {% else %}<div class="lv-foot">read {{ r.age }}</div>{% endif %}
     </div>
@@ -202,6 +207,16 @@
 <script>
 (function () {
   "use strict";
+  // Deleting a box is permanent and a re-import won't bring it back, so make it
+  // deliberate: the operator must type DELETE, not just click through a confirm.
+  window.lvConfirmDelete = function (label) {
+    return prompt('Deleting "' + label + '" is permanent and a re-import will NOT bring it back.\n\nType DELETE to confirm:') === "DELETE";
+  };
+  window.lvConfirmBulkDelete = function (form) {
+    const n = form.querySelectorAll("input[name=box_id]:checked").length;
+    if (!n) { alert("Tick the boxes you want to delete first."); return false; }
+    return prompt("Deleting " + n + " box" + (n === 1 ? "" : "es") + " is permanent and a re-import will NOT bring them back.\n\nType DELETE to confirm:") === "DELETE";
+  };
   // A table column or a card label names the sensor; sensorchart.js opens the chart.
   const KEYS = {"Out": "out", "Avg": "inside", "Inside": "inside", "DIT": "dit", "Supp": "supp", "Retn": "retn",
                 "Risr": "risr", "Target": "dsup,supp", "Stack": "stack", "Hi stk": "hi_stack", "Hi stack": "hi_stack", "Aqua": "aqua",

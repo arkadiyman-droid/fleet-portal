@@ -139,6 +139,7 @@
   <header>
     <div class="brand">EchoTherm Fleet Portal</div>
     <nav>
+      {% if g.is_superuser %}<a href="{{ url_for('admin.portfolio_page') }}">Portfolio</a>{% endif %}
       <a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
       <a href="{{ url_for('admin.adopt') }}">Adopt</a>
       {% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %}

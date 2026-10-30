@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }} — Skyline{% endblock %}
+{% block head %}
+<style>
+  :root{
+    --bd-heat:#2563eb;--bd-heatbg:#e8f0fe;--bd-crit:#dc2626;--bd-critbg:#fdecec;
+    --bd-warn:#d97706;--bd-warnbg:#fdf3e3;--bd-ok:#16a34a;--bd-okbg:#e8f6ec;--bd-dark:#6b7280;--bd-darkbg:#eef0f3;
+    --bd-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bd-heat:#6ea8fe;--bd-heatbg:#15233c;--bd-crit:#f98a8a;--bd-critbg:#3a1b1b;--bd-warn:#eab368;--bd-warnbg:#3a2b12;
+    --bd-ok:#6ee7a0;--bd-okbg:#12331f;--bd-dark:#9aa4b2;--bd-darkbg:#20262e;
+  }}
+  :root[data-theme="dark"]{
+    --bd-heat:#6ea8fe;--bd-heatbg:#15233c;--bd-crit:#f98a8a;--bd-critbg:#3a1b1b;--bd-warn:#eab368;--bd-warnbg:#3a2b12;
+    --bd-ok:#6ee7a0;--bd-okbg:#12331f;--bd-dark:#9aa4b2;--bd-darkbg:#20262e;
+  }
+  .bd-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 6px}
+  .bd-back{text-decoration:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;color:inherit;font-size:13px;background:var(--panel)}
+  .bd-back:hover{background:var(--bd-okbg);background:color-mix(in srgb,var(--panel) 85%,var(--muted))}
+  .bd-top h1{margin:0;font-size:20px}
+  .bd-src{font-size:12px;color:var(--muted);font-weight:400;border:1px solid var(--border);border-radius:10px;padding:1px 8px;vertical-align:middle}
+  .bd-statusrow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:8px 0 16px}
+  .bd-pill{font-size:12px;font-weight:700;border-radius:16px;padding:4px 14px;text-transform:uppercase;letter-spacing:.02em}
+  .bd-pill.heat{color:var(--bd-heat);background:var(--bd-heatbg)} .bd-pill.crit{color:var(--bd-crit);background:var(--bd-critbg)}
+  .bd-pill.warn{color:var(--bd-warn);background:var(--bd-warnbg)} .bd-pill.ok{color:var(--bd-ok);background:var(--bd-okbg)}
+  .bd-pill.dark,.bd-pill.idle{color:var(--bd-dark);background:var(--bd-darkbg)}
+  .bd-ext{margin-left:auto;font-size:12.5px}
+  .bd-sections{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;align-items:start}
+  .bd-card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .bd-card h2{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 12px}
+  .bd-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .bd-metrics .k{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.03em}
+  .bd-metrics .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;font-family:var(--bd-mono)}
+  .bd-metrics .v.cool{color:var(--bd-heat)} .bd-metrics .v.hot{color:var(--bd-crit)}
+  .bd-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px}
+  .bd-kv .k{color:var(--muted)} .bd-kv .v{font-variant-numeric:tabular-nums;text-align:right}
+  .bd-alist{list-style:none;margin:0;padding:0} .bd-alist li{padding:8px 10px;border-radius:8px;background:var(--bd-critbg);color:var(--bd-crit);margin-bottom:6px;font-size:13px}
+  .bd-alist li .sub{display:block;font-weight:400;opacity:.8;font-size:11px;margin-top:2px}
+  .bd-apts{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px}
+  .bd-apt{border:1px solid var(--border);border-radius:8px;padding:6px 8px;text-align:center}
+  .bd-apt.below{border-color:var(--bd-crit);background:var(--bd-critbg)}
+  .bd-apt .n{font-size:10px;color:var(--muted)} .bd-apt .t{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+  .bd-points{width:100%;border-collapse:collapse;font-size:12.5px}
+  .bd-points td{padding:4px 6px;border-bottom:1px solid var(--border)} .bd-points td:last-child{text-align:right;font-family:var(--bd-mono)}
+  .bd-points td .code{color:var(--muted);font-size:10px}
+  .bd-flags{display:flex;flex-wrap:wrap;gap:6px} .bd-flags span{font-size:11px;font-weight:600;color:var(--bd-warn);background:var(--bd-warnbg);border-radius:8px;padding:2px 8px}
+  details summary{cursor:pointer;color:var(--muted);font-size:12.5px}
+  .bd-wide{grid-column:1/-1}
+</style>
+{% endblock %}
+{% block content %}
+{% macro tt(v, suffix='°') %}{% if v is not none %}{{ "%.0f"|format(v) }}{{ suffix }}{% else %}—{% endif %}{% endmacro %}
+<div class="bd-top">
+  <a class="bd-back" href="{{ back }}">← Back</a>
+  <h1>{{ a.name }} <span class="bd-src">Skyline · Bloom</span></h1>
+</div>
+
+{% if not d %}
+  <div class="banner warn">Not reading right now{% if st and st.error %} — {{ st.error }}{% endif %}. Last good read {{ read_ago or 'never' }}.</div>
+{% else %}
+  {% set c = d.card %}
+  <div class="bd-statusrow">
+    <span class="bd-pill {{ c.tone }}">{{ c.status }}</span>
+    {% if c.cfh %}<span class="card-sub">calling for heat</span>{% endif %}
+    {% if read_ago %}<span class="card-sub">read {{ read_ago }}</span>{% endif %}
+    {% if d.locid %}<a class="bd-ext" href="https://my.empoweredbuildings.com/property/{{ d.locid }}" target="_blank" rel="noopener">Open in Bloom ↗</a>{% endif %}
+  </div>
+
+  <div class="bd-sections">
+    <section class="bd-card">
+      <h2>Readings</h2>
+      <div class="bd-metrics">
+        <div><div class="k">Outside</div><div class="v cool">{{ tt(c.outside_f) }}</div></div>
+        <div><div class="k">Space avg</div><div class="v">{{ tt(c.space_avg_f) }}</div></div>
+        <div><div class="k">Setpoint</div><div class="v">{{ tt(c.setpoint_f) }}</div></div>
+        <div><div class="k">Supply</div><div class="v {{ 'hot' if c.supply_f and c.supply_f>=95 }}">{{ tt(c.supply_f) }}</div></div>
+        <div><div class="k">Return</div><div class="v">{{ tt(c.return_f) }}</div></div>
+        <div><div class="k">Htg setpt</div><div class="v">{{ tt(c.supply_sp_f) }}</div></div>
+        <div><div class="k">Boiler %</div><div class="v">{{ tt(c.boiler_pct, '%') }}</div></div>
+        <div><div class="k">DHW</div><div class="v {{ 'hot' if c.dhw_supply_f and c.dhw_supply_f>=140 }}">{{ tt(c.dhw_supply_f) }}</div></div>
+        <div><div class="k">Space min/max</div><div class="v" style="font-size:14px">{{ tt(c.space_min_f) }} / {{ tt(c.space_max_f) }}</div></div>
+      </div>
+    </section>
+
+    <section class="bd-card">
+      <h2>Heating pumps</h2>
+      {% if c.pumps %}<div class="bd-kv">
+        {% for p in c.pumps %}
+          <div class="k">{{ p.key|replace('-', ' ')|title }}</div>
+          <div class="v">{% if p.on %}<b style="color:var(--bd-heat)">RUNNING</b>{% elif p.commanded %}<b style="color:var(--bd-crit)">commanded, not running</b>{% else %}off{% endif %}{% if p.run_min is not none %} · {{ (p.run_min//60) }}:{{ "%02d"|format(p.run_min%60) }} today{% endif %}</div>
+        {% endfor %}
+      </div>{% else %}<div class="card-sub">No pump data.</div>{% endif %}
+    </section>
+
+    <section class="bd-card">
+      <h2>Schedule</h2>
+      <div class="bd-kv">
+        <div class="k">Current mode</div><div class="v">{{ d.schedule.mode or '—' }}</div>
+        <div class="k">Active setpoint</div><div class="v">{{ tt(d.schedule.current_setpoint) }}</div>
+        <div class="k">Day / night setpoint</div><div class="v">{{ tt(d.schedule.day_setpoint) }} / {{ tt(d.schedule.night_setpoint) }}</div>
+        <div class="k">Day window</div><div class="v">{{ d.schedule.start or '—' }} – {{ d.schedule.stop or '—' }}</div>
+        <div class="k">Outdoor cutoff</div><div class="v">{{ tt(d.schedule.oat_cutoff) }}</div>
+        {% if d.schedule.space_min_sp is not none %}<div class="k">Min-space setpoint</div><div class="v">{{ tt(d.schedule.space_min_sp) }}</div>{% endif %}
+      </div>
+    </section>
+
+    {% if d.alarms %}
+    <section class="bd-card bd-wide">
+      <h2>Open alarms ({{ d.alarms|length }})</h2>
+      <ul class="bd-alist">
+        {% for al in d.alarms %}<li>{{ al.text }}{% if al.start %}<span class="sub">since {{ al.start[:10] }}{% if al.severity %} · {{ al.severity }}{% endif %}</span>{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if d.apartments %}
+    <section class="bd-card bd-wide">
+      <h2>Apartment / space temps ({{ d.n_active }} of {{ d.apartments|length }} reporting)</h2>
+      <div class="bd-apts">
+        {% for ap in d.apartments %}<div class="bd-apt {{ 'below' if ap.below }}"><div class="n">{{ ap.name }}</div><div class="t">{{ tt(ap.pv) }}</div></div>{% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    <section class="bd-card bd-wide">
+      <h2>All Bloom points</h2>
+      {% if d.flags %}<div class="bd-flags" style="margin-bottom:10px">{% for f in d.flags %}<span title="{{ f.type }}">{{ f.label }}</span>{% endfor %}</div>{% endif %}
+      <details><summary>{{ d.readings|length }} point readings</summary>
+        <table class="bd-points"><tbody>
+          {% for p in d.readings %}<tr><td>{{ p.label }} <span class="code">{{ p.type }}</span></td><td>{{ p.value }}</td></tr>{% endfor %}
+        </tbody></table>
+      </details>
+    </section>
+  </div>
+{% endif %}
+{% endblock %}

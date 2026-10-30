@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}Skyline — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .sk-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
+  .sk-bar a.f { padding:4px 10px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:13px; background:#fff; }
+  .sk-bar a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
+  .sk-bar .grow { flex:1; }
+  .sk-note { font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .sk-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr)); gap:12px; }
+  .sk-card { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+  .sk-card.dark { background:#f3f4f6; }
+  .sk-head { display:flex; align-items:center; gap:6px; padding:8px 10px; border-bottom:1px solid var(--border); }
+  .sk-head .nm { font-weight:600; color:#1e3a8a; font-size:14px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sk-badge { font-size:11px; font-weight:700; border-radius:9px; padding:1px 6px; color:#fff; background:#16a34a; }
+  .sk-badge.dark { background:#6b7280; } .sk-badge.alarm { background:#dc2626; }
+  .sk-pill { margin:8px auto 4px; padding:5px 12px; border-radius:16px; font-size:11px; font-weight:700; text-transform:uppercase; text-align:center; max-width:92%; }
+  .sk-pill.ok { background:#22c55e; color:#052e16; } .sk-pill.heat { background:#3b82f6; color:#fff; }
+  .sk-pill.crit { background:#dc2626; color:#fff; } .sk-pill.idle { background:#e5e7eb; color:#374151; }
+  .sk-pill.dark { background:#9ca3af; color:#fff; }
+  .sk-row { display:grid; grid-template-columns:repeat(3, 1fr); text-align:center; padding:4px 6px; }
+  .sk-row + .sk-row { border-top:1px solid #f1f5f9; }
+  .sk-row .k { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.3px; }
+  .sk-row .v { font-size:16px; font-weight:700; color:#111827; }
+  .sk-row .v.cool { color:#1d4ed8; } .sk-row .v.hot { color:#dc2626; }
+  .sk-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
+  .sk-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
+  .sk-foot ul { margin:0; padding-left:16px; } .sk-foot li { margin:2px 0; }
+</style>
+{% endblock %}
+{% block content %}
+{% macro t(v) %}{% if v is not none %}{{ "%.0f"|format(v) }}°{% else %}—{% endif %}{% endmacro %}
+<h1>Skyline Terrace</h1>
+<div class="sk-bar">
+  <a class="f {{ 'on' if show=='all' }}" href="{{ url_for('admin.skyline_page') }}">All {{ summary.total }}</a>
+  <a class="f {{ 'on' if show=='problems' }}" href="{{ url_for('admin.skyline_page', show='problems') }}">Problems {{ summary.problems }}</a>
+  <a class="f {{ 'on' if show=='heating' }}" href="{{ url_for('admin.skyline_page', show='heating') }}">Heating {{ summary.heating }}</a>
+  <a class="f {{ 'on' if show=='dark' }}" href="{{ url_for('admin.skyline_page', show='dark') }}">Not reading {{ summary.dark }}</a>
+  <span class="grow"></span>
+  <form method="get" style="margin:0;"><input type="hidden" name="show" value="{{ show }}">
+    <input type="search" name="q" value="{{ q }}" placeholder="search" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;">
+  </form>
+</div>
+<p class="sk-note">Bloom / Empowered Buildings · read view-only · polled every {{ poll_min }} min · {{ summary.live }} reading, {{ summary.alarms }} open alarms</p>
+
+{% if not rows %}
+  <p class="sk-note">No Bloom buildings{% if show!='all' or q %} match this filter{% else %} yet — add a Bloom account and import Skyline Terrace{% endif %}.</p>
+{% endif %}
+
+<div class="sk-grid">
+{% for r in rows %}
+  {% set c = r.c %}
+  <div class="sk-card {{ 'dark' if r.state=='dark' }}">
+    <div class="sk-head">
+      <a class="nm" style="text-decoration:none" href="{{ url_for('admin.skyline_building', asset_id=r.asset.id) }}" title="{{ r.asset.name }}">{{ r.asset.name }}</a>
+      {% if r.state=='dark' %}<span class="sk-badge dark">DARK</span>
+      {% elif c and c.n_alarms %}<span class="sk-badge alarm">{{ c.n_alarms }}</span>
+      {% else %}<span class="sk-badge">OK</span>{% endif %}
+    </div>
+    {% if c %}
+      <div class="sk-pill {{ c.tone }}">{{ c.status or 'No status' }}</div>
+      <div class="sk-row">
+        <div><div class="k">Outside</div><div class="v cool">{{ t(c.outside_f) }}</div></div>
+        <div><div class="k">Space</div><div class="v">{{ t(c.space_avg_f) }}</div></div>
+        <div><div class="k">Setpt</div><div class="v">{{ t(c.setpoint_f) }}</div></div>
+      </div>
+      <div class="sk-row">
+        <div><div class="k">Supply</div><div class="v {{ 'hot' if c.supply_f and c.supply_f>=95 }}">{{ t(c.supply_f) }}</div></div>
+        <div><div class="k">Return</div><div class="v">{{ t(c.return_f) }}</div></div>
+        <div><div class="k">Htg SP</div><div class="v">{{ t(c.supply_sp_f) }}</div></div>
+      </div>
+      <div class="sk-row">
+        <div><div class="k">Heat RT</div><div class="v">{% if c.heat_rt is not none %}{{ (c.heat_rt//60) }}:{{ "%02d"|format(c.heat_rt%60) }}{% else %}—{% endif %}</div></div>
+        <div><div class="k">DHW</div><div class="v {{ 'hot' if c.dhw_supply_f and c.dhw_supply_f>=140 }}">{{ t(c.dhw_supply_f) }}</div></div>
+        <div><div class="k">Mode</div><div class="v" style="font-size:13px">{{ c.mode or '—' }}</div></div>
+      </div>
+      {% if c.alarms %}
+        <div class="sk-foot alarm"><ul>{% for a in c.alarms %}<li>{{ a }}</li>{% endfor %}</ul></div>
+      {% else %}
+        <div class="sk-foot">{% if r.age %}read {{ r.age }} ago{% else %}—{% endif %}</div>
+      {% endif %}
+    {% else %}
+      <div class="sk-pill dark">Not reading</div>
+      <div class="sk-foot">{{ r.why or 'no data' }}</div>
+    {% endif %}
+  </div>
+{% endfor %}
+</div>
+{% endblock %}

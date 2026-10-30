@@ -69,6 +69,13 @@ class Config:
         self.LEGACY_HISTORY_ENABLED = os.environ.get("LEGACY_HISTORY_ENABLED", "1") not in ("0", "false", "False")
         self.LEGACY_RAW_DAYS = int(os.environ.get("LEGACY_RAW_DAYS", "90"))
 
+        # Bloom / Empowered Buildings, read view-only for the Skyline wall
+        # (app/bloom.py). Credentials live per-account in the DB (BloomAccount),
+        # encrypted with FLEET_TOKEN_ENCRYPTION_KEY above — no secret env here.
+        self.BLOOM_POLLER_ENABLED = os.environ.get("BLOOM_POLLER_ENABLED", "1") not in ("0", "false", "False")
+        self.BLOOM_POLL_INTERVAL_SECONDS = int(os.environ.get("BLOOM_POLL_INTERVAL_SECONDS", "60"))
+        self.BLOOM_POLL_TIMEOUT_SECONDS = int(os.environ.get("BLOOM_POLL_TIMEOUT_SECONDS", "20"))
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

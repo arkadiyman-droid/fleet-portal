@@ -10,8 +10,9 @@ from app.extensions import csrf, db
 from app import fleet_health
 from app.enroll_api import code_hash as enroll_code_hash, normalize_code
 from app.fleet_poller import poll_controller
-from app.models import (AlertEvent, AlertState, Building, Client, Contract, Controller, Enrollment, Invoice,
-                        LegacyAlertState, LegacyBox, LegacyStatus, Permission, Property, Rollout, RolloutTarget, User)
+from app.models import (AlertEvent, AlertState, BloomAsset, Building, Client, Contract, Controller, Enrollment,
+                        Invoice, LegacyAlertState, LegacyBox, LegacyStatus, Permission, Property, Rollout,
+                        RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
     creatable_building_property_query,
@@ -100,6 +101,10 @@ def _soft_delete_cascade(obj) -> int:
 
 @admin_bp.route("/")
 def index():
+    # Portfolio (the whole fleet by owner -> property) is the landing page for
+    # superusers; others keep the Overview (Portfolio is superuser-only for now).
+    if is_superuser():
+        return redirect(url_for("admin.portfolio_page"))
     return redirect(url_for("admin.fleet_overview"))
 
 
@@ -1107,23 +1112,122 @@ _LIVE_SORTS = {
 }
 
 
+def _tag_legacy_rows(rows):
+    """The 2010 boxes already carry a LegacyBox in row['box']; add the common
+    source/detail_url the merged Live wall and template now expect."""
+    for r in rows:
+        r["source"] = "2010"
+        r["detail_url"] = url_for("admin.live_box", box_id=r["box"].id)
+    return rows
+
+
+def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, problems, why=None, firing=None):
+    """A Live row for a non-oBIX building (Bloom or EchoTherm), shaped like a
+    legacy row so live.html renders it unchanged: box is a namespace (so
+    row.box.name works in Python sorts and Jinja), oBIX-only card fields are
+    None (the template shows a dash), and alarms become the issue panel's
+    problems. These rows have no hide/delete."""
+    import types
+    age = fleet_health.ago((now_dt - last_ok).total_seconds()) if last_ok else None
+    return {"box": types.SimpleNamespace(name=name, id=box_id, hidden_by=None),
+            "source": source, "detail_url": detail_url, "c": c, "state": state, "why": why,
+            "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing,
+            "problem": bool(problems) or state != "live",
+            "issues": {"name": name, "problems": list(problems or []), "notes": [], "events": [],
+                       "keys": "", "url": detail_url}}
+
+
+def _bloom_live_rows(now_dt):
+    from app import bloom
+    stale = timedelta(minutes=current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) // 60 + 10)
+    out = []
+    assets = (BloomAsset.query.filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
+              .order_by(BloomAsset.name).all())
+    for a in assets:
+        st = a.status
+        card = bloom.card(st.data) if st and st.ok and st.data else None
+        last_ok = st.last_ok_at if st else None
+        url = url_for("admin.skyline_building", asset_id=a.id)
+        if not card or not last_ok or now_dt - last_ok > stale:
+            out.append(_other_row(a.name, "bloom", f"b{a.id}", None, "dark", last_ok, now_dt, url, [], why="not reading"))
+            continue
+        # Mapped to the oBIX columns (user QA 2026-10-30): DHW supply -> Mix,
+        # boiler firing -> Fire. No Bloom equivalent for Coil/Aqua/Stack/Hi
+        # stk/Risr/Water/HW RT on these hot-water buildings -> left blank.
+        c = {"code": None, "status": card["status"], "tone": card["tone"], "no_sensors": False,
+             "out": card["outside_f"], "inside": card["space_avg_f"], "dit": card["setpoint_f"],
+             "heat_rt": card["heat_rt"], "hw_rt": None, "total_rt": card["heat_rt"],
+             "aqua": None, "coil": None, "mix": card["dhw_supply_f"], "stack": None, "hi_stack": None, "water": None,
+             "supp": card["supply_f"], "retn": card["return_f"], "risr": None,
+             "target": card["supply_sp_f"], "oil_pct": None,
+             "system": "hot water", "system_label": "Bloom · Skyline", "fuel": None, "n_boilers": 0, "tint": {}}
+        out.append(_other_row(a.name, "bloom", f"b{a.id}", c, "live", last_ok, now_dt, url,
+                              card.get("alarms") or [], firing=card.get("firing")))
+    return out
+
+
+def _echo_live_rows(now_dt):
+    out = []
+    for ctrl in Controller.query.filter(Controller.is_active.is_(True)).order_by(Controller.name).all():
+        ev = fleet_health.evaluate(ctrl, getattr(ctrl, "status", None), None, now_dt)
+        heating, lvl, online = (ev.get("heating") or {}), ev.get("level"), ev.get("online")
+        problems = [txt for (l, txt) in ev.get("issues", []) if l in ("crit", "warn")]
+        last_ok = getattr(getattr(ctrl, "status", None), "last_ok_at", None)
+        url = url_for("admin.fleet_controller", controller_id=ctrl.id)
+        name = ctrl.name + (f" · {ctrl.building.name}" if ctrl.building else "")
+        if not online:
+            out.append(_other_row(name, "echotherm", f"e{ctrl.id}", None, "dark", last_ok, now_dt, url,
+                                  problems, why=ev.get("errorPlain") or "offline"))
+            continue
+        tone = "crit" if lvl == "crit" else "warn" if lvl == "warn" else ("heat" if heating.get("demand") else "ok")
+        c = {"code": None, "status": heating.get("reason") or heating.get("mode") or "Online", "tone": tone,
+             "no_sensors": bool(heating.get("noSensors")),
+             "out": heating.get("outdoor"), "inside": heating.get("avgApt"), "dit": heating.get("target"),
+             "heat_rt": None, "hw_rt": None, "total_rt": None,
+             "aqua": None, "coil": None, "mix": None, "stack": None, "hi_stack": None, "water": None,
+             "supp": heating.get("supply"), "retn": heating.get("ret"), "risr": None,
+             "target": heating.get("supplyTarget"), "oil_pct": None,
+             "system": heating.get("system") or "hot water", "system_label": "EchoTherm", "fuel": None,
+             "n_boilers": 0, "tint": {}}
+        out.append(_other_row(name, "echotherm", f"e{ctrl.id}", c, "live", last_ok, now_dt, url, problems))
+    return out
+
+
 @admin_bp.route("/live")
 def live_page():
     if not is_superuser():
         abort(403)
     now = datetime.utcnow()
-    rows = _legacy_rows(now)
+    rows = _tag_legacy_rows(_legacy_rows(now)) + _bloom_live_rows(now) + _echo_live_rows(now)
     hidden = LegacyBox.query.filter(LegacyBox.is_active.is_(False), LegacyBox.deleted_at.is_(None)) \
         .order_by(LegacyBox.name).all()
     summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows), "hidden": len(hidden),
                "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
-               "problems": sum(r["problem"] for r in rows),
+               "problems": sum(1 for r in rows if r["problem"]),
                "steam": sum(1 for r in rows if (r["c"] or {}).get("system") == "steam"),
-               "hotwater": sum(1 for r in rows if (r["c"] or {}).get("system") == "hot water")}
+               "hotwater": sum(1 for r in rows if (r["c"] or {}).get("system") == "hot water"),
+               "s2010": sum(1 for r in rows if r["source"] == "2010"),
+               "bloom": sum(1 for r in rows if r["source"] == "bloom"),
+               "echo": sum(1 for r in rows if r["source"] == "echotherm")}
     newest = max((r for r in rows if r["recent_alarm"] and r["recent_alarm"]["level"] in ("crit", "warn")
                   and r["recent_alarm"]["utc"]), key=lambda r: r["recent_alarm"]["utc"], default=None)
-    show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
+    show = request.args.get("show", "all")
+    source = request.args.get("source", "all")
+    q = (request.args.get("q") or "").strip().lower()
+    if source in ("2010", "bloom", "echotherm"):
+        rows = [r for r in rows if r["source"] == source]
+    else:
+        source = "all"
+    # Show-row counts reflect the current source selection; the source-row
+    # counts (total/s2010/bloom/echo) stay fleet-wide.
+    summary["shown_total"] = len(rows)
+    for k, f in (("problems", lambda r: r["problem"]),
+                 ("calling", lambda r: r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
+                 ("dark", lambda r: r["state"] == "dark"), ("login", lambda r: r["state"] == "login"),
+                 ("steam", lambda r: (r["c"] or {}).get("system") == "steam"),
+                 ("hotwater", lambda r: (r["c"] or {}).get("system") == "hot water")):
+        summary[k] = sum(1 for r in rows if f(r))
     if show == "problems":
         rows = [r for r in rows if r["problem"]]
     elif show == "dark":
@@ -1131,7 +1235,7 @@ def live_page():
     elif show == "calling":
         rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"]
     elif show == "hidden":
-        rows = _legacy_rows(now, hidden)
+        rows = _tag_legacy_rows(_legacy_rows(now, hidden))
     elif show in ("steam", "hotwater"):
         want = "steam" if show == "steam" else "hot water"
         rows = [r for r in rows if (r["c"] or {}).get("system") == want]
@@ -1144,7 +1248,7 @@ def live_page():
     view = "table" if request.args.get("view") == "table" else "cards"
     from app import legacy
     return render_template("live.html", title="Live", rows=rows, summary=summary, newest=newest, show=show,
-                           legend=legacy.TINT_LEGEND,
+                           source=source, legend=legacy.TINT_LEGEND,
                            q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
@@ -1208,6 +1312,211 @@ def live_series(box_id):
     data["name"] = b.name
     data["url"] = url_for("admin.live_box", box_id=b.id)
     return jsonify(data)
+
+
+# ─── Skyline / Bloom wall (app/bloom.py) ─────────────────────────────────
+
+def _bloom_rows(now, assets=None):
+    """One display row per Bloom asset: its card, freshness and whether it is
+    a problem (dark, a severe alarm, or a heat call with a cold loop)."""
+    from app import bloom
+    if assets is None:
+        assets = (BloomAsset.query
+                  .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
+                  .order_by(BloomAsset.name).all())
+    stale = timedelta(minutes=current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) // 60 + 10)
+    rows = []
+    for a in assets:
+        st = a.status
+        c = bloom.card(st.data) if st and st.ok and st.data else None
+        last_ok = st.last_ok_at if st else None
+        if not last_ok or now - last_ok > stale:
+            state = "dark"
+            why = (st.error if st and st.error else "never read") if not last_ok else "not read recently"
+        else:
+            state, why = "live", None
+        # A dark box, or a crit card (calling for heat with a cold loop, or a
+        # boiler/pump fault alarm — see app/bloom.card) is a problem to chase.
+        problem = state == "dark" or bool(c and c["tone"] == "crit")
+        rows.append({"asset": a, "st": st, "c": c, "state": state, "why": why,
+                     "last_ok": last_ok, "problem": problem,
+                     "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
+    return rows
+
+
+@admin_bp.route("/skyline")
+def skyline_page():
+    if not is_superuser():
+        abort(403)
+    now = datetime.utcnow()
+    rows = _bloom_rows(now)
+    summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows),
+               "dark": sum(r["state"] == "dark" for r in rows),
+               "heating": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat"),
+               "alarms": sum((r["c"]["n_alarms"] if r["c"] else 0) for r in rows),
+               "problems": sum(r["problem"] for r in rows)}
+    show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
+    if show == "problems":
+        rows = [r for r in rows if r["problem"]]
+    elif show == "heating":
+        rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat"]
+    elif show == "dark":
+        rows = [r for r in rows if r["state"] == "dark"]
+    else:
+        show = "all"
+    if q:
+        rows = [r for r in rows if q in r["asset"].name.lower()]
+    rows.sort(key=lambda r: (not r["problem"], r["asset"].name.lower()))
+    return render_template("skyline.html", title="Skyline", rows=rows, summary=summary, show=show,
+                           q=request.args.get("q", ""),
+                           poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1)
+
+
+@admin_bp.route("/skyline/<int:asset_id>")
+def skyline_building(asset_id):
+    """Everything Bloom has for one Skyline building, with a Back button
+    (returns to wherever you came from, else Live). See app/bloom.py::detail."""
+    if not is_superuser():
+        abort(403)
+    from urllib.parse import urlparse
+    from app import bloom
+    a = BloomAsset.query.get_or_404(asset_id)
+    st = a.status
+    d = bloom.detail(st.data) if st and st.ok and st.data else None
+    read_ago = (fleet_health.ago((datetime.utcnow() - st.last_ok_at).total_seconds())
+                if st and st.last_ok_at else None)
+    ref = request.referrer or ""
+    back = ref if (ref and urlparse(ref).netloc == request.host
+                   and "/skyline/" not in urlparse(ref).path) else url_for("admin.live_page")
+    return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back, read_ago=read_ago)
+
+
+@admin_bp.route("/portfolio")
+def portfolio_page():
+    """The whole fleet by owner -> property, across all sources (app/portfolio.py)."""
+    if not is_superuser():
+        abort(403)
+    import json
+    from app import portfolio
+    owners = portfolio.tree()
+    legacy = portfolio.unassigned()
+    return render_template("portfolio.html", title="Portfolio",
+                           owners_json=json.dumps(owners), legacy_json=json.dumps(legacy),
+                           legacy_count=len(legacy))
+
+
+def _portfolio_destination(data):
+    """Resolve the target Property for a file/move: an existing property_id, or
+    a new Owner/Property created on the spot. Returns (property, error_response)
+    — exactly one is non-None. Shared by assign and move."""
+    prop_id = data.get("property_id")
+    if prop_id:
+        prop = Property.query.get(int(prop_id))
+        return (prop, None) if prop else (None, (jsonify(error="That property no longer exists."), 404))
+    owner_name = (data.get("owner_name") or "").strip()
+    prop_name = (data.get("property_name") or "").strip()
+    if not owner_name or not prop_name:
+        return None, (jsonify(error="Enter both an owner and a property name."), 400)
+    client = Client.query.filter_by(name=owner_name).first()
+    if client is None:
+        client = Client(name=owner_name, billing_method="invoice")
+        db.session.add(client)
+        db.session.flush()
+    prop = Property.query.filter_by(client_id=client.id, name=prop_name).first()
+    if prop is None:
+        prop = Property(client_id=client.id, name=prop_name)
+        db.session.add(prop)
+        db.session.flush()
+    return prop, None
+
+
+@admin_bp.route("/portfolio/assign", methods=["POST"])
+def portfolio_assign():
+    """File 2010 boxes into a property: one Building per box (named after the
+    box), with the box's building_id set. See app/portfolio.py."""
+    if not is_superuser():
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    box_ids = [int(b) for b in (data.get("box_ids") or []) if str(b).isdigit()]
+    if not box_ids:
+        return jsonify(error="No boxes selected."), 400
+    prop, err = _portfolio_destination(data)
+    if err:
+        return err
+    filed = 0
+    for bid in box_ids:
+        box = LegacyBox.query.get(bid)
+        if box is None or box.building_id is not None or box.deleted_at is not None:
+            continue
+        building = Building(property_id=prop.id, name=box.name)
+        db.session.add(building)
+        db.session.flush()
+        box.building_id = building.id
+        filed += 1
+    db.session.commit()
+    return jsonify(ok=True, filed=filed, where=f"{prop.client.name} / {prop.name}")
+
+
+@admin_bp.route("/portfolio/move", methods=["POST"])
+def portfolio_move():
+    """Move already-placed buildings to another property/owner (i.e. change
+    their ownership) — reassigns Building.property_id. Destination is an
+    existing property or a new Owner/Property. See app/portfolio.py."""
+    if not is_superuser():
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    building_ids = [int(b) for b in (data.get("building_ids") or []) if str(b).isdigit()]
+    if not building_ids:
+        return jsonify(error="No buildings selected."), 400
+    prop, err = _portfolio_destination(data)
+    if err:
+        return err
+    moved = 0
+    for bid in building_ids:
+        b = Building.query.get(bid)
+        if b is None or b.property_id == prop.id:
+            continue
+        b.property_id = prop.id
+        moved += 1
+    db.session.commit()
+    return jsonify(ok=True, moved=moved, where=f"{prop.client.name} / {prop.name}")
+
+
+@admin_bp.route("/portfolio/delete", methods=["POST"])
+def portfolio_delete():
+    """Delete a property (and its buildings) or a whole owner (all its
+    properties). 2010 boxes under it return to Unassigned and Bloom assets
+    detach (both recoverable); REFUSED when a managed EchoTherm controller is
+    under it, since that would delete the controller. Superuser only."""
+    if not is_superuser():
+        abort(403)
+    data = request.get_json(silent=True) or {}
+    kind, _id = data.get("kind"), data.get("id")
+    if kind == "property":
+        target = Property.query.get(int(_id)) if _id else None
+        props = [target] if target else []
+        where = f"{target.client.name} / {target.name}" if target else None
+    elif kind == "owner":
+        target = Client.query.get(int(_id)) if _id else None
+        props = list(target.properties) if target else []
+        where = target.name if target else None
+    else:
+        return jsonify(error="Unknown delete target."), 400
+    if target is None:
+        return jsonify(error="That item no longer exists."), 404
+
+    bldg_ids = [b.id for p in props for b in p.buildings]
+    ctrls = sum(1 for p in props for b in p.buildings for c in b.controllers if c.is_active)
+    if ctrls:
+        return jsonify(error=f"Can't delete: {ctrls} managed EchoTherm controller(s) are under it. "
+                             f"Remove them from the Controllers page first."), 400
+    boxes = LegacyBox.query.filter(LegacyBox.building_id.in_(bldg_ids)).count() if bldg_ids else 0
+    if bldg_ids:   # detach devices first so they survive the building delete
+        LegacyBox.query.filter(LegacyBox.building_id.in_(bldg_ids)).update({"building_id": None}, synchronize_session=False)
+        BloomAsset.query.filter(BloomAsset.building_id.in_(bldg_ids)).update({"building_id": None}, synchronize_session=False)
+    db.session.delete(target)
+    db.session.commit()
+    return jsonify(ok=True, kind=kind, where=where, boxes=boxes)
 
 
 def _csv_response(name, header, rows):

@@ -703,3 +703,90 @@ class ControllerReading(db.Model):
     ts = db.Column(db.DateTime, primary_key=True)
     values = db.Column(JSONB, nullable=False)                        # {chart key: number}, run counters included
     apt = db.Column(ARRAY(db.SmallInteger))                          # aptTemps, trailing zeros dropped
+
+
+# ── Bloom / Empowered Buildings (app/bloom.py) ───────────────────────────────
+#
+# A third monitored source, alongside EchoTherm controllers and the 2010 oBIX
+# boxes: buildings on a different vendor's controller, read VIEW-ONLY through
+# Bloom's private JSON API (my.empoweredbuildings.com — POST /api/users/login
+# for a bearer token, then GET /api/assets + /api/alarms). Added for Skyline
+# Terrace (Canton OH). Nothing here writes to Bloom or to any site.
+
+class BloomAccount(db.Model):
+    """One Bloom login, read view-only. The username/password are a real
+    credential, so they are encrypted at rest (app/crypto_types.py), as is the
+    bearer token cached from the last successful login and reused until it is
+    rejected (app/bloom.py re-logs in on a 401). One account owns many assets."""
+    __tablename__ = "bloom_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(60), nullable=False, unique=True)
+    base_url = db.Column(db.String(200), nullable=False, default="https://my.empoweredbuildings.com")
+    username = db.Column(EncryptedString, nullable=False)
+    password = db.Column(EncryptedString, nullable=False)
+    token = db.Column(EncryptedString)                               # cached JWT, until it 401s
+    token_at = db.Column(db.DateTime)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    assets = db.relationship(
+        "BloomAsset", back_populates="account", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+    def __repr__(self):
+        return f"<BloomAccount {self.id} {self.label!r}>"
+
+
+class BloomAsset(db.Model):
+    """One Bloom-monitored building ('asset' in Bloom's terms), read
+    view-only. asset_key is Bloom's own id/slug for it (how a poll result is
+    matched back to this row); building_id ties it into the
+    Client -> Property -> Building hierarchy (Skyline Properties), nullable so
+    an asset can exist before it is placed, like a LegacyBox."""
+    __tablename__ = "bloom_assets"
+    __table_args__ = (db.UniqueConstraint("account_id", "asset_key", name="uq_bloom_asset_key"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("bloom_accounts.id", ondelete="CASCADE"), nullable=False)
+    asset_key = db.Column(db.String(200), nullable=False)           # Bloom asset id / slug
+    name = db.Column(db.String(200), nullable=False)                # e.g. "631 Alan Page Dr"
+    address = db.Column(db.Text)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
+    # Hidden (is_active False): kept but not shown/polled. Deleted (deleted_at
+    # set): gone from the portal, the row stays only so a re-import skips it.
+    # Mirrors LegacyBox's two-state retirement.
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    deleted_at = db.Column(db.DateTime)
+    hidden_by = db.Column(db.String(120))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    account = db.relationship("BloomAccount", back_populates="assets")
+    building = db.relationship("Building")
+    status = db.relationship(
+        "BloomStatus", uselist=False, back_populates="asset", cascade="all, delete-orphan"
+    )
+
+    def __repr__(self):
+        return f"<BloomAsset {self.id} {self.name!r}>"
+
+
+class BloomStatus(db.Model):
+    """The latest reading of one Bloom asset (overwritten each poll). The whole
+    asset object plus its open alarms are kept as raw JSON, so a Bloom-side
+    field change never needs a migration — the card is derived at read time
+    (app/bloom.py::card), exactly like ControllerStatus.raw_json / LegacyStatus.data."""
+    __tablename__ = "bloom_statuses"
+
+    asset_id = db.Column(db.Integer, db.ForeignKey("bloom_assets.id", ondelete="CASCADE"), primary_key=True)
+    polled_at = db.Column(db.DateTime, nullable=False)
+    ok = db.Column(db.Boolean, nullable=False, default=False)
+    error = db.Column(db.String(300))
+    response_ms = db.Column(db.Integer)
+    last_ok_at = db.Column(db.DateTime)
+    data = db.Column(JSONB)                                         # {asset:{...}, alarms:[...]}
+
+    asset = db.relationship("BloomAsset", back_populates="status")
+
+    def __repr__(self):
+        return f"<BloomStatus asset_id={self.asset_id} ok={self.ok}>"

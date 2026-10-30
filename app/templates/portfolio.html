@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% block title %}Portfolio — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  :root{
+    --pf-heat:#2563eb;--pf-heatbg:#e8f0fe;--pf-crit:#dc2626;--pf-critbg:#fdecec;
+    --pf-warn:#d97706;--pf-warnbg:#fdf3e3;--pf-ok:#16a34a;--pf-okbg:#e8f6ec;
+    --pf-dark:#6b7280;--pf-darkbg:#eef0f3;--pf-accent:#1e3a8a;--pf-accentsoft:#eaf0fb;
+    --pf-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --pf-heat:#6ea8fe;--pf-heatbg:#15233c;--pf-crit:#f98a8a;--pf-critbg:#3a1b1b;--pf-warn:#eab368;--pf-warnbg:#3a2b12;
+    --pf-ok:#6ee7a0;--pf-okbg:#12331f;--pf-dark:#9aa4b2;--pf-darkbg:#20262e;--pf-accent:#6ea8fe;--pf-accentsoft:#1a2436;
+  }}
+  :root[data-theme="dark"]{
+    --pf-heat:#6ea8fe;--pf-heatbg:#15233c;--pf-crit:#f98a8a;--pf-critbg:#3a1b1b;--pf-warn:#eab368;--pf-warnbg:#3a2b12;
+    --pf-ok:#6ee7a0;--pf-okbg:#12331f;--pf-dark:#9aa4b2;--pf-darkbg:#20262e;--pf-accent:#6ea8fe;--pf-accentsoft:#1a2436;
+  }
+  .pf-h{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 10px}
+  .pf-h h1{margin:0;font-size:19px} .pf-h .note{font-size:12px;color:var(--muted)}
+  .pf-grid{display:grid;grid-template-columns:270px 1fr;gap:14px;align-items:start}
+  .pf-card{background:var(--panel);border:1px solid var(--border);border-radius:12px}
+  .pf-tree{padding:8px 6px;font-size:13.5px}
+  .pf-tree .search{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:8px;background:var(--bg,transparent);color:inherit;margin-bottom:6px;font-size:13px}
+  .pf-row{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:8px;cursor:pointer;user-select:none}
+  .pf-row:hover{background:var(--pf-accentsoft)}
+  .pf-row.sel{background:var(--pf-accentsoft);box-shadow:inset 2px 0 0 var(--pf-accent)}
+  .pf-row .tw{width:14px;color:var(--muted);flex:none;text-align:center;font-size:11px}
+  .pf-row .ic{flex:none} .pf-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pf-row .ct{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .pf-row .dot{width:8px;height:8px;border-radius:50%;flex:none}
+  .pf-row.ow .nm{font-weight:600}
+  .pf-kids{margin-left:14px;border-left:1px solid var(--border);padding-left:4px}
+  .pf-crumb{color:var(--muted);font-size:12.5px;margin:2px 2px 10px} .pf-crumb b{color:inherit}
+  .pf-tool{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border)}
+  .pf-tool input.find{flex:1;min-width:120px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:transparent;color:inherit}
+  .pf-tool .mstat{font-size:12px;color:var(--muted)}
+  .pf-btn{font-family:inherit;font-size:12.5px;border:1px solid var(--border);background:var(--panel);color:inherit;border-radius:8px;padding:6px 11px;cursor:pointer}
+  .pf-btn.p{background:var(--pf-accent);border-color:var(--pf-accent);color:#fff}
+  .pf-btn.danger{color:var(--pf-crit);border-color:var(--pf-crit)} .pf-btn.danger:hover{background:var(--pf-critbg)}
+  table.pf{width:100%;border-collapse:collapse}
+  table.pf th,table.pf td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;white-space:nowrap}
+  table.pf th{font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  table.pf tbody tr{cursor:pointer} table.pf tbody tr:hover{background:var(--pf-accentsoft)}
+  table.pf td.num{font-variant-numeric:tabular-nums;font-family:var(--pf-mono);text-align:right;width:76px}
+  table.pf th.num{text-align:right;width:76px}
+  .pf-chip{display:inline-block;font-size:11px;font-weight:700;border-radius:20px;padding:2px 9px;text-transform:uppercase;letter-spacing:.02em}
+  .pf-chip.heat{color:var(--pf-heat);background:var(--pf-heatbg)} .pf-chip.crit{color:var(--pf-crit);background:var(--pf-critbg)}
+  .pf-chip.warn{color:var(--pf-warn);background:var(--pf-warnbg)} .pf-chip.ok{color:var(--pf-ok);background:var(--pf-okbg)}
+  .pf-chip.dark{color:var(--pf-dark);background:var(--pf-darkbg)}
+  .pf-src{font-size:10.5px;color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px}
+  .pf-almc{color:var(--pf-crit);font-weight:700;font-variant-numeric:tabular-nums}
+  .pf-empty{padding:34px 16px;text-align:center;color:var(--muted)} .pf-empty .big{font-size:15px;color:inherit;margin-bottom:6px}
+  .pf-drawer{position:fixed;top:0;right:0;height:100%;width:min(380px,92vw);background:var(--panel);border-left:1px solid var(--border);
+    box-shadow:-12px 0 32px rgba(0,0,0,.18);padding:16px;overflow:auto;transform:translateX(100%);transition:transform .18s;z-index:60}
+  .pf-drawer.open{transform:none} .pf-drawer .x{position:absolute;top:12px;right:12px;border:none;background:none;color:var(--muted);font-size:20px;cursor:pointer}
+  .pf-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:14px 0}
+  .pf-metrics div{background:var(--pf-accentsoft);border:1px solid var(--border);border-radius:9px;padding:8px}
+  .pf-metrics .k{font-size:10px;text-transform:uppercase;color:var(--muted)} .pf-metrics .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;font-family:var(--pf-mono)}
+  .pf-alist{margin:10px 0 0;padding:0;list-style:none} .pf-alist li{padding:7px 10px;border-radius:8px;background:var(--pf-critbg);color:var(--pf-crit);margin-bottom:6px;font-size:12.5px}
+  .pf-assign{display:none;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--pf-accentsoft);border-bottom:1px solid var(--border)}
+  .pf-assign.show{display:flex} .pf-assign select{padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:inherit;font-family:inherit}
+  .pf-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:10px;font-size:13px;opacity:0;transition:opacity .2s;z-index:70;pointer-events:none}
+  .pf-toast.show{opacity:1} .pf-scroll{overflow-x:auto}
+  .pf-modal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:80;align-items:center;justify-content:center;padding:16px}
+  .pf-modal.show{display:flex}
+  .pf-dialog{background:var(--panel);border:1px solid var(--border);border-radius:12px;max-width:460px;width:100%;padding:18px 20px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+  .pf-dialog h3{margin:0 0 10px;font-size:16px}
+  .pf-modal-body{font-size:13.5px;line-height:1.5} .pf-modal-body ul{margin:8px 0 0;padding-left:18px} .pf-modal-body li{margin:3px 0}
+  .pf-block{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--pf-critbg);color:var(--pf-crit);font-size:12.5px;font-weight:600}
+  .pf-modal-type{margin-top:14px;font-size:13px}
+  .pf-modal-type input{width:100%;margin-top:6px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:transparent;color:inherit;font-family:inherit}
+  .pf-modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  .pf-btn:disabled{opacity:.45;cursor:default}
+  @media (max-width:760px){ .pf-grid{grid-template-columns:1fr} .pf-tree{max-height:230px;overflow:auto} }
+</style>
+{% endblock %}
+{% block content %}
+<div class="pf-h"><h1>Portfolio</h1><span class="note">The whole fleet by owner and property. Filing boxes into properties — next.</span></div>
+<div class="pf-grid">
+  <nav class="pf-card pf-tree">
+    <input class="search" id="pfTreeSearch" placeholder="Filter owners / properties…">
+    <div id="pfTreeBody"></div>
+  </nav>
+  <section>
+    <div class="pf-crumb" id="pfCrumb"></div>
+    <div class="pf-card">
+      <div class="pf-tool">
+        <input class="find" id="pfFind" placeholder="Search buildings…" oninput="pfRenderList()">
+        <span class="mstat" id="pfMstat"></span>
+        <button class="pf-btn danger" id="pfDelBtn" onclick="pfDelete()" style="display:none">Delete</button>
+      </div>
+      <div class="pf-assign" id="pfAssign">
+        <span id="pfSelCount" class="mstat"></span><span>→ <span id="pfBarVerb">file into</span></span>
+        <select id="pfAssignSel" onchange="pfAssignMode()"></select>
+        <span id="pfNewFields" style="display:none;gap:8px;flex-wrap:wrap">
+          <input id="pfOwnerName" list="pfOwnerList" placeholder="Owner" class="find" style="min-width:110px;flex:none">
+          <datalist id="pfOwnerList"></datalist>
+          <input id="pfPropName" placeholder="Property name" class="find" style="min-width:130px;flex:none">
+        </span>
+        <button class="pf-btn p" id="pfApplyBtn" onclick="pfApply()">File</button>
+        <button class="pf-btn" onclick="pfClearSel()">Clear</button>
+      </div>
+      <div class="pf-scroll"><div id="pfList"></div></div>
+    </div>
+  </section>
+</div>
+<aside class="pf-drawer" id="pfDrawer"><button class="x" onclick="pfCloseDrawer()">×</button><div id="pfDrawerBody"></div></aside>
+<div class="pf-modal" id="pfModal">
+  <div class="pf-dialog">
+    <h3 id="pfModalTitle">Delete</h3>
+    <div class="pf-modal-body" id="pfModalBody"></div>
+    <div class="pf-modal-type" id="pfModalType">To confirm, type <b id="pfConfirmName"></b> below:
+      <input id="pfConfirmInput" oninput="pfConfirmCheck()" autocomplete="off" spellcheck="false"></div>
+    <div class="pf-modal-actions">
+      <button class="pf-btn" onclick="pfModalClose()">Cancel</button>
+      <button class="pf-btn danger" id="pfConfirmBtn" onclick="pfConfirmDelete()" disabled>Delete permanently</button>
+    </div>
+  </div>
+</div>
+<div class="pf-toast" id="pfToast"></div>
+
+<script>
+const MODEL={owners: {{ owners_json|safe }} };
+const LEGACY={{ legacy_json|safe }};
+const COUNT_LEGACY={{ legacy_count }};
+const PF_CSRF="{{ csrf_token() }}";
+const dotColor={crit:'var(--pf-crit)',warn:'var(--pf-warn)',heat:'var(--pf-heat)',ok:'var(--pf-ok)',dark:'var(--pf-dark)'};
+let pfSel = MODEL.owners.find(o=>o.props.length) ? {kind:'prop',ownerId:MODEL.owners.find(o=>o.props.length).id,propId:MODEL.owners.find(o=>o.props.length).props[0].id} : {kind:'unassigned'};
+const pfSelSet=new Set();
+
+function pfCount(list){let c={crit:0,warn:0,heat:0,ok:0,dark:0};list.forEach(b=>{if(c[b.status]!=null)c[b.status]++});return c}
+function pfWorst(list){const c=pfCount(list);return c.crit?'crit':c.warn?'warn':c.heat?'heat':(c.ok||c.heat)?'ok':'dark'}
+function pfLabel(s){return {heat:'Heating',crit:'Problem',warn:'Alarm',ok:'OK',dark:'Not reading'}[s]||s}
+
+function pfRow(o){const r=document.createElement('div');r.className='pf-row'+(o.ow?' ow':'')+(o.sel?' sel':'');
+  r.innerHTML=`<span class="tw">${o.tw||''}</span><span class="ic">${o.ic||''}</span><span class="nm">${o.nm}</span>`
+   +(o.dot?`<span class="dot" style="background:${o.dot}"></span>`:'')+(o.ct!=null&&o.ct!==''?`<span class="ct">${o.ct}</span>`:'');
+  r.onclick=o.onClick;return r}
+function pfRenderTree(){
+  const q=(document.getElementById('pfTreeSearch').value||'').toLowerCase();
+  const el=document.getElementById('pfTreeBody');el.innerHTML='';
+  MODEL.owners.forEach(o=>{
+    const allB=o.props.flatMap(p=>p.b);
+    el.appendChild(pfRow({ow:1,tw:o.props.length?'▾':'·',ic:'📁',nm:o.name,ct:allB.length||'',dot:allB.length?dotColor[pfWorst(allB)]:null,
+      sel:pfSel.kind==='owner'&&pfSel.ownerId===o.id,onClick:()=>{pfSel={kind:'owner',ownerId:o.id};pfClearSel();pfRefresh()}}));
+    const kids=document.createElement('div');kids.className='pf-kids';
+    if(o.props.length===0){const e=document.createElement('div');e.className='pf-row';e.style.cssText='color:var(--muted);font-style:italic';
+      e.innerHTML='<span class="tw"></span><span class="nm">no properties yet</span>';kids.appendChild(e);}
+    o.props.forEach(p=>{ if(q&&!(o.name.toLowerCase().includes(q)||p.name.toLowerCase().includes(q)))return;
+      kids.appendChild(pfRow({tw:'',ic:'📂',nm:p.name,ct:p.b.length,dot:dotColor[pfWorst(p.b)],
+        sel:pfSel.kind==='prop'&&pfSel.propId===p.id,onClick:()=>{pfSel={kind:'prop',ownerId:o.id,propId:p.id};pfClearSel();pfRefresh()}}));});
+    el.appendChild(kids);
+  });
+  el.appendChild(pfRow({tw:'',ic:'🗂️',nm:'Unassigned (2010 boxes)',ct:COUNT_LEGACY,dot:dotColor.dark,
+    sel:pfSel.kind==='unassigned',onClick:()=>{pfSel={kind:'unassigned'};pfClearSel();pfRefresh()}}));
+}
+function pfList(){
+  if(pfSel.kind==='unassigned')return LEGACY;
+  const o=MODEL.owners.find(x=>x.id===pfSel.ownerId); if(!o)return[];
+  if(pfSel.kind==='prop'){const p=o.props.find(p=>p.id===pfSel.propId);return p?p.b:[]}
+  return o.props.flatMap(p=>p.b);
+}
+function pfCrumb(){const c=document.getElementById('pfCrumb');
+  if(pfSel.kind==='unassigned'){c.innerHTML='<b>Unassigned</b> · 2010 oBIX boxes not yet filed into a property';return}
+  const o=MODEL.owners.find(x=>x.id===pfSel.ownerId);let h=`Portfolio › <b>${o.name}</b>`;
+  if(pfSel.kind==='prop'){const p=o.props.find(p=>p.id===pfSel.propId);h+=` › <b>${p.name}</b>${p.loc?' · '+p.loc:''}`}
+  c.innerHTML=h;}
+function pfMoving(){return pfSel.kind!=='unassigned'}   // placed buildings -> move; boxes -> file
+function pfRenderList(){
+  const list=pfList();const q=(document.getElementById('pfFind').value||'').toLowerCase();
+  const shown=list.filter(b=>b.name.toLowerCase().includes(q));const c=pfCount(list);
+  document.getElementById('pfMstat').innerHTML=`${list.length} buildings · <span style="color:var(--pf-crit)">${c.crit} problem</span> · ${c.heat} heating · ${c.ok} ok · ${c.dark} dark`;
+  const el=document.getElementById('pfList');
+  const delBtn=document.getElementById('pfDelBtn');
+  if(pfSel.kind==='prop'){delBtn.style.display='';delBtn.textContent='Delete property';}
+  else if(pfSel.kind==='owner'){delBtn.style.display='';delBtn.textContent='Delete owner';}
+  else{delBtn.style.display='none';}
+  if(pfSel.kind==='owner'&&list.length===0){
+    el.innerHTML=`<div class="pf-empty"><div class="big">${MODEL.owners.find(x=>x.id===pfSel.ownerId).name} has no properties yet</div>File 2010 boxes from Unassigned, or move buildings here.</div>`;return;}
+  const moving=pfMoving();const idOf=b=>moving?b.building_id:b.id;
+  const rows=shown.map(b=>{const i=list.indexOf(b);const sid=idOf(b);
+    return `<tr onclick="pfOpen(${i})">`
+     +`<td onclick="event.stopPropagation()">${sid!=null?`<input type="checkbox" ${pfSelSet.has(sid)?'checked':''} onchange="pfToggle(${sid},this.checked)">`:''}</td>`
+     +`<td>${b.name}</td><td><span class="pf-chip ${b.status}">${pfLabel(b.status)}</span></td><td><span class="pf-src">${b.source}</span></td>`
+     +`<td class="num">${b.out!=null?Math.round(b.out)+'°':'–'}</td><td class="num">${b.sup!=null?Math.round(b.sup)+'°':'–'}</td><td class="num">${b.ret!=null?Math.round(b.ret)+'°':'–'}</td><td class="num">${b.rt||'–'}</td>`
+     +`<td class="pf-almc">${b.alarms&&b.alarms.length?'● '+b.alarms.length:''}</td></tr>`;}).join('');
+  el.innerHTML=`<table class="pf"><thead><tr><th></th><th>Building</th><th>Status</th><th>System</th><th class="num">Outdoor</th><th class="num">Supply</th><th class="num">Return</th><th class="num">Heat RT</th><th>Alarms</th></tr></thead><tbody>${rows}</tbody></table>`;
+  document.getElementById('pfBarVerb').textContent=moving?'move to':'file into';
+  document.getElementById('pfApplyBtn').textContent=moving?'Move':'File';
+  document.getElementById('pfAssign').classList.toggle('show',pfSelSet.size>0);
+  document.getElementById('pfSelCount').textContent=`${pfSelSet.size} selected`;
+}
+function pfToggle(n,on){on?pfSelSet.add(n):pfSelSet.delete(n);pfRenderList()}
+function pfClearSel(){pfSelSet.clear();const a=document.getElementById('pfAssign');if(a)a.classList.remove('show')}
+function pfFillAssign(){
+  const s=document.getElementById('pfAssignSel');s.innerHTML='';
+  MODEL.owners.forEach(o=>o.props.forEach(p=>{const op=document.createElement('option');op.value='prop:'+p.id;op.textContent=o.name+' / '+p.name;s.appendChild(op)}));
+  const op=document.createElement('option');op.value='new';op.textContent='➕ New owner / property…';s.appendChild(op);
+  const dl=document.getElementById('pfOwnerList');dl.innerHTML='';
+  [...new Set(MODEL.owners.map(o=>o.name))].forEach(n=>{const o=document.createElement('option');o.value=n;dl.appendChild(o)});
+  pfAssignMode();
+}
+function pfAssignMode(){document.getElementById('pfNewFields').style.display=(document.getElementById('pfAssignSel').value==='new')?'inline-flex':'none'}
+function pfApply(){
+  const ids=[...pfSelSet];if(!ids.length){pfToast('Select rows first');return}
+  const moving=pfMoving();const v=document.getElementById('pfAssignSel').value;const body={};
+  if(v==='new'){body.owner_name=document.getElementById('pfOwnerName').value.trim();body.property_name=document.getElementById('pfPropName').value.trim();
+    if(!body.owner_name||!body.property_name){pfToast('Enter an owner and a property name');return}}
+  else{body.property_id=v.split(':')[1]}
+  if(moving)body.building_ids=ids;else body.box_ids=ids;
+  fetch(moving?'/portfolio/move':'/portfolio/assign',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':PF_CSRF},body:JSON.stringify(body)})
+    .then(r=>r.json()).then(d=>{if(d.ok){const n=moving?d.moved:d.filed;pfToast(`${moving?'Moved':'Filed'} ${n} ${moving?'building':'box'}${n===1?'':'s'} ${moving?'to':'into'} ${d.where}`);setTimeout(()=>location.reload(),1000)}else{pfToast(d.error||'Could not apply')}})
+    .catch(e=>pfToast('Error: '+e));
+}
+// Move a single building straight from its drawer: tick it and open the bar.
+function pfMoveOne(bid){pfSelSet.clear();pfSelSet.add(bid);pfCloseDrawer();pfRenderList();window.scrollTo({top:0,behavior:'smooth'});document.getElementById('pfAssignSel').focus();}
+let pfDelScope=null;
+function pfDelete(){
+  const o=MODEL.owners.find(x=>x.id===pfSel.ownerId);if(!o)return;
+  let kind,id,name,buildings,props=0;
+  if(pfSel.kind==='prop'){const p=o.props.find(p=>p.id===pfSel.propId);kind='property';id=p.id;name=p.name;buildings=p.b;}
+  else if(pfSel.kind==='owner'){kind='owner';id=o.id;name=o.name;buildings=o.props.flatMap(p=>p.b);props=o.props.length;}
+  else return;
+  const echo=buildings.filter(b=>b.source==='EchoTherm').length;
+  const boxes=buildings.filter(b=>b.source==='2010').length;
+  const bloom=buildings.filter(b=>b.source==='Bloom').length;
+  pfDelScope={kind,id,name};
+  document.getElementById('pfModalTitle').textContent=(kind==='owner'?'Delete owner':'Delete property')+' — cannot be undone';
+  let body = kind==='owner'
+    ? `<p>Permanently delete the owner <b>${name}</b>, its <b>${props}</b> propert${props===1?'y':'ies'} and <b>${buildings.length}</b> building${buildings.length===1?'':'s'}.</p>`
+    : `<p>Permanently delete the property <b>${o.name} / ${name}</b> and its <b>${buildings.length}</b> building${buildings.length===1?'':'s'}.</p>`;
+  const notes=[];
+  if(boxes)notes.push(`<b>${boxes}</b> 2010 box${boxes===1?'':'es'} return${boxes===1?'s':''} to Unassigned (recoverable).`);
+  if(bloom)notes.push(`<b>${bloom}</b> Bloom building${bloom===1?'':'s'} detach${bloom===1?'es':''} — recoverable by re-import.`);
+  if(notes.length)body+='<ul>'+notes.map(n=>`<li>${n}</li>`).join('')+'</ul>';
+  const blocked=echo>0;
+  document.getElementById('pfModalBody').innerHTML=body+(blocked?`<div class="pf-block">⚠ Blocked: ${echo} managed EchoTherm controller${echo===1?'':'s'} ${echo===1?'is':'are'} under this. Remove ${echo===1?'it':'them'} from the Controllers page first — deleting here would destroy ${echo===1?'it':'them'}.</div>`:'');
+  document.getElementById('pfModalType').style.display=blocked?'none':'';
+  document.getElementById('pfConfirmBtn').style.display=blocked?'none':'';
+  document.getElementById('pfConfirmName').textContent=name;
+  const inp=document.getElementById('pfConfirmInput');inp.value='';
+  document.getElementById('pfConfirmBtn').disabled=true;
+  document.getElementById('pfModal').classList.add('show');
+  if(!blocked)setTimeout(()=>inp.focus(),60);
+}
+function pfConfirmCheck(){document.getElementById('pfConfirmBtn').disabled=(document.getElementById('pfConfirmInput').value.trim()!==(pfDelScope&&pfDelScope.name));}
+function pfModalClose(){document.getElementById('pfModal').classList.remove('show');pfDelScope=null;}
+function pfConfirmDelete(){
+  if(!pfDelScope)return;const kind=pfDelScope.kind,id=pfDelScope.id;
+  document.getElementById('pfConfirmBtn').disabled=true;
+  fetch('/portfolio/delete',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':PF_CSRF},body:JSON.stringify({kind,id})})
+    .then(r=>r.json()).then(d=>{if(d.ok){pfToast(`Deleted ${d.kind} ${d.where}${d.boxes?` · ${d.boxes} box(es) back to Unassigned`:''}`);setTimeout(()=>location.reload(),1200)}else{pfToast(d.error||'Could not delete');pfModalClose()}})
+    .catch(e=>{pfToast('Error: '+e);pfModalClose()});
+}
+function pfOpen(i){const b=pfList()[i];if(!b)return;
+  document.getElementById('pfDrawerBody').innerHTML=
+    `<h2 style="margin:0 0 2px">${b.name}</h2><div class="mstat" style="color:var(--muted)">${b.source} · <span class="pf-chip ${b.status}">${pfLabel(b.status)}</span></div>`
+   +`<div class="pf-metrics">
+      <div><div class="k">Outdoor</div><div class="v">${b.out!=null?Math.round(b.out)+'°':'–'}</div></div>
+      <div><div class="k">Supply</div><div class="v">${b.sup!=null?Math.round(b.sup)+'°':'–'}</div></div>
+      <div><div class="k">Return</div><div class="v">${b.ret!=null?Math.round(b.ret)+'°':'–'}</div></div>
+      <div><div class="k">Heat RT</div><div class="v">${b.rt||'–'}</div></div>
+      <div><div class="k">DHW</div><div class="v">${b.dhw!=null?Math.round(b.dhw)+'°':'–'}</div></div>
+      <div><div class="k">Setpt</div><div class="v">${b.spt!=null?Math.round(b.spt)+'°':'–'}</div></div>
+      <div><div class="k">Mode</div><div class="v" style="font-size:14px">${b.mode||'–'}</div></div></div>`
+   +(b.alarms&&b.alarms.length?`<div class="k" style="font-size:11px;text-transform:uppercase;color:var(--muted)">Open alarms</div><ul class="pf-alist">${b.alarms.map(a=>`<li>${a}</li>`).join('')}</ul>`:'<div class="mstat" style="color:var(--muted)">No open alarms.</div>')
+   +`<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">`
+   +(b.building_id!=null?`<button class="pf-btn p" onclick="pfMoveOne(${b.building_id})">Move / change owner…</button>`:'')
+   +(b.url?`<a class="pf-btn" href="${b.url}">Open in ${b.source} view →</a>`:'')
+   +`</div>`;
+  document.getElementById('pfDrawer').classList.add('open');
+}
+function pfCloseDrawer(){document.getElementById('pfDrawer').classList.remove('open')}
+let pfTt;function pfToast(m){const t=document.getElementById('pfToast');t.textContent=m;t.classList.add('show');clearTimeout(pfTt);pfTt=setTimeout(()=>t.classList.remove('show'),2600)}
+function pfRefresh(){pfRenderTree();pfCrumb();pfRenderList()}
+document.getElementById('pfTreeSearch').addEventListener('input',pfRenderTree);
+document.getElementById('pfModal').addEventListener('click',e=>{if(e.target.id==='pfModal')pfModalClose()});
+document.getElementById('pfConfirmInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!document.getElementById('pfConfirmBtn').disabled)pfConfirmDelete()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')pfModalClose()});
+pfFillAssign();pfRefresh();
+</script>
+{% endblock %}
