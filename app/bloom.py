@@ -286,6 +286,27 @@ def _clock(v):
     return f"{n // 100}:{n % 100:02d}"
 
 
+def _fmt_point(t, raw):
+    """Display string for a raw plant-sensor value, formatted by point type
+    (Bloom units aren't always numeric). Temperatures get °, humidity/valve/%
+    points get %, pressures a plain number, binaries On/Off."""
+    if t == "binary":
+        n = _num(raw)
+        return "On" if n == 1.0 else ("Off" if n == 0.0 else "—")
+    n = _num(raw)
+    if n is None:
+        return "—"
+    if t.endswith("-t"):                       # gen-t, ht-supply-t, …
+        return f"{n:.1f}°"
+    if t.endswith("-h"):                        # humidity
+        return f"{n:.0f}%"
+    if t in ("vlv-pos", "pmp-speed") or t.endswith("-pct"):
+        return f"{n:.0f}%"
+    if t.startswith("diff-pr"):                 # differential pressure / setpoint
+        return f"{n:.1f}"
+    return f"{n:g}"                             # modes, multistate, unknown
+
+
 # Friendly labels for the raw point dump (every known Bloom sensor type).
 POINT_LABELS = {
     "oat-act": "Outside air", "oat-web": "Outside (web)", "oat-sp-act": "Outdoor cutoff (active)",
@@ -312,12 +333,36 @@ def detail(data: dict) -> dict:
     c = card(data)
     pv, pumps = _sensor_index(building)
 
+    # Per-apartment humidity (space-h), joined to the space-t grid by sensor name.
+    rh_by_name = {s.get("name"): _num(s.get("pv"))
+                  for s in (building.get("sensors") or [])
+                  if s.get("type") == "space-h" and s.get("name")}
     apartments = sorted(
         ({"name": s.get("name"), "pv": _num(s.get("pv")),
+          "rh": rh_by_name.get(s.get("name")),
           "below": bool((s.get("stats") or {}).get("belowSetpoint"))}
          for s in (building.get("sensors") or []) if s.get("type") == "space-t" and s.get("name")),
         key=lambda a: a["name"] or "")
     n_active = sum(1 for a in apartments if a["pv"] is not None)
+
+    # Named plant/equipment sensors — HX supply/return per tower, the pumps,
+    # differential pressure, valve positions, modes, status points. These carry
+    # a `name`, so _sensor_index() drops them from the single-value map; surface
+    # them raw here so a heat-pump plant's detail page is not mostly blank.
+    # A point may appear un-zoned and again per zone (different readings), so keep
+    # each (name, zone) pair.
+    plant = []
+    for s in (building.get("sensors") or []):
+        nm, t = s.get("name"), s.get("type")
+        if not nm or t in ("space-t", "space-h"):
+            continue
+        assoc = s.get("assoc") or {}
+        plant.append({
+            "name": nm, "type": t, "label": POINT_LABELS.get(t, t),
+            "disp": _fmt_point(t, s.get("pv")),
+            "zone": assoc.get("key") if assoc.get("type") == "zone" else None,
+        })
+    plant.sort(key=lambda p: (p["name"] or "", p["zone"] or "", p["type"] or ""))
 
     schedule = {
         "mode": c["mode"], "current_setpoint": c["setpoint_f"],
@@ -345,7 +390,8 @@ def detail(data: dict) -> dict:
 
     return {"name": building.get("name"), "locid": building.get("locid"),
             "card": c, "apartments": apartments, "n_active": n_active,
-            "schedule": schedule, "readings": readings, "flags": flags, "alarms": alarms}
+            "schedule": schedule, "readings": readings, "flags": flags,
+            "plant": plant, "alarms": alarms}
 
 
 def _boilers_firing(building) -> bool:

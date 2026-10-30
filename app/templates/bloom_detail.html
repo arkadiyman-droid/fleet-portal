@@ -118,8 +118,19 @@
     <section class="bd-card bd-wide">
       <h2>Apartment / space temps ({{ d.n_active }} of {{ d.apartments|length }} reporting)</h2>
       <div class="bd-apts">
-        {% for ap in d.apartments %}<div class="bd-apt {{ 'below' if ap.below }}"><div class="n">{{ ap.name }}</div><div class="t">{{ tt(ap.pv) }}</div></div>{% endfor %}
+        {% for ap in d.apartments %}<div class="bd-apt {{ 'below' if ap.below }}"><div class="n">{{ ap.name }}</div><div class="t">{{ tt(ap.pv) }}</div>{% if ap.rh is not none %}<div class="n" style="margin-top:2px">{{ "%.0f"|format(ap.rh) }}% RH</div>{% endif %}</div>{% endfor %}
       </div>
+    </section>
+    {% endif %}
+
+    {% if d.plant %}
+    <section class="bd-card bd-wide">
+      <h2>Plant &amp; equipment ({{ d.plant|length }})</h2>
+      <details><summary>{{ d.plant|length }} plant / equipment sensors — HX temps, pumps, pressure, valves, modes</summary>
+        <table class="bd-points"><tbody>
+          {% for p in d.plant %}<tr><td>{{ p.name }}{% if p.zone %} <span class="code">{{ p.zone }}</span>{% endif %} <span class="code">{{ p.type }}</span></td><td>{{ p.disp }}</td></tr>{% endfor %}
+        </tbody></table>
+      </details>
     </section>
     {% endif %}
 
