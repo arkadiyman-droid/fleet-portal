@@ -126,10 +126,10 @@
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
     <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
-      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th>Alarm</th></tr></thead>
+      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th title="Domestic hot water supply to building — Reliable Controls (click for the chart)">DHW</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
-      <tr data-box="{{ r.box.id }}"{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
+      <tr data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
         <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
@@ -139,11 +139,13 @@
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
+        {% set dhs = c.get('dhw_supply') %}<td data-v="{{ dhs if dhs is not none else '' }}"{% if dhs is not none %} title="DHW supply to building{% if c.get('dhw_retn') is not none %} · return {{ c.get('dhw_retn') }}°{% endif %}{% if c.get('dhw_pump') is not none %} · pump {{ 'on' if c.get('dhw_pump') else 'off' }}{% endif %}{% if c.get('dhw_alarm') %} · ALARM{% endif %}"{% endif %}>{{ t(dhs) }}{% if c.get('dhw_alarm') %} ⚠{% endif %}</td>
         {% else %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td data-v="">{{ hhmm(c.heat_rt) }}</td><td data-v="">{{ hhmm(c.hw_rt) }}</td><td data-v="">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
+        <td>{{ t(c.get('dhw_supply')) }}</td>
         {% endif %}
         <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
       </tr>
@@ -153,7 +155,7 @@
   {% else %}
   <div class="lv-scroll lv-scroll-cards" id="lv-scroll"><div class="lv-grid">
   {% for r in rows %}{% set c = r.c or {} %}
-    <div class="lv-card {{ 'dark' if r.state != 'live' }}" data-box="{{ r.box.id }}">
+    <div class="lv-card {{ 'dark' if r.state != 'live' }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}>
       <div class="lv-head">
         {% set np = r.issues.problems|length %}
         {% if r.state == 'live' %}<button type="button" class="lv-badge lv-iss-open {{ 'alarm' if np }}" data-issues="{{ r.issues|tojson|forceescape }}" title="{{ ('%d problem%s: click to see' % (np, 's' if np != 1 else '')) if np else 'No problems: click for details' }}">{{ np if np else 'Ok' }}</button>
@@ -171,6 +173,9 @@
         {% if c.system == 'hot water' %}<div class="lv-row"><div><div class="k">Target</div><div class="v"{% if c.target is none %} title="No target: the box sets one only while calling for heat"{% endif %}>{{ t(c.target) }}</div></div>
           <div><div class="k">Supp</div><div class="v{{ vc(c, 'supp') if live }}">{{ t(c.supp) }}</div></div>
           <div><div class="k">Retn</div><div class="v{{ vc(c, 'retn') if live }}">{{ t(c.retn) }}</div></div></div>{% endif %}
+        {% if c.get('dhw_supply') is not none %}<div class="lv-row"><div><div class="k">DHW sup</div><div class="v"{% if c.get('dhw_alarm') %} style="color:#b91c1c" title="DHW pump alarm"{% endif %}>{{ t(c.get('dhw_supply')) }}°</div></div>
+          <div><div class="k">DHW ret</div><div class="v">{{ t(c.get('dhw_retn')) }}°</div></div>
+          <div><div class="k">DHW pump</div><div class="v" style="font-size:13px">{% if c.get('dhw_pump') is none %}—{% elif c.get('dhw_pump') %}on{% else %}off{% endif %}</div></div></div>{% endif %}
         <div class="lv-row"><div><div class="k">Heat RT</div><div class="v">{{ hhmm(c.heat_rt) }}</div></div>
           <div><div class="k">HW RT</div><div class="v">{{ hhmm(c.hw_rt) }}</div></div>
           <div><div class="k">Total</div><div class="v">{{ hhmm(c.total_rt) }}</div></div></div>
@@ -286,6 +291,7 @@
          '<a class="btn plain" style="background:#fff;color:var(--text);border:1px solid var(--border)" href="' + esc(d.url) + '">Building page</a></div>';
     pan.innerHTML = h;
     pan.dataset.box = host ? host.dataset.box : "";     // the Chart button opens this building (sensorchart.js)
+    pan.dataset.src = host ? (host.dataset.src || "") : "";
     pan.hidden = false; panFor = btn;
     const r = btn.getBoundingClientRect(), w = pan.offsetWidth;
     pan.style.left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - w - 8)) + "px";

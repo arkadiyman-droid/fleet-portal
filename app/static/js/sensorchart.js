@@ -13,7 +13,8 @@
  */
 (function () {
   "use strict";
-  const SERIES = {box: "/live/__ID__/series.json", ctrl: "/fleet/__ID__/series.json"};
+  const SERIES = {box: "/live/__ID__/series.json", ctrl: "/fleet/__ID__/series.json",
+                  bloom: "/skyline/__ID__/series.json"};
   const COLORS = ["#2563eb", "#16a34a", "#ea580c", "#dc2626", "#9333ea", "#0891b2", "#ca8a04", "#db2777",
                   "#4b5563", "#65a30d", "#7c3aed", "#0d9488"];
   const RANGES = [["1", "24 h"], ["2", "2 days"], ["7", "7 days"], ["30", "30 days"]];
@@ -68,7 +69,12 @@
     const el = ev.target.closest(".lv-t");
     if (!el || !el.dataset.k) return;
     const host = el.closest("[data-box], [data-ctrl]");
-    if (host) open(host.dataset.box || host.dataset.ctrl, el.dataset.k, host.dataset.box ? "box" : "ctrl");
+    if (!host) return;
+    let id, kind;
+    if (host.dataset.src === "bloom") { id = (host.dataset.box || "").replace(/^b/, ""); kind = "bloom"; }
+    else if (host.dataset.box !== undefined && host.dataset.box !== "") { id = host.dataset.box; kind = "box"; }
+    else { id = host.dataset.ctrl; kind = "ctrl"; }
+    open(id, el.dataset.k, kind);
   });
   $("lvx-close").addEventListener("click", close);
   dlg.addEventListener("click", ev => { if (ev.target === dlg) close(); });

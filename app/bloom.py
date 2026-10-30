@@ -537,11 +537,110 @@ def card(data: dict, view="", plant_tag=None) -> dict:
     }
 
 
+# ── history (the per-sensor chart) ───────────────────────────────────────────
+# Bloom keeps no history, so the poller records its own snapshots (BloomSample).
+# Chart keys use the same vocabulary as the Live wall's columns (live.html KEYS:
+# out/inside/dit/supp/retn/mix), so clicking a column just works, plus one key
+# per apartment ("apt:<name>"). Each entry: (chart key, card() field, label, group).
+_HIST_AGG = [
+    ("out", "outside_f", "Outside", "Plant"),
+    ("inside", "space_avg_f", "Space avg", "Spaces"),
+    ("smin", "space_min_f", "Space min", "Spaces"),
+    ("smax", "space_max_f", "Space max", "Spaces"),
+    ("supp", "supply_f", "Supply", "Plant"),
+    ("retn", "return_f", "Return", "Plant"),
+    ("dit", "setpoint_f", "Setpoint", "Plant"),
+    ("target", "supply_sp_f", "Htg setpt", "Plant"),
+    ("mix", "dhw_supply_f", "DHW (Bloom)", "Plant"),
+    ("boiler", "boiler_pct", "Boiler %", "Plant"),
+]
+_HIST_AGG_LABEL = {k: lbl for k, _ck, lbl, _grp in _HIST_AGG}
+_HIST_AGG_GROUP = {k: grp for k, _ck, _lbl, grp in _HIST_AGG}
+
+
+def history_sample(data: dict, view="", plant_tag=None) -> dict:
+    """A flat {chart-key: value} snapshot for one scoped building, for BloomSample:
+    the chartable aggregates from card() + each reporting apartment as
+    'apt:<name>'. Only present numeric values are kept, to keep the row small."""
+    c = card(data, view, plant_tag)
+    out = {}
+    for key, ck, _lbl, _grp in _HIST_AGG:
+        v = c.get(ck)
+        if v is not None:
+            out[key] = round(float(v), 2)
+    building = (data or {}).get("asset") or {}
+    for s in _view_spaces(building, view):
+        v = _num(s.get("pv"))
+        if v is not None and v >= DEAD_SPACE_F:
+            out["apt:" + s["name"]] = round(float(v), 2)
+    return out
+
+
+def _hist_label(key):
+    return key[4:] if key.startswith("apt:") else _HIST_AGG_LABEL.get(key, key)
+
+
+def _hist_group(key):
+    return "Apartments" if key.startswith("apt:") else _HIST_AGG_GROUP.get(key, "Other")
+
+
+def history_catalog(sample: dict) -> list:
+    """Chart catalog [{key,label,group}] from a sample's keys — aggregates in
+    their canonical order first, then apartments sorted by name."""
+    agg = [k for k, _ck, _lbl, _grp in _HIST_AGG if k in sample]
+    apts = sorted(k for k in sample if k.startswith("apt:"))
+    return [{"key": k, "label": _hist_label(k), "group": _hist_group(k)} for k in agg + apts]
+
+
+def series(asset, days, keys, now=None) -> dict:
+    """Chart data for one BloomAsset over `days`, matching the shape
+    app/analytics.box_sensor_series returns (t = epoch-ms, series{key:[...]},
+    catalog, labels). No burner bars for Bloom. Raw reads up to 7 days, hourly
+    averages beyond so a 30-day window stays light."""
+    from app.models import BloomSample
+    from app.analytics import _ms
+    now = now or _dt.datetime.utcnow()
+    start = now - _dt.timedelta(days=days)
+    rows = (BloomSample.query
+            .filter(BloomSample.asset_id == asset.id, BloomSample.ts >= start)
+            .order_by(BloomSample.ts).all())
+    catalog = history_catalog(rows[-1].data if rows else {})
+    labels = {c["key"]: c["label"] for c in catalog}
+    keys = [k for k in keys if k in labels][:12]
+    if not keys:                                     # a bare "Chart" open: show space avg
+        keys = [k for k in ("inside", "out", "supp") if k in labels][:1]
+    out = {"range": [_ms(start), _ms(now)], "labels": {k: labels[k] for k in keys},
+           "catalog": catalog, "series": {}, "days": days, "note": None,
+           "bars": {"t": [], "heat": [], "hw": [], "step": "hour"}}
+    if days > 7 and rows:
+        buckets = {}
+        for r in rows:
+            h = r.ts.replace(minute=0, second=0, microsecond=0)
+            b = buckets.setdefault(h, {})
+            for k, v in (r.data or {}).items():
+                b.setdefault(k, []).append(v)
+        hs = sorted(buckets)
+        out["res"] = "hourly averages"
+        out["t"] = [_ms(h) for h in hs]
+        for k in keys:
+            out["series"][k] = [round(sum(buckets[h][k]) / len(buckets[h][k]), 1) if k in buckets[h] else None
+                                for h in hs]
+    else:
+        out["res"] = "every read"
+        out["t"] = [_ms(r.ts) for r in rows]
+        for k in keys:
+            out["series"][k] = [(r.data or {}).get(k) for r in rows]
+    if not rows:
+        out["note"] = "No history yet — readings are recorded from now on."
+    return out
+
+
 # ── Poller ───────────────────────────────────────────────────────────────────
 
 class BloomPoller:
     def __init__(self):
         self._thread = None
+        self._last_prune = 0.0
 
     def start(self, app) -> None:
         if not app.config.get("BLOOM_POLLER_ENABLED", True):
@@ -579,9 +678,25 @@ class BloomPoller:
                 except Exception as e:
                     db.session.rollback()
                     log.warning("Bloom alert check failed: %s", e)
+                try:
+                    self._maybe_prune(app)
+                except Exception as e:
+                    db.session.rollback()
+                    log.warning("Bloom sample prune failed: %s", e)
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
                 conn.close()
+
+    def _maybe_prune(self, app):
+        """Drop samples older than BLOOM_RAW_DAYS, at most hourly (app context assumed)."""
+        nowm = time.monotonic()
+        if self._last_prune and nowm - self._last_prune < 3600:
+            return
+        self._last_prune = nowm
+        days = app.config.get("BLOOM_RAW_DAYS", 30)
+        cut = _dt.datetime.utcnow() - _dt.timedelta(days=days)
+        db.session.execute(text("DELETE FROM bloom_samples WHERE ts < :cut"), {"cut": cut})
+        db.session.commit()
 
 
 def poll_account(app, account):
@@ -637,7 +752,40 @@ def poll_account(app, account):
             st.data = {"asset": b, "alarms": alarms.get(str(asset_key(b)), [])}
         db.session.add(st)
     db.session.commit()
+    # History snapshots for the per-sensor chart (throttled per asset).
+    try:
+        _record_samples(app, rows, by_key, by_name, now)
+    except Exception as e:
+        db.session.rollback()
+        log.warning("Bloom sample write failed for %s: %s", account.label, e)
     log.info("Bloom poll %s: %d buildings seen, %d rows updated", account.label, len(by_key), len(rows))
+
+
+def _record_samples(app, rows, by_key, by_name, now):
+    """Append a BloomSample per active row whose newest sample is older than
+    BLOOM_SAMPLE_MIN_SECONDS, from the same building objects the status used."""
+    from sqlalchemy import func
+    from app.models import BloomSample
+    every = app.config.get("BLOOM_SAMPLE_MIN_SECONDS", 300)
+    ids = [r.id for r in rows]
+    if not ids:
+        return
+    last = dict(db.session.query(BloomSample.asset_id, func.max(BloomSample.ts))
+                .filter(BloomSample.asset_id.in_(ids)).group_by(BloomSample.asset_id).all())
+    added = 0
+    for row in rows:
+        b = by_key.get(str(row.asset_key)) or by_name.get(norm_name(row.name))
+        if b is None:
+            continue
+        lt = last.get(row.id)
+        if lt is not None and (now - lt).total_seconds() < every:
+            continue
+        sample = history_sample({"asset": b}, row.view, row.plant_tag)
+        if sample:
+            db.session.add(BloomSample(asset_id=row.id, ts=now, data=sample))
+            added += 1
+    if added:
+        db.session.commit()
 
 
 bloom_poller = BloomPoller()

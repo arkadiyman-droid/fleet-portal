@@ -1121,7 +1121,7 @@ def _tag_legacy_rows(rows):
     return rows
 
 
-def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, problems, why=None, firing=None):
+def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, problems, why=None, firing=None, keys=""):
     """A Live row for a non-oBIX building (Bloom or EchoTherm), shaped like a
     legacy row so live.html renders it unchanged: box is a namespace (so
     row.box.name works in Python sorts and Jinja), oBIX-only card fields are
@@ -1134,13 +1134,21 @@ def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, prob
             "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing,
             "problem": bool(problems) or state != "live",
             "issues": {"name": name, "problems": list(problems or []), "notes": [], "events": [],
-                       "keys": "", "url": detail_url}}
+                       "keys": keys, "url": detail_url}}
 
 
 def _bloom_live_rows(now_dt):
     from app import bloom
     stale = timedelta(minutes=current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) // 60 + 10)
     out = []
+    # DHW (Reliable Controls scrape, app/rc_dhw.py) by building, so a Bloom row
+    # on a building with a DHW tower can show its hot-water supply. Prefetched
+    # once to avoid an N+1 across the wall.
+    from app.models import RcDhwTower
+    dhw_by_building = {}
+    for tw in RcDhwTower.query.filter(RcDhwTower.is_active.is_(True)).all():
+        if tw.building_id and tw.status and tw.status.ok:
+            dhw_by_building[tw.building_id] = tw.status
     assets = (BloomAsset.query.filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
               .order_by(BloomAsset.name).all())
     for a in assets:
@@ -1160,9 +1168,14 @@ def _bloom_live_rows(now_dt):
              "aqua": None, "coil": None, "mix": card["dhw_supply_f"], "stack": None, "hi_stack": None, "water": None,
              "supp": card["supply_f"], "retn": card["return_f"], "risr": None,
              "target": card["supply_sp_f"], "oil_pct": None,
+             "dhw_supply": None, "dhw_retn": None, "dhw_pump": None, "dhw_alarm": None,
              "system": "hot water", "system_label": "Bloom · Skyline", "fuel": None, "n_boilers": 0, "tint": {}}
+        ds = dhw_by_building.get(a.building_id)
+        if ds:
+            c["dhw_supply"], c["dhw_retn"] = ds.supply_f, ds.return_f
+            c["dhw_pump"], c["dhw_alarm"] = ds.pump_running, ds.alarm
         out.append(_other_row(a.name, "bloom", f"b{a.id}", c, "live", last_ok, now_dt, url,
-                              card.get("alarms") or [], firing=card.get("firing")))
+                              card.get("alarms") or [], firing=card.get("firing"), keys="inside"))
     return out
 
 
@@ -1401,6 +1414,22 @@ def skyline_building(asset_id):
                    and "/skyline/" not in urlparse(ref).path) else url_for("admin.live_page")
     return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back,
                            read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago)
+
+
+@admin_bp.route("/skyline/<int:asset_id>/series.json")
+def skyline_series(asset_id):
+    """The Live page's pop-up chart for a Bloom building (app/bloom.series).
+    Same shape as a legacy box's /live/<id>/series.json."""
+    if not is_superuser():
+        abort(403)
+    from app import bloom
+    a = BloomAsset.query.get_or_404(asset_id)
+    days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
+    keys = [k for k in request.args.get("keys", "").split(",") if k]
+    data = bloom.series(a, days, keys)
+    data["name"] = a.name
+    data["url"] = url_for("admin.skyline_building", asset_id=a.id)
+    return jsonify(data)
 
 
 @admin_bp.route("/portfolio")

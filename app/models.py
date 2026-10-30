@@ -802,6 +802,25 @@ class BloomStatus(db.Model):
         return f"<BloomStatus asset_id={self.asset_id} ok={self.ok}>"
 
 
+class BloomSample(db.Model):
+    """A time-series snapshot of one Bloom asset's chartable readings, appended
+    by the poller (throttled, app/bloom.py) and pruned to BLOOM_RAW_DAYS. `data`
+    is a flat {chart-key: value} map (out/inside/supp/retn/..., and apt:<name>
+    per apartment) built by bloom.history_sample; the per-sensor chart reads
+    these (bloom.series). Bloom has no history of its own, so this is the only
+    record — unlike the legacy boxes (LegacyReading/LegacyHourly)."""
+    __tablename__ = "bloom_samples"
+    __table_args__ = (db.Index("ix_bloom_samples_asset_ts", "asset_id", "ts"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("bloom_assets.id", ondelete="CASCADE"), nullable=False)
+    ts = db.Column(db.DateTime, nullable=False)
+    data = db.Column(JSONB, nullable=False)
+
+    def __repr__(self):
+        return f"<BloomSample asset_id={self.asset_id} ts={self.ts}>"
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are
