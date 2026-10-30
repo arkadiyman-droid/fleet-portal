@@ -219,6 +219,22 @@ def _sensor_index(building):
     return pv, pumps
 
 
+def _named_num(building, *contains):
+    """pv of the first building-level (UN-zoned) sensor whose name contains all
+    the given substrings (case-insensitive). Zoned copies are skipped on
+    purpose: on a dual-temp plant the zoned 'PDT BLDG A SUPPLY' points are the
+    chilled/cooling side (~50F), the un-zoned one is the heating loop (~94F).
+    Lets a heat-pump plant's named plant points feed the single-value card."""
+    want = [w.lower() for w in contains]
+    for s in building.get("sensors") or []:
+        nm = (s.get("name") or "").lower()
+        if not nm or (s.get("assoc") or {}).get("type") == "zone":
+            continue
+        if all(w in nm for w in want):
+            return _num(s.get("pv"))
+    return None
+
+
 def _space_count(building):
     """(reporting space sensors, below-setpoint count)."""
     spaces = [s for s in building.get("sensors") or []
@@ -254,6 +270,16 @@ def _points(building):
     # (oat-act); fall back to Bloom's weather-service outdoor (oat-web).
     if out["outside_f"] is None:
         out["outside_f"] = _num(pv.get("oat-web"))
+    # Heat-pump / dual-temp plants carry no boiler supply/return (ht-supply-t,
+    # ht-ret-t). Fall back to the Primary Dual Temp building-distribution loop
+    # — confirmed against the Reliable Controls plant graphic — using the
+    # un-zoned 'PDT BLDG A SUPPLY/RETURN' heating temps (the zoned copies are
+    # the cooling side; _named_num skips them). A boiler plant has no such
+    # named points, so this stays None and nothing changes there.
+    if out["supply_f"] is None:
+        out["supply_f"] = _named_num(building, "bldg a", "supply")
+    if out["return_f"] is None:
+        out["return_f"] = _named_num(building, "bldg a", "return")
     return out
 
 
