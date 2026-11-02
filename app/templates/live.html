@@ -3,10 +3,11 @@
 {% block main_class %}full{% endblock %}
 {% block head %}
 <style>
-  .lv-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 12px; }
-  .lv-bar a.f { padding:4px 10px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:13px; background:#fff; }
+  .page-head { margin-bottom:6px; }
+  .lv-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 6px; }
+  .lv-bar a.f { padding:3px 9px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:12.5px; background:#fff; }
   .lv-bar a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
-  .lv-ticker { background:#1f2937; color:#e5e7eb; border-radius:8px; padding:8px 12px; margin:0 0 12px; font-size:14px; }
+  .lv-ticker { background:#1f2937; color:#e5e7eb; border-radius:8px; padding:4px 10px; margin:0 0 6px; font-size:13px; }
   .lv-ticker b { color:#7dd3fc; }
   .lv-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(215px, 1fr)); gap:12px; }
   .lv-card { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
@@ -28,7 +29,7 @@
   .lv-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
   .lv-oil { height:8px; border-radius:4px; background:#fee2e2; overflow:hidden; margin:4px 10px; } .lv-oil div { height:100%; background:#16a34a; }
-  .lv-table td, .lv-table th { white-space:nowrap; font-size:13.5px; padding:6px 10px; }
+  .lv-table td, .lv-table th { white-space:nowrap; font-size:13.5px; padding:3px 10px; }
   /* Table view: the table scrolls inside its own box sized to the window, so
      everything above it stays put; the column headings stick to its top and
      the tick + Building columns stick to its left. */
@@ -52,7 +53,8 @@
   .lv-out { color:#1d4ed8; }
   .lv-fire { width:14px; height:14px; vertical-align:-2px; }
   .lv-fire.on { color:#dc2626; } .lv-fire.off { color:#d1d5db; }
-  .lv-legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 12px; }
+  .lv-legend { display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; font-size:12px; color:var(--muted); margin:2px 0 6px; }
+  .lv-legend[hidden] { display:none; }
   .lv-legend i { display:inline-block; width:14px; height:12px; border-radius:3px; vertical-align:-2px; margin-right:4px; font-style:normal; }
   /* the badge opens the building's issue panel */
   button.lv-badge { border:none; cursor:pointer; font-family:inherit; line-height:1.4; }
@@ -103,12 +105,13 @@
     {% for key, label in [('problems', 'Problems first'), ('name', 'Name'), ('hi_stack', 'Hi stack'), ('aqua', 'Aquastat'), ('coil', 'Coil')] %}
       <a class="f {{ 'on' if sort == key }}" href="{{ url_for('admin.live_page', show=show, source=source, sort=key, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
+    {% if show != 'hidden' and rows %}<a class="f" id="lv-legend-tog" href="#" title="Show or hide the colour key">Legend</a>{% endif %}
     <a class="f" style="margin-left:auto" href="{{ url_for('admin.live_page', show=show, source=source, sort=sort, view=('cards' if view == 'table' else 'table'), q=q) }}">{{ 'Cards' if view == 'table' else 'Table' }}</a>
     <form method="get" action="{{ url_for('admin.live_page') }}"><input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="source" value="{{ source }}"><input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="view" value="{{ view }}">
       <input name="q" value="{{ q }}" placeholder="Search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px"></form>
   </div>
 
-  {% if show != 'hidden' and rows %}<div class="lv-legend">{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
+  {% if show != 'hidden' and rows %}<div class="lv-legend" id="lv-legend" hidden>{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
     <span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
@@ -315,16 +318,29 @@
 </script>
   <script>
   (function () {
+    // The colour legend is collapsed by default so the data gets the vertical
+    // space; the viewer's show/hide choice is remembered in this browser.
+    const leg = document.getElementById("lv-legend"), tog = document.getElementById("lv-legend-tog");
+    let legOpen = false;
+    try { legOpen = localStorage.getItem("lv-legend-open") === "1"; } catch (e) {}
+    const applyLeg = () => { if (leg) leg.hidden = !legOpen; if (tog) tog.classList.toggle("on", legOpen); };
+    applyLeg();
     // Both views: the table or the cards scroll inside a box fitted to the rest
     // of the window, so the title, filters and legend above never scroll away.
     const box = document.getElementById("lv-scroll");
-    if (!box) return;
     const fit = () => {
+      if (!box) return;
       const top = box.getBoundingClientRect().top + window.scrollY;
       box.style.maxHeight = Math.max(320, window.innerHeight - top - 20) + "px";
     };
     fit();
     window.addEventListener("resize", fit);
+    if (tog) tog.addEventListener("click", (e) => {
+      e.preventDefault(); legOpen = !legOpen;
+      try { localStorage.setItem("lv-legend-open", legOpen ? "1" : "0"); } catch (e) {}
+      applyLeg(); fit();
+    });
+    if (!box) return;
     // The page reloads every minute: keep the viewer's place (per view and filter).
     const key = "lv-scroll:" + location.search;
     try { const p = JSON.parse(sessionStorage.getItem(key) || "null"); if (p) { box.scrollTop = p[0]; box.scrollLeft = p[1]; } } catch (e) {}
