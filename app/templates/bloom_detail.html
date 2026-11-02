@@ -68,7 +68,6 @@
   </div>
   <div class="bd-kv">
     {% if g.get('gel_220') %}<div class="k">Flow</div><div class="v">{{ g.get('gel_220') }}</div>{% endif %}
-    {% if g.get('gel_204') %}<div class="k">Mixing-valve temp</div><div class="v">{{ g.get('gel_204') }}</div>{% endif %}
     {% if g.get('gel_216') %}<div class="k">HX leaving (1/2/3)</div><div class="v">{{ g.get('gel_216') }} / {{ g.get('gel_212') }} / {{ g.get('gel_200') }}</div>{% endif %}
     {% if g.get('gel_192') %}<div class="k">HX entering (1/2/3)</div><div class="v">{{ g.get('gel_192') }} / {{ g.get('gel_188') }} / {{ g.get('gel_196') }}</div>{% endif %}
     <div class="k">DHW pump alarms</div><div class="v">{% if dhw.alarm %}<b style="color:var(--bd-crit)">alarm</b>{% else %}OK{% endif %}</div>

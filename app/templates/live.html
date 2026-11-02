@@ -126,7 +126,7 @@
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
     <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
-      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th>Mix</th><th>Water</th><th title="Domestic hot water supply to building — Reliable Controls (click for the chart)">DHW</th><th>Alarm</th></tr></thead>
+      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
@@ -138,14 +138,14 @@
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
-        <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td><td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
-        {% set dhs = c.get('dhw_supply') %}<td data-v="{{ dhs if dhs is not none else '' }}"{% if dhs is not none %} title="DHW supply to building{% if c.get('dhw_retn') is not none %} · return {{ c.get('dhw_retn') }}°{% endif %}{% if c.get('dhw_pump') is not none %} · pump {{ 'on' if c.get('dhw_pump') else 'off' }}{% endif %}{% if c.get('dhw_alarm') %} · ALARM{% endif %}"{% endif %}>{{ t(dhs) }}{% if c.get('dhw_alarm') %} ⚠{% endif %}</td>
+        <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td>
+        {% set dhs = c.get('dhw_supply') %}{% if dhs is not none %}<td data-v="{{ dhs }}" title="DHW supply to building — Reliable Controls{% if c.get('dhw_retn') is not none %} · return {{ c.get('dhw_retn') }}°{% endif %}{% if c.get('dhw_pump') is not none %} · pump {{ 'on' if c.get('dhw_pump') else 'off' }}{% endif %}{% if c.get('dhw_alarm') %} · ALARM{% endif %}">{{ t(dhs) }}{% if c.get('dhw_alarm') %} ⚠{% endif %}</td>{% else %}<td{{ tc(c, 'mix') }}>{{ t(c.mix) }}</td>{% endif %}<td>{{ t(c.water) }}</td>
         {% else %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td>{{ t(c.out) }}</td><td>{{ t(c.inside) }}</td><td>{{ t(c.dit) }}</td>
         <td data-v="">{{ hhmm(c.heat_rt) }}</td><td data-v="">{{ hhmm(c.hw_rt) }}</td><td data-v="">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td>{{ t(c.supp) }}</td><td>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
-        <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td><td>{{ t(c.mix) }}</td><td>{{ t(c.water) }}</td>
-        <td>{{ t(c.get('dhw_supply')) }}</td>
+        <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td>
+        {% set dhs = c.get('dhw_supply') %}<td>{{ t(dhs if dhs is not none else c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% endif %}
         <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
       </tr>
@@ -181,7 +181,7 @@
           <div><div class="k">Total</div><div class="v">{{ hhmm(c.total_rt) }}</div></div></div>
         <div class="lv-row"><div><div class="k">Aquastat</div><div class="v{{ vc(c, 'aqua') if live }}">{{ t(c.aqua) }}</div></div>
           <div><div class="k">Coil</div><div class="v{{ vc(c, 'coil') if live }}">{{ t(c.coil) }}</div></div>
-          <div><div class="k">Mix</div><div class="v{{ vc(c, 'mix') if live }}">{{ t(c.mix) }}</div></div></div>
+          <div><div class="k">DHW</div><div class="v{{ vc(c, 'mix') if live }}">{{ t(c.mix) }}</div></div></div>
         <div class="lv-row small"><div><div class="k">Stack</div><div class="v{{ vc(c, 'stack') if live }}">{{ t(c.stack) }}</div></div>
           <div><div class="k">Hi stack</div><div class="v">{{ t(c.hi_stack) }}</div></div>
           <div><div class="k">Water</div><div class="v">{{ t(c.water) }}</div></div></div>
@@ -225,7 +225,7 @@
   // A table column or a card label names the sensor; sensorchart.js opens the chart.
   const KEYS = {"Out": "out", "Avg": "inside", "Inside": "inside", "DIT": "dit", "Supp": "supp", "Retn": "retn",
                 "Risr": "risr", "Target": "dsup,supp", "Stack": "stack", "Hi stk": "hi_stack", "Hi stack": "hi_stack", "Aqua": "aqua",
-                "Aquastat": "aqua", "Coil": "coil", "Mix": "mix"};
+                "Aquastat": "aqua", "Coil": "coil", "DHW": "mix"};
   const table = document.querySelector(".lv-table");
   if (table) {
     const heads = Array.from(table.tHead.rows[0].cells).map(th => th.textContent.trim());
