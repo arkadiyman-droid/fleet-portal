@@ -58,15 +58,8 @@
   .lv-table tbody tr:hover td.t-cold, .lv-table tbody tr:hover td.t-hot, .lv-table tbody tr:hover td.t-wx, .lv-table tbody tr:hover td.t-scald,
   .lv-table tbody tr:hover td.t-ofrig, .lv-table tbody tr:hover td.t-ocold, .lv-table tbody tr:hover td.t-ocool, .lv-table tbody tr:hover td.t-owarm { filter:brightness(.95); }
   /* Anagha's colours (decoded 2026-10-15) — the same palette in the table and on the cards */
-  .t-cold { background:#2675b9 !important; color:#fff !important; }
-  .t-hot { background:#eb0f2d !important; color:#fff !important; }
-  .t-wx { background:#09d3bb !important; color:#062e2a !important; }
-  .t-scald { background:#ff9933 !important; color:#1f1300 !important; }
-  /* outdoor temperature band — a weather gradient, frigid → warm */
-  .t-ofrig { background:#1e3a8a !important; color:#fff !important; }
-  .t-ocold { background:#2675b9 !important; color:#fff !important; }
-  .t-ocool { background:#cfe2f3 !important; color:#1e3a5f !important; }
-  .t-owarm { background:#f6b26b !important; color:#3d2800 !important; }
+  /* the t-cold/hot/wx/scald + outdoor t-o* colours live in base.html (shared
+     with the detail pages); these rules add the table/card geometry. */
   .lv-table td.t-cold, .lv-table td.t-hot, .lv-table td.t-wx, .lv-table td.t-scald,
   .lv-table td.t-ofrig, .lv-table td.t-ocold, .lv-table td.t-ocool, .lv-table td.t-owarm { font-weight:700; text-align:center; cursor:help; }
   .lv-row .v.t-cold, .lv-row .v.t-hot, .lv-row .v.t-wx, .lv-row .v.t-scald,

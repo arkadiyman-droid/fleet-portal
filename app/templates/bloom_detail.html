@@ -33,6 +33,10 @@
   .bd-metrics .k{font-size:10px;text-transform:uppercase;color:var(--muted);letter-spacing:.03em}
   .bd-metrics .v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;font-family:var(--bd-mono)}
   .bd-metrics .v.cool{color:var(--bd-heat)} .bd-metrics .v.hot{color:var(--bd-crit)}
+  /* Anagha temperature bands (colours in base.html) as inline pills */
+  .bd-metrics .v.t-cold,.bd-metrics .v.t-hot,.bd-metrics .v.t-wx,.bd-metrics .v.t-scald,
+  .bd-metrics .v.t-ofrig,.bd-metrics .v.t-ocold,.bd-metrics .v.t-ocool,.bd-metrics .v.t-owarm{
+    display:inline-block;padding:1px 10px;border-radius:7px;cursor:help}
   .bd-kv{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13.5px}
   .bd-kv .k{color:var(--muted)} .bd-kv .v{font-variant-numeric:tabular-nums;text-align:right}
   .bd-alist{list-style:none;margin:0;padding:0} .bd-alist li{padding:8px 10px;border-radius:8px;background:var(--bd-critbg);color:var(--bd-crit);margin-bottom:6px;font-size:13px}
@@ -51,6 +55,8 @@
 {% endblock %}
 {% block content %}
 {% macro tt(v, suffix='°') %}{% if v is not none %}{{ "%.0f"|format(v) }}{{ suffix }}{% else %}—{% endif %}{% endmacro %}
+{% macro tcls(key) %}{% set x = tints.get(key) %}{% if x %} t-{{ x[0] }}{% endif %}{% endmacro %}
+{% macro ttl(key) %}{% set x = tints.get(key) %}{% if x %} title="{{ x[1] }}"{% endif %}{% endmacro %}
 <div class="bd-top">
   <a class="bd-back" href="{{ back }}">← Back</a>
   <h1>{{ a.name }} <span class="bd-src">Skyline · Bloom</span></h1>
@@ -61,7 +67,7 @@
 <section class="bd-card bd-wide" style="margin-bottom:14px">
   <h2>DHW System {{ a.plant_tag or '' }} — Reliable Controls{% if dhw.alarm %} <span class="bd-pill crit" style="margin-left:8px">ALARM</span>{% endif %}</h2>
   <div class="bd-metrics" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
-    <div><div class="k">Supply to bldg</div><div class="v {{ 'hot' if dhw.supply_f and dhw.supply_f>=120 }}">{{ tt(dhw.supply_f) }}</div></div>
+    <div><div class="k">Supply to bldg</div><div class="v{{ tcls('dhw_rc') }}"{{ ttl('dhw_rc') }}>{{ tt(dhw.supply_f) }}</div></div>
     <div><div class="k">Return from bldg</div><div class="v">{{ tt(dhw.return_f) }}</div></div>
     <div><div class="k">&Delta;T</div><div class="v">{% if dhw.supply_f is not none and dhw.return_f is not none %}{{ "%.1f"|format(dhw.supply_f - dhw.return_f) }}°{% else %}—{% endif %}</div></div>
     <div><div class="k">Pump</div><div class="v" style="font-size:14px">{% if dhw.pump_running is none %}—{% elif dhw.pump_running %}<b style="color:var(--bd-heat)">RUNNING</b>{% else %}off{% endif %}</div></div>
@@ -92,14 +98,14 @@
     <section class="bd-card">
       <h2>Readings <span class="card-sub" style="text-transform:none;font-weight:400">· click a value for its history</span></h2>
       <div class="bd-metrics">
-        <div><div class="k">Outside</div><div class="v cool{{ ' lv-t' if c.outside_f is not none }}"{% if c.outside_f is not none %} data-k="out"{% endif %}>{{ tt(c.outside_f) }}</div></div>
-        <div><div class="k">Space avg</div><div class="v{{ ' lv-t' if c.space_avg_f is not none }}"{% if c.space_avg_f is not none %} data-k="inside"{% endif %}>{{ tt(c.space_avg_f) }}</div></div>
+        <div><div class="k">Outside</div><div class="v{{ tcls('out') }}{{ ' lv-t' if c.outside_f is not none }}"{{ ttl('out') }}{% if c.outside_f is not none %} data-k="out"{% endif %}>{{ tt(c.outside_f) }}</div></div>
+        <div><div class="k">Space avg</div><div class="v{{ tcls('inside') }}{{ ' lv-t' if c.space_avg_f is not none }}"{{ ttl('inside') }}{% if c.space_avg_f is not none %} data-k="inside"{% endif %}>{{ tt(c.space_avg_f) }}</div></div>
         <div><div class="k">Setpoint</div><div class="v{{ ' lv-t' if c.setpoint_f is not none }}"{% if c.setpoint_f is not none %} data-k="dit"{% endif %}>{{ tt(c.setpoint_f) }}</div></div>
-        <div><div class="k">Supply</div><div class="v {{ 'hot' if c.supply_f and c.supply_f>=95 }}{{ ' lv-t' if c.supply_f is not none }}"{% if c.supply_f is not none %} data-k="supp"{% endif %}>{{ tt(c.supply_f) }}</div></div>
-        <div><div class="k">Return</div><div class="v{{ ' lv-t' if c.return_f is not none }}"{% if c.return_f is not none %} data-k="retn"{% endif %}>{{ tt(c.return_f) }}</div></div>
+        <div><div class="k">Supply</div><div class="v{{ tcls('supp') }}{{ ' lv-t' if c.supply_f is not none }}"{{ ttl('supp') }}{% if c.supply_f is not none %} data-k="supp"{% endif %}>{{ tt(c.supply_f) }}</div></div>
+        <div><div class="k">Return</div><div class="v{{ tcls('retn') }}{{ ' lv-t' if c.return_f is not none }}"{{ ttl('retn') }}{% if c.return_f is not none %} data-k="retn"{% endif %}>{{ tt(c.return_f) }}</div></div>
         <div><div class="k">Htg setpt</div><div class="v{{ ' lv-t' if c.supply_sp_f is not none }}"{% if c.supply_sp_f is not none %} data-k="target"{% endif %}>{{ tt(c.supply_sp_f) }}</div></div>
         <div><div class="k">Boiler %</div><div class="v{{ ' lv-t' if c.boiler_pct is not none }}"{% if c.boiler_pct is not none %} data-k="boiler"{% endif %}>{{ tt(c.boiler_pct, '%') }}</div></div>
-        <div><div class="k">DHW</div><div class="v {{ 'hot' if c.dhw_supply_f and c.dhw_supply_f>=140 }}{{ ' lv-t' if c.dhw_supply_f is not none }}"{% if c.dhw_supply_f is not none %} data-k="mix"{% endif %}>{{ tt(c.dhw_supply_f) }}</div></div>
+        <div><div class="k">DHW</div><div class="v{{ tcls('mix') }}{{ ' lv-t' if c.dhw_supply_f is not none }}"{{ ttl('mix') }}{% if c.dhw_supply_f is not none %} data-k="mix"{% endif %}>{{ tt(c.dhw_supply_f) }}</div></div>
         <div><div class="k">Space min/max</div><div class="v{{ ' lv-t' if (c.space_min_f is not none or c.space_max_f is not none) }}"{% if c.space_min_f is not none or c.space_max_f is not none %} data-k="smin,smax"{% endif %} style="font-size:14px">{{ tt(c.space_min_f) }} / {{ tt(c.space_max_f) }}</div></div>
       </div>
     </section>

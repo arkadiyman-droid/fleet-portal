@@ -689,7 +689,11 @@ def fleet_overview():
 def fleet_controller(controller_id):
     ctrl = Controller.query.get_or_404(controller_id)
     require_role("viewer", ctrl)
-    return render_template("fleet_controller.html", title=ctrl.name, card=_card(ctrl), status=ctrl.status,
+    card = _card(ctrl)
+    from app.legacy import tint as _tint              # outdoor weather band, same as the Live wall
+    _h = (card.get("eval") or {}).get("heating") or {}
+    otint = _tint({"out": _h.get("outdoor")}, None, None, None, []).get("out")
+    return render_template("fleet_controller.html", title=ctrl.name, card=card, status=ctrl.status, otint=otint,
                            raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow())
 
 
@@ -1453,8 +1457,21 @@ def skyline_building(asset_id):
     ref = request.referrer or ""
     back = ref if (ref and urlparse(ref).netloc == request.host
                    and "/skyline/" not in urlparse(ref).path) else url_for("admin.live_page")
+    # Same Anagha cell colours as the Live wall (supply/return loop, outdoor
+    # band, comfort cell, hot water), computed from the card's readings.
+    tints = {}
+    if d:
+        from app.legacy import tint as _tint, dhw_tint as _dhw_tint
+        cc = d["card"]
+        role = {"out": cc.get("outside_f"), "supp": cc.get("supply_f"),
+                "retn": cc.get("return_f"), "mix": cc.get("dhw_supply_f")}
+        tints = _tint(role, cc.get("space_avg_f"), cc.get("setpoint_f"), None, [])
+        if dhw and dhw.supply_f is not None:            # Reliable Controls DHW tower
+            rc = _dhw_tint(dhw.supply_f)
+            if rc:
+                tints["dhw_rc"] = rc
     return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back,
-                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago)
+                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago, tints=tints)
 
 
 @admin_bp.route("/skyline/<int:asset_id>/series.json")
