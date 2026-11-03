@@ -55,14 +55,22 @@
   .lv-table tbody tr.sev-crit td { background:#fef2f2; }
   .lv-table tbody tr.sev-warn td { background:#fffbeb; }
   .lv-table tbody tr:hover td { background:#f8fafc; }
-  .lv-table tbody tr:hover td.t-cold, .lv-table tbody tr:hover td.t-hot, .lv-table tbody tr:hover td.t-wx, .lv-table tbody tr:hover td.t-scald { filter:brightness(.95); }
+  .lv-table tbody tr:hover td.t-cold, .lv-table tbody tr:hover td.t-hot, .lv-table tbody tr:hover td.t-wx, .lv-table tbody tr:hover td.t-scald,
+  .lv-table tbody tr:hover td.t-ofrig, .lv-table tbody tr:hover td.t-ocold, .lv-table tbody tr:hover td.t-ocool, .lv-table tbody tr:hover td.t-owarm { filter:brightness(.95); }
   /* Anagha's colours (decoded 2026-10-15) — the same palette in the table and on the cards */
   .t-cold { background:#2675b9 !important; color:#fff !important; }
   .t-hot { background:#eb0f2d !important; color:#fff !important; }
   .t-wx { background:#09d3bb !important; color:#062e2a !important; }
   .t-scald { background:#ff9933 !important; color:#1f1300 !important; }
-  .lv-table td.t-cold, .lv-table td.t-hot, .lv-table td.t-wx, .lv-table td.t-scald { font-weight:700; text-align:center; cursor:help; }
-  .lv-row .v.t-cold, .lv-row .v.t-hot, .lv-row .v.t-wx, .lv-row .v.t-scald { border-radius:6px; margin:0 6px; cursor:help; }
+  /* outdoor temperature band — a weather gradient, frigid → warm */
+  .t-ofrig { background:#1e3a8a !important; color:#fff !important; }
+  .t-ocold { background:#2675b9 !important; color:#fff !important; }
+  .t-ocool { background:#cfe2f3 !important; color:#1e3a5f !important; }
+  .t-owarm { background:#f6b26b !important; color:#3d2800 !important; }
+  .lv-table td.t-cold, .lv-table td.t-hot, .lv-table td.t-wx, .lv-table td.t-scald,
+  .lv-table td.t-ofrig, .lv-table td.t-ocold, .lv-table td.t-ocool, .lv-table td.t-owarm { font-weight:700; text-align:center; cursor:help; }
+  .lv-row .v.t-cold, .lv-row .v.t-hot, .lv-row .v.t-wx, .lv-row .v.t-scald,
+  .lv-row .v.t-ofrig, .lv-row .v.t-ocold, .lv-row .v.t-ocool, .lv-row .v.t-owarm { border-radius:6px; margin:0 6px; cursor:help; }
   .lv-out { color:#1d4ed8; }
   .lv-fire { width:14px; height:14px; vertical-align:-2px; }
   .lv-fire.on { color:#dc2626; } .lv-fire.off { color:#d1d5db; }
@@ -127,7 +135,8 @@
   </div>
 
   {% if show != 'hidden' and rows %}<div class="lv-legend" id="lv-legend" hidden>{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
-    <span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span>
+    <span class="lv-sep"></span><span>Outdoor:</span><span><i class="t-ofrig"></i>frigid ≤20°</span><span><i class="t-ocold"></i>cold 21–40°</span><span><i class="t-ocool"></i>cool 41–60°</span><span>61–75° plain</span><span><i class="t-owarm"></i>warm &gt;75°</span>
+    <span class="lv-sep"></span><span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span>
     <span class="lv-sep"></span><span>Row stripe:</span><span><i style="background:#dc2626"></i>problem</span><span><i style="background:#f59e0b"></i>warning</span><span><i style="background:#3b82f6"></i>heat call</span><span><i style="background:#22c55e"></i>ok</span><span><i style="background:#9ca3af"></i>dark</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
@@ -154,7 +163,7 @@
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip {{ 'crit' if r.sev == 'crit' else 'warn' }}" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
-        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>
+        <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td>{% set ot = (c.tint or {}).get('out') %}<td class="lv-out{% if ot %} t-{{ ot[0] }}{% endif %}"{% if ot %} title="{{ ot[1] }}"{% endif %}>{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>
         <td data-v="{{ c.heat_rt if c.heat_rt is not none else '' }}">{{ hhmm(c.heat_rt) }}</td><td data-v="{{ c.hw_rt if c.hw_rt is not none else '' }}">{{ hhmm(c.hw_rt) }}</td><td data-v="{{ c.total_rt if c.total_rt is not none else '' }}">{{ hhmm(c.total_rt) }}</td>
         <td>{{ t(c.target) }}</td><td{{ tc(c, 'supp') }}>{{ t(c.supp) }}</td><td{{ tc(c, 'retn') }}>{{ t(c.retn) }}</td><td>{{ t(c.risr) }}</td><td{{ tc(c, 'stack') }}>{{ t(c.stack) }}</td><td>{{ t(c.hi_stack) }}</td>
         <td{{ tc(c, 'aqua') }}>{{ t(c.aqua) }}</td><td{{ tc(c, 'coil') }}>{{ t(c.coil) }}</td>
@@ -186,7 +195,7 @@
       {% if r.state == 'live' or r.c %}
         <div class="lv-pill {{ c.tone if r.state == 'live' else 'dark' }}">{{ c.status if r.state == 'live' else 'Last known' }}</div>
         {% set live = r.state == 'live' %}
-        <div class="lv-row"><div><div class="k">Out</div><div class="v lv-out">{{ t(c.out) }}°</div></div>
+        <div class="lv-row"><div><div class="k">Out</div>{% set ot = (c.tint or {}).get('out') if live else none %}<div class="v lv-out{% if ot %} t-{{ ot[0] }}{% endif %}"{% if ot %} title="{{ ot[1] }}"{% endif %}>{{ t(c.out) }}°</div></div>
           <div><div class="k">Inside</div>{% if c.no_sensors %}<div class="v" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></div>{% else %}<div class="v{{ vc(c, 'inside') if live }}">{{ t(c.inside) }}°</div>{% endif %}</div>
           <div><div class="k">DIT</div><div class="v">{{ t(c.dit) }}°</div></div></div>
         {% if c.system == 'hot water' %}<div class="lv-row"><div><div class="k">Target</div><div class="v"{% if c.target is none %} title="No target: the box sets one only while calling for heat"{% endif %}>{{ t(c.target) }}</div></div>

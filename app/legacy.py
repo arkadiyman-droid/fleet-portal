@@ -401,6 +401,19 @@ def tint(role, avg, dit, stack, temps) -> dict:
     """{field: (colour, why)} for the cells that deserve a colour."""
     t = {}
     out = role.get("out")
+    # Outdoor banded by temperature (a weather gradient, not a fault): deep blue
+    # when frigid through amber when warm, mild days left plain. Anagha shows
+    # outdoor plain blue; this reads the heating load at a glance across the wall.
+    if out is not None:
+        if out <= 20:
+            t["out"] = ("ofrig", f"{out} F outside: frigid — peak heating demand")
+        elif out <= 40:
+            t["out"] = ("ocold", f"{out} F outside: cold")
+        elif out <= 60:
+            t["out"] = ("ocool", f"{out} F outside: cool")
+        elif out > 75:
+            t["out"] = ("owarm", f"{out} F outside: warm — little or no heating load")
+        # 61-75 F: mild, left plain
     if avg and dit:
         if out is not None and out >= dit + 2:          # beats red: a hot day is not a fault
             t["inside"] = ("wx", f"{out} F outside, above the desired {dit} F: the warmth is the weather's")

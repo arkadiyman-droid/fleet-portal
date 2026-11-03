@@ -1049,6 +1049,8 @@ def _issues(row, now, events, alert_state):
                       "tone": "info"})
     if row["state"] == "live":
         for k, (tone, why) in (c.get("tint") or {}).items():
+            if k == "out":
+                continue                                  # outdoor band is weather context, not a per-box note
             # the reasons name their reading already, except the inside average's
             notes.append({"text": f"Inside average: {why}" if k == "inside" else why, "tone": tone, "k": _TINT_KEYS.get(k)})
         if ra and ra["level"] == "info":
