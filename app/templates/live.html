@@ -108,7 +108,7 @@
       <a class="f {{ 'on' if source == key }}" href="{{ url_for('admin.live_page', show=show, source=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
-    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
+    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
       <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
@@ -144,11 +144,10 @@
       <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
-      {% set sev = 'dark' if r.state != 'live' else (c.tone if c.tone in ['crit', 'warn', 'heat'] else 'ok') %}
-      <tr class="sev-{{ sev }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
+      <tr class="sev-{{ r.sev }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
         <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
-        <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
+        <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip {{ 'crit' if r.sev == 'crit' else 'warn' }}" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td><td class="lv-out">{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>

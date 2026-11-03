@@ -1089,12 +1089,16 @@ def _legacy_rows(now, boxes=None):
         alarm = legacy.alarm_info((c or {}).get("alarm"), now, drift or timedelta(0))
         recent_alarm = alarm if alarm and alarm["recent"] else None
         ign_ok = bool(c and c.get("system") == "hot water")       # hot water: ignition is not a problem
-        problem = (state in ("dark", "login", "other")
-                   or bool(c and c["tone"] == "crit" and not (ign_ok and c["code"] == "Ign Fail"))
-                   or bool(recent_alarm and recent_alarm["level"] in ("crit", "warn")
-                           and not (ign_ok and recent_alarm.get("name") == "ignitionFail")))
+        down = state in ("dark", "login", "other")
+        ra_ok = recent_alarm and not (ign_ok and recent_alarm.get("name") == "ignitionFail")
+        # critical = must act now; a warn-level alarm or a softer issue is a warning.
+        critical = (down
+                    or bool(c and c["tone"] == "crit" and not (ign_ok and c["code"] == "Ign Fail"))
+                    or bool(c and c.get("loop_cold"))
+                    or bool(ra_ok and recent_alarm["level"] == "crit"))
+        problem = critical or bool(ra_ok and recent_alarm["level"] == "warn")
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
-                     "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
+                     "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "critical": critical, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
                      "firing": firing.get(b.id) if state == "live" else None,
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
         rows[-1]["issues"] = _issues(rows[-1], now, events.get(b.id, []), astates.get(b.id))
@@ -1102,9 +1106,25 @@ def _legacy_rows(now, boxes=None):
     return rows
 
 
+def _row_sev(r):
+    """One severity tier per row for the colour stripe and the filters:
+    dark (offline) > crit (must act) > warn (needs a look) > heat (heating) > ok."""
+    if r["state"] != "live":
+        return "dark"
+    if r.get("critical"):
+        return "crit"
+    tone = (r["c"] or {}).get("tone")
+    if r.get("problem") or tone == "warn":   # an open warning shows amber even while heating
+        return "warn"
+    if tone == "heat":
+        return "heat"
+    return "ok"
+
+
 _LIVE_SORTS = {
     "name": lambda r: r["box"].name.lower(),
-    "problems": lambda r: (not r["problem"], {"other": 0, "login": 1, "dark": 2, "live": 3}[r["state"]],
+    "problems": lambda r: (not r["critical"], not r["problem"],
+                           {"other": 0, "login": 1, "dark": 2, "live": 3}[r["state"]],
                            _TONE_ORDER.get((r["c"] or {}).get("tone"), 5), r["box"].name.lower()),
     "hi_stack": lambda r: -((r["c"] or {}).get("hi_stack") or -1),
     "aqua": lambda r: -((r["c"] or {}).get("aqua") or -1),
@@ -1133,6 +1153,7 @@ def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, prob
             "source": source, "detail_url": detail_url, "c": c, "state": state, "why": why,
             "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing,
             "problem": bool(problems) or state != "live",
+            "critical": (state != "live") or bool(c and c.get("tone") == "crit"),
             "issues": {"name": name, "problems": list(problems or []), "notes": [], "events": [],
                        "keys": keys, "url": detail_url}}
 
@@ -1217,7 +1238,8 @@ def live_page():
     summary = {"total": len(rows), "live": sum(r["state"] == "live" for r in rows), "hidden": len(hidden),
                "dark": sum(r["state"] == "dark" for r in rows), "login": sum(r["state"] == "login" for r in rows),
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
-               "problems": sum(1 for r in rows if r["problem"]),
+               "problems": sum(1 for r in rows if r["critical"]),
+               "warnings": sum(1 for r in rows if r["problem"] and not r["critical"]),
                "steam": sum(1 for r in rows if (r["c"] or {}).get("system") == "steam"),
                "hotwater": sum(1 for r in rows if (r["c"] or {}).get("system") == "hot water"),
                "s2010": sum(1 for r in rows if r["source"] == "2010"),
@@ -1235,14 +1257,17 @@ def live_page():
     # Show-row counts reflect the current source selection; the source-row
     # counts (total/s2010/bloom/echo) stay fleet-wide.
     summary["shown_total"] = len(rows)
-    for k, f in (("problems", lambda r: r["problem"]),
+    for k, f in (("problems", lambda r: r["critical"]),
+                 ("warnings", lambda r: r["problem"] and not r["critical"]),
                  ("calling", lambda r: r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                  ("dark", lambda r: r["state"] == "dark"), ("login", lambda r: r["state"] == "login"),
                  ("steam", lambda r: (r["c"] or {}).get("system") == "steam"),
                  ("hotwater", lambda r: (r["c"] or {}).get("system") == "hot water")):
         summary[k] = sum(1 for r in rows if f(r))
     if show == "problems":
-        rows = [r for r in rows if r["problem"]]
+        rows = [r for r in rows if r["critical"]]
+    elif show == "warnings":
+        rows = [r for r in rows if r["problem"] and not r["critical"]]
     elif show == "dark":
         rows = [r for r in rows if r["state"] in ("dark", "login", "other")]
     elif show == "calling":
@@ -1256,6 +1281,8 @@ def live_page():
         show = "all"
     if q:
         rows = [r for r in rows if q in r["box"].name.lower()]
+    for r in rows:
+        r["sev"] = _row_sev(r)
     sort = request.args.get("sort", "problems")
     rows.sort(key=_LIVE_SORTS.get(sort, _LIVE_SORTS["problems"]))
     view = "table" if request.args.get("view") == "table" else "cards"
