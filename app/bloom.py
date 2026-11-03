@@ -72,10 +72,12 @@ POINTS = {
     "oat_cutoff_f":"oat-sp-act",      # outdoor heat cutoff setpoint
 }
 MODE = {1: "DAY", 2: "NIGHT", 0: "OFF"}
-# Alarm types that mean a real fault (vs. an informational/manual flag), used
-# only to colour the card red; every open alarm is still listed.
-FAULT_ALARMS = {"pmp-run-fail", "blr-run-fail", "blr-run-fail-all", "blr-alm",
-                "emp-pi-fail-alm", "hw-lot-alm", "dhw-supply-t-lo-alm", "emp-sec-cfh-alm"}
+# A card is coloured red only for Bloom's own critical alarms (severity 1 —
+# e.g. a boiler alarm or heating hot-water low-temp) or a cold call-for-heat.
+# Severity-2 alarms (pump didn't start, DHW/heating temperature out of range,
+# manual overrides) are warnings, not faults. Every open alarm is still listed
+# in the issue panel either way. (QA 2026-11-02: 44 of 48 open fleet alarms
+# were severity 2, which is why a type-based fault list reddened most rows.)
 
 
 def _num(v):
@@ -509,7 +511,7 @@ def card(data: dict, view="", plant_tag=None) -> dict:
     # The thing to chase, in the owner's own terms: calling for heat while the
     # loop never got hot and no pump is running.
     cold_call = bool(p["cfh"]) and not heating
-    fault = cold_call or any((a.get("type") in FAULT_ALARMS) for a in alarms)
+    fault = cold_call or any(str(a.get("severity")) == "1" for a in alarms)
 
     if fault:
         tone = "crit"

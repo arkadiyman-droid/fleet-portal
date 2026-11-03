@@ -144,7 +144,7 @@
       <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
-      {% set sev = 'dark' if r.state != 'live' else ('crit' if (r.issues.problems|length or c.tone == 'crit') else ('warn' if c.tone == 'warn' else ('heat' if c.tone == 'heat' else 'ok'))) %}
+      {% set sev = 'dark' if r.state != 'live' else (c.tone if c.tone in ['crit', 'warn', 'heat'] else 'ok') %}
       <tr class="sev-{{ sev }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
         <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
