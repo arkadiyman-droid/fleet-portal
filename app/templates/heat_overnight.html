@@ -40,7 +40,7 @@
   {% else %}
     <p class="card-sub" style="margin:0 0 10px">These buildings were cold enough to call for heat but the boiler never fired — coldest first. Click one to open its history and confirm.</p>
     <div class="lv-scroll" style="overflow:auto"><table class="oh">
-      <thead><tr><th>Building</th><th>Source</th><th class="oh-num">Coldest out</th><th class="oh-num">Peak supply</th><th class="oh-num">Now</th><th>State</th><th class="wrap">What history shows</th></tr></thead>
+      <thead><tr><th>Building</th><th>Source</th><th class="oh-num">Coldest out</th><th class="oh-num">Peak supply</th><th class="oh-num">Peak return</th><th class="oh-num">Now</th><th>State</th><th class="wrap">What history shows</th></tr></thead>
       <tbody>
       {% for r in rows %}{% set h = r.heat %}
         <tr>
@@ -48,6 +48,7 @@
           <td class="card-sub">{{ source_name.get(r.source, r.source) }}</td>
           <td class="oh-num">{{ tt(h.min_out) }}</td>
           <td class="oh-num">{{ tt(h.peak) }}</td>
+          <td class="oh-num">{{ tt(h.retn_peak) }}</td>
           <td class="oh-num">{{ tt((r.c or {}).get('supp')) if r.state == 'live' else '—' }}</td>
           <td>{% if r.state == 'live' %}<span class="card-sub">{{ (r.c or {}).get('status') }}</span>{% else %}<span class="chip crit">{{ r.state }}</span>{% endif %}</td>
           <td class="wrap">{{ h.detail }}</td>

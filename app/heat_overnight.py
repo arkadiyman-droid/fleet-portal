@@ -86,7 +86,25 @@ def _mk(state, detail, **nums):
 
 def _unknown():
     return _mk("unknown", "No readings recorded overnight.",
-               needed=None, minutes=None, peak=None, rise=None, min_out=None)
+               needed=None, minutes=None, peak=None, retn_peak=None, rise=None, min_out=None)
+
+
+def _peak_rise(vals):
+    """(highest, how much it climbed) for one pipe's readings over the window."""
+    if not vals:
+        return (None, None)
+    peak = max(vals)
+    return (peak, peak - min(vals))
+
+
+def _loop_words(peak_s, peak_r):
+    """'supply 70° / return 68°' from whichever pipes have a reading."""
+    parts = []
+    if peak_s is not None:
+        parts.append(f"supply {round(peak_s)}°")
+    if peak_r is not None:
+        parts.append(f"return {round(peak_r)}°")
+    return " / ".join(parts) if parts else "no supply or return reading"
 
 
 def _ran_detail(minutes, peak, rise, out_txt):
@@ -113,40 +131,50 @@ def verdict_legacy(rows, start):
     if not cur:
         return _unknown()
     supps = [r.supp for r in cur if r.supp is not None and 1 <= r.supp <= 260]
+    retns = [r.retn for r in cur if r.retn is not None and 1 <= r.retn <= 260]
     outs = [r.out for r in cur if r.out is not None and -40 <= r.out <= 130]
-    peak = max(supps) if supps else None
-    base = min(supps) if supps else None
-    rise = (peak - base) if (peak is not None and base is not None) else None
+    peak, rise = _peak_rise(supps)
+    retn_peak, retn_rise = _peak_rise(retns)
     min_out = min(outs) if outs else None
     minutes = sum(history.used(rows, f"heat{i}") for i in range(1, 5))   # pre-window read seeds the first diff
     calls = [r for r in cur if history._tone(r.code) == "heat"]
+    # loop_cold() already weighs supply AND return (either under 80° is cold).
     cold_calls = [r for r in calls if legacy.loop_cold(r.supp, r.retn)]
     warm_calls = [r for r in calls if not legacy.loop_cold(r.supp, r.retn)
                   and ((r.supp and r.supp >= legacy.LOOP_COLD_F) or (r.retn and r.retn >= legacy.LOOP_COLD_F))]
     out_txt = f" · {round(min_out)}° out" if min_out is not None else ""
-    nums = dict(needed=len(calls) >= MIN_CALL_READS, minutes=minutes or None, peak=peak, rise=rise, min_out=min_out)
-    ran = (minutes > 0 or (rise is not None and rise >= RISE_F)
-           or (peak is not None and peak >= HOT_SUPPLY_F) or bool(warm_calls))
+    nums = dict(needed=len(calls) >= MIN_CALL_READS, minutes=minutes or None,
+                peak=peak, retn_peak=retn_peak, rise=rise, min_out=min_out)
+    ran = (minutes > 0 or (rise is not None and rise >= RISE_F) or (retn_rise is not None and retn_rise >= RISE_F)
+           or (peak is not None and peak >= HOT_SUPPLY_F) or (retn_peak is not None and retn_peak >= HOT_SUPPLY_F)
+           or bool(warm_calls))
     if ran:
         return _mk("ran", _ran_detail(minutes, peak, rise, out_txt), **nums)
     if len(calls) >= MIN_CALL_READS and len(cold_calls) >= MIN_CALL_READS and not warm_calls:
-        coldest = min((r.supp for r in cold_calls if r.supp), default=None)
-        cs = f"coldest supply {round(coldest)}°" if coldest is not None else "no supply reading"
+        cold_s = min((r.supp for r in cold_calls if r.supp), default=None)
+        cold_r = min((r.retn for r in cold_calls if r.retn), default=None)
         return _mk("no-heat", f"Called for heat but the loop stayed under {legacy.LOOP_COLD_F}° and never "
-                              f"fired — {cs}{out_txt}", **nums)
+                              f"fired — coldest {_loop_words(cold_s, cold_r)}{out_txt}", **nums)
     return _mk("idle", f"No sustained heat call overnight{out_txt}", **nums)
 
 
-def _verdict_counter(ran, minutes, peak, rise, min_out, out_txt, cold_label):
+def _verdict_counter(minutes, peak_s, rise_s, peak_r, rise_r, min_out, run_extra, cold_label):
     """Shared tail for EchoTherm / Bloom, which have no oBIX call state: demand
-    is the coldest outdoor (DEMAND_OUT_F), the failure the loop staying cold."""
+    is the coldest outdoor (DEMAND_OUT_F). The loop ran if EITHER pipe got hot
+    or climbed; it is a failure only if BOTH supply and return stayed cold."""
     needed = min_out is not None and min_out <= DEMAND_OUT_F
+    out_txt = f" · {round(min_out)}° out" if min_out is not None else ""
+    peaks = [p for p in (peak_s, peak_r) if p is not None]
+    warmest = max(peaks) if peaks else None
+    rose = (rise_s is not None and rise_s >= RISE_F) or (rise_r is not None and rise_r >= RISE_F)
+    ran = (minutes is not None and minutes > 0) or rose or (warmest is not None and warmest >= HOT_SUPPLY_F) or run_extra
     nums = dict(needed=needed, minutes=(round(minutes) or None) if minutes is not None else None,
-                peak=peak, rise=rise, min_out=min_out)
+                peak=peak_s, retn_peak=peak_r, rise=rise_s, min_out=min_out)
     if ran:
-        return _mk("ran", _ran_detail(minutes, peak, rise, out_txt), **nums)
-    if needed and peak is not None and peak < COLD_SUPPLY_F:
-        return _mk("no-heat", f"{cold_label} — supply stayed at {round(peak)}°{out_txt}", **nums)
+        best_rise = max([r for r in (rise_s, rise_r) if r is not None], default=None)
+        return _mk("ran", _ran_detail(minutes, warmest, best_rise, out_txt), **nums)
+    if needed and warmest is not None and warmest < COLD_SUPPLY_F:
+        return _mk("no-heat", f"{cold_label} — {_loop_words(peak_s, peak_r)} stayed under {COLD_SUPPLY_F}°", **nums)
     return _mk("idle", f"No heat run overnight{out_txt}", **nums)
 
 
@@ -163,14 +191,12 @@ def verdict_echo(rows, start):
         secs += sum(ctrl_history._seconds_used(a, b, f"heat{i}") for i in (1, 2))
     minutes = secs / 60.0
     supps = [v for v in (_num((r.values or {}).get("supp")) for r in cur) if v is not None and 1 <= v <= 260]
+    retns = [v for v in (_num((r.values or {}).get("hwr")) for r in cur) if v is not None and 1 <= v <= 260]
     outs = [v for v in (_num((r.values or {}).get("out")) for r in cur) if v is not None and -40 <= v <= 130]
-    peak = max(supps) if supps else None
-    base = min(supps) if supps else None
-    rise = (peak - base) if (peak is not None and base is not None) else None
+    peak, rise = _peak_rise(supps)
+    retn_peak, retn_rise = _peak_rise(retns)
     min_out = min(outs) if outs else None
-    out_txt = f" · {round(min_out)}° out" if min_out is not None else ""
-    ran = minutes > 0 or (rise is not None and rise >= RISE_F) or (peak is not None and peak >= HOT_SUPPLY_F)
-    return _verdict_counter(ran, minutes, peak, rise, min_out, out_txt,
+    return _verdict_counter(minutes, peak, rise, retn_peak, retn_rise, min_out, False,
                             f"Cold out ({round(min_out)}°) and the boiler never fired" if min_out is not None
                             else "The boiler never fired")
 
@@ -181,16 +207,14 @@ def verdict_bloom(rows, start):
     if not cur:
         return _unknown()
     supps = [v for v in (_num((r.data or {}).get("supp")) for r in cur) if v is not None]
+    retns = [v for v in (_num((r.data or {}).get("retn")) for r in cur) if v is not None]
     outs = [v for v in (_num((r.data or {}).get("out")) for r in cur) if v is not None]
     boilers = [v for v in (_num((r.data or {}).get("boiler")) for r in cur) if v is not None]
-    peak = max(supps) if supps else None
-    base = min(supps) if supps else None
-    rise = (peak - base) if (peak is not None and base is not None) else None
+    peak, rise = _peak_rise(supps)
+    retn_peak, retn_rise = _peak_rise(retns)
     min_out = min(outs) if outs else None
-    out_txt = f" · {round(min_out)}° out" if min_out is not None else ""
-    ran = ((boilers and max(boilers) > 0) or (rise is not None and rise >= RISE_F)
-           or (peak is not None and peak >= HOT_SUPPLY_F))
-    return _verdict_counter(ran, None, peak, rise, min_out, out_txt,
+    run_extra = bool(boilers and max(boilers) > 0)
+    return _verdict_counter(None, peak, rise, retn_peak, retn_rise, min_out, run_extra,
                             f"Cold out ({round(min_out)}°) and no boiler run" if min_out is not None
                             else "No boiler run")
 
