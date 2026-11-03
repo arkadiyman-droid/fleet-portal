@@ -12,6 +12,11 @@ class Config:
         self.SESSION_COOKIE_HTTPONLY = True
         self.SESSION_COOKIE_SAMESITE = "Lax"
 
+        # Overnight heat-ran verdict on the Live wall, nav and detail pages
+        # (app/heat_overnight.py). The /heat report is always reachable by URL;
+        # this only gates the inline surfaces. Set HEAT_BADGE=0 to hide them.
+        self.HEAT_BADGE = os.environ.get("HEAT_BADGE", "1") not in ("0", "false", "False")
+
         # Fleet Portal status polling (Phase 2) — see app/fleet_poller.py.
         self.FLEET_TOKEN_ENCRYPTION_KEY = _require_env("FLEET_TOKEN_ENCRYPTION_KEY")
         self.FLEET_POLL_INTERVAL_SECONDS = int(os.environ.get("FLEET_POLL_INTERVAL_SECONDS", "60"))

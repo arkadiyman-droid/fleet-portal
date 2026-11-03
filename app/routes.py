@@ -733,7 +733,7 @@ def _heat_badge_flag():
     """Whether the overnight heat-ran verdict shows on the Live wall, nav and
     detail pages. Off while the signal is being calibrated; the /heat report is
     still reachable by URL. Flip HEAT_BADGE on to restore the surfaces."""
-    return {"heat_badge": current_app.config.get("HEAT_BADGE", False)}
+    return {"heat_badge": current_app.config.get("HEAT_BADGE", True)}
 
 
 def _hot_water_now(box_ids, now) -> dict:
