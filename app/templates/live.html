@@ -7,6 +7,10 @@
   .lv-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 6px; }
   .lv-bar a.f { padding:3px 9px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:12.5px; background:#fff; }
   .lv-bar a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
+  .lv-bar a.f.f-crit { border-color:#fecaca; color:#b91c1c; background:#fef2f2; }
+  .lv-bar a.f.f-warn { border-color:#fde68a; color:#b45309; background:#fffbeb; }
+  .lv-bar a.f.f-crit.on { background:#dc2626; color:#fff; border-color:#dc2626; }
+  .lv-bar a.f.f-warn.on { background:#d97706; color:#fff; border-color:#d97706; }
   .lv-ticker { background:#1f2937; color:#e5e7eb; border-radius:8px; padding:3px 10px; font-size:12.5px; display:inline-block; max-width:52ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
   .lv-ticker b { color:#7dd3fc; }
   .lv-sep { width:1px; align-self:stretch; min-height:18px; background:var(--border); margin:0 3px; }
@@ -109,7 +113,7 @@
     {% endfor %}
     <span class="lv-sep"></span>
     {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
-      <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
+      <a class="f {{ 'f-crit' if key == 'problems' else 'f-warn' if key == 'warnings' else '' }} {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
     <span class="card-sub">Sort:</span>
