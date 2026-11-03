@@ -103,6 +103,27 @@
     </div>
   </div>
 
+  {% if show_legacy %}
+  <div class="section" style="margin-top:14px">
+    <h2>Recent box alarms</h2>
+    <p class="card-sub" style="margin:0 0 8px">What the 2010 boxes reported themselves, newest first (this is what the Live wall's Alarm column used to show). A box alarm it clears on its own does not page anyone — the ones that page are under “In alarm now”.</p>
+    {% if box_alarms %}
+    <table class="table">
+      <thead><tr><th>When</th><th>Building</th><th>Alarm</th></tr></thead>
+      <tbody>
+      {% for a in box_alarms %}
+        <tr data-box="{{ a.box_id }}">
+          <td style="white-space:nowrap">{{ a.when }}</td>
+          <td><a href="{{ url_for('admin.live_box', box_id=a.box_id) }}">{{ a.name }}</a><span class="lv-t lv-chartbtn" data-k="stack,aqua,inside" title="Open this building's chart">chart</span></td>
+          <td>{{ a.text }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="all-good">No box alarms logged.</div>{% endif %}
+  </div>
+  {% endif %}
+
   <div class="section" style="margin-top:14px">
     <h2>History</h2>
     {% if events %}

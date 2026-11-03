@@ -762,7 +762,7 @@ def _legacy_alert_states():
 
 @admin_bp.route("/alerts")
 def alerts_page():
-    from app import notify
+    from app import history, notify
     ids = _visible_controller_ids()
     states = AlertState.query.join(Controller).filter(Controller.is_active.is_(True))
     events = AlertEvent.query
@@ -779,6 +779,19 @@ def alerts_page():
     l_waiting = [s for s in lstates if not s.alerting and s.first_bad_at]
     l_muted = [s for s in lstates if s.muted_until and s.muted_until > now]
     events = events.order_by(AlertEvent.created_at.desc()).limit(100).all()
+    # Device alarms the 2010 boxes reported themselves (what the Live wall's old
+    # Alarm column showed), now combined into the Alerts tab. From the event log
+    # (app/history.changes), newest first; these may or may not have paged.
+    box_alarms = []
+    if ids is None:
+        from app.models import LegacyBox, LegacyEvent
+        rows = (LegacyEvent.query.filter(LegacyEvent.kind == "alarm")
+                .order_by(LegacyEvent.ts.desc()).limit(40).all())
+        bn = {b.id: b.name for b in LegacyBox.query
+              .filter(LegacyBox.id.in_([e.box_id for e in rows] or [-1])).all()}
+        box_alarms = [{"name": bn.get(e.box_id, f"box {e.box_id}"), "box_id": e.box_id,
+                       "when": history.local(e.ts).strftime("%b %d %I:%M %p").replace(" 0", " "),
+                       "text": e.text or e.code or "alarm"} for e in rows if e.box_id in bn]
     hw_now = _hot_water_now([s.box_id for s in lstates if s.alerting or s.first_bad_at or (s.muted_until and s.muted_until > now)]
                             + [e.legacy_box_id for e in events if e.legacy_box_id], now) if ids is None else {}
     cfg = current_app.config
@@ -791,7 +804,7 @@ def alerts_page():
     return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted, ntfy_qr=ntfy_qr,
                            l_open=l_open, l_waiting=l_waiting, l_muted=l_muted, show_legacy=ids is None,
                            legacy_dark_min=cfg.get("LEGACY_DARK_MINUTES", 30),
-                           events=events, hw_now=hw_now,
+                           events=events, hw_now=hw_now, box_alarms=box_alarms,
                            channels=notify.channels(), now=now,
                            after_min=round(cfg.get("ALERT_AFTER_SECONDS", 600) / 60),
                            repeat_h=cfg.get("ALERT_REPEAT_HOURS", 0),
