@@ -1195,6 +1195,16 @@ def _bloom_live_rows(now_dt):
         if ds:
             c["dhw_supply"], c["dhw_retn"] = ds.supply_f, ds.return_f
             c["dhw_pump"], c["dhw_alarm"] = ds.pump_running, ds.alarm
+        # Same Anagha cell colours as the 2010 boxes: supply/return loop temps,
+        # the average-apartment comfort cell, and hot water. The DHW column shows
+        # the Reliable Controls scrape where there's a tower, the Bloom reading
+        # otherwise, so colour whichever one it will show.
+        from app.legacy import tint as _tint, dhw_tint as _dhw_tint
+        c["tint"] = _tint(c, c["inside"], c["dit"], None, [])
+        if c["dhw_supply"] is not None:
+            td = _dhw_tint(c["dhw_supply"])
+            if td:
+                c["tint"]["dhw_supply"] = td
         out.append(_other_row(a.name, "bloom", f"b{a.id}", c, "live", last_ok, now_dt, url,
                               card.get("alarms") or [], firing=card.get("firing"), keys="inside"))
     return out
@@ -1223,6 +1233,8 @@ def _echo_live_rows(now_dt):
              "target": heating.get("supplyTarget"), "oil_pct": None,
              "system": heating.get("system") or "hot water", "system_label": "EchoTherm", "fuel": None,
              "n_boilers": 0, "tint": {}}
+        from app.legacy import tint as _tint
+        c["tint"] = _tint(c, c["inside"], c["dit"], None, [])
         out.append(_other_row(name, "echotherm", f"e{ctrl.id}", c, "live", last_ok, now_dt, url, problems))
     return out
 

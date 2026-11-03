@@ -382,6 +382,21 @@ TINT_LEGEND = [("cold", "cold / not up to temperature"), ("hot", "too hot, or a 
                ("wx", "warm because of the weather · lukewarm hot water"), ("scald", "hot water scald risk")]
 
 
+def dhw_tint(v):
+    """Hot-water supply colour, Anagha's rule: blue under 100 F, teal when
+    lukewarm (<=120 F, New York's tap minimum), orange a scald risk (>=140 F).
+    Shared by the Bloom 'mix' reading and the Reliable Controls DHW scrape."""
+    if not v:
+        return None
+    if v < 100:
+        return ("cold", f"Hot water {v} F: under 100 F")
+    if v <= 120:
+        return ("wx", f"Hot water {v} F: lukewarm, at or under 120 F (New York's minimum at the tap)")
+    if v >= 140:
+        return ("scald", f"Hot water {v} F: 140 F or more is a scald risk")
+    return None
+
+
 def tint(role, avg, dit, stack, temps) -> dict:
     """{field: (colour, why)} for the cells that deserve a colour."""
     t = {}
@@ -409,13 +424,9 @@ def tint(role, avg, dit, stack, temps) -> dict:
     v = role.get("coil")
     if v and v < 110:
         t["coil"] = ("hot", f"Coil {v} F, under 110 F: it cannot make hot water")
-    v = role.get("mix")
-    if v and v < 100:
-        t["mix"] = ("cold", f"Hot water {v} F: under 100 F")
-    elif v and v <= 120:
-        t["mix"] = ("wx", f"Hot water {v} F: lukewarm, at or under 120 F (New York's minimum at the tap)")
-    elif v and v >= 140:
-        t["mix"] = ("scald", f"Hot water {v} F: 140 F or more is a scald risk")
+    tm = dhw_tint(role.get("mix"))
+    if tm:
+        t["mix"] = tm
     return t
 
 
