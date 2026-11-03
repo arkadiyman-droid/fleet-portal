@@ -7,8 +7,9 @@
   .lv-bar { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin:0 0 6px; }
   .lv-bar a.f { padding:3px 9px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:12.5px; background:#fff; }
   .lv-bar a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
-  .lv-ticker { background:#1f2937; color:#e5e7eb; border-radius:8px; padding:4px 10px; margin:0 0 6px; font-size:13px; }
+  .lv-ticker { background:#1f2937; color:#e5e7eb; border-radius:8px; padding:3px 10px; font-size:12.5px; display:inline-block; max-width:52ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; vertical-align:middle; }
   .lv-ticker b { color:#7dd3fc; }
+  .lv-sep { width:1px; align-self:stretch; min-height:18px; background:var(--border); margin:0 3px; }
   .lv-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(215px, 1fr)); gap:12px; }
   .lv-card { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
   .lv-card.dark { background:#f3f4f6; }
@@ -41,6 +42,14 @@
   .lv-table .pin1 { left:0; width:30px; min-width:30px; }
   .lv-table .pin2 { left:30px; box-shadow:inset -1px 0 0 var(--border); }
   .lv-table thead th.pin1, .lv-table thead th.pin2 { z-index:3; background:#f3f4f6; }
+  /* severity colour scheme: a left stripe on every row, a faint tint on the ones that need attention */
+  .lv-table tbody tr.sev-crit td.pin1 { box-shadow:inset 4px 0 0 #dc2626; }
+  .lv-table tbody tr.sev-warn td.pin1 { box-shadow:inset 4px 0 0 #f59e0b; }
+  .lv-table tbody tr.sev-heat td.pin1 { box-shadow:inset 4px 0 0 #3b82f6; }
+  .lv-table tbody tr.sev-ok   td.pin1 { box-shadow:inset 4px 0 0 #22c55e; }
+  .lv-table tbody tr.sev-dark td.pin1 { box-shadow:inset 4px 0 0 #9ca3af; }
+  .lv-table tbody tr.sev-crit td { background:#fef2f2; }
+  .lv-table tbody tr.sev-warn td { background:#fffbeb; }
   .lv-table tbody tr:hover td { background:#f8fafc; }
   .lv-table tbody tr:hover td.t-cold, .lv-table tbody tr:hover td.t-hot, .lv-table tbody tr:hover td.t-wx, .lv-table tbody tr:hover td.t-scald { filter:brightness(.95); }
   /* Anagha's colours (decoded 2026-10-15) — the same palette in the table and on the cards */
@@ -86,33 +95,36 @@
 {% macro flame(r) %}{% if r.state == 'live' and r.source != 'echotherm' %}<svg class="lv-fire {{ 'on' if r.firing else 'off' }}" viewBox="0 0 16 16" fill="currentColor" role="img"><title>{{ ('Burner fired since the last read: ' ~ r.firing) if r.firing else 'Burner not firing (no run time since the last read)' }}</title><path d="M8 0c.4 2.6-1.1 4-2.4 5.4C4.3 6.9 3 8.4 3 10.6 3 13.6 5.2 16 8 16s5-2.4 5-5.4c0-2.2-1-3.9-2.2-5.2.1 1.4-.4 2.6-1.4 3.2.2-3.4-.9-6.4-1.4-8.6z"/></svg>{% endif %}{% endmacro %}
 
 {% block content %}
-  <div class="page-head"><h1>Live <span class="card-sub">· installed gateways, read every {{ poll_min }} min</span></h1>
-    <span class="card-sub">{{ summary.live }} of {{ summary.total }} reading now · {{ summary.calling }} calling for heat ·
-      {{ summary.dark }} dark{% if summary.login %} · {{ summary.login }} login refused{% endif %}</span></div>
-
-  {% if newest %}<div class="lv-ticker">{{ newest.recent_alarm.when }} &nbsp;<b>{{ newest.box.name }}</b>&nbsp; {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</div>{% endif %}
+  <div class="page-head">
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;min-width:0">
+      <h1>Live</h1>
+      <span class="card-sub">{{ summary.live }} of {{ summary.total }} reading (every {{ poll_min }} min) · {{ summary.calling }} calling · {{ summary.dark }} dark{% if summary.login %} · {{ summary.login }} login refused{% endif %}</span>
+    </div>
+    {% if newest %}<span class="lv-ticker" title="{{ newest.box.name }} — {{ newest.recent_alarm.words }}">{{ newest.recent_alarm.when }} · <b>{{ newest.box.name }}</b> {{ newest.recent_alarm.words }}{% if newest.recent_alarm.active %} (active){% endif %}</span>{% endif %}
+  </div>
 
   <div class="lv-bar">
     {% for key, label in [('all', 'All sources ' ~ summary.total), ('2010', '2010 boxes ' ~ summary.s2010), ('bloom', 'Bloom ' ~ summary.bloom), ('echotherm', 'EchoTherm ' ~ summary.echo)] %}
       <a class="f {{ 'on' if source == key }}" href="{{ url_for('admin.live_page', show=show, source=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
-  </div>
-  <div class="lv-bar">
+    <span class="lv-sep"></span>
     {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
       <a class="f {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
-    <span class="card-sub" style="margin-left:8px">Sort:</span>
+    <span class="lv-sep"></span>
+    <span class="card-sub">Sort:</span>
     {% for key, label in [('problems', 'Problems first'), ('name', 'Name'), ('hi_stack', 'Hi stack'), ('aqua', 'Aquastat'), ('coil', 'Coil')] %}
       <a class="f {{ 'on' if sort == key }}" href="{{ url_for('admin.live_page', show=show, source=source, sort=key, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     {% if show != 'hidden' and rows %}<a class="f" id="lv-legend-tog" href="#" title="Show or hide the colour key">Legend</a>{% endif %}
     <a class="f" style="margin-left:auto" href="{{ url_for('admin.live_page', show=show, source=source, sort=sort, view=('cards' if view == 'table' else 'table'), q=q) }}">{{ 'Cards' if view == 'table' else 'Table' }}</a>
     <form method="get" action="{{ url_for('admin.live_page') }}"><input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="source" value="{{ source }}"><input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="view" value="{{ view }}">
-      <input name="q" value="{{ q }}" placeholder="Search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px"></form>
+      <input name="q" value="{{ q }}" placeholder="Search building" style="padding:3px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px"></form>
   </div>
 
   {% if show != 'hidden' and rows %}<div class="lv-legend" id="lv-legend" hidden>{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
-    <span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span></div>{% endif %}
+    <span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span>
+    <span class="lv-sep"></span><span>Row stripe:</span><span><i style="background:#dc2626"></i>problem</span><span><i style="background:#f59e0b"></i>warning</span><span><i style="background:#3b82f6"></i>heat call</span><span><i style="background:#22c55e"></i>ok</span><span><i style="background:#9ca3af"></i>dark</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
   {% if not rows %}<div class="card-sub">Nothing to show{% if q or show != 'all' %} for this filter{% endif %}.</div>{% endif %}
@@ -132,7 +144,8 @@
       <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
-      <tr data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
+      {% set sev = 'dark' if r.state != 'live' else ('crit' if (r.issues.problems|length or c.tone == 'crit') else ('warn' if c.tone == 'warn' else ('heat' if c.tone == 'heat' else 'ok'))) %}
+      <tr class="sev-{{ sev }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
         <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip crit" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
