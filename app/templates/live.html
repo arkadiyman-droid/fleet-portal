@@ -34,7 +34,16 @@
   .lv-foot { margin-top:auto; padding:6px 10px; font-size:12px; border-top:1px solid var(--border); background:#fafafa; color:var(--muted); }
   .lv-foot.alarm { color:#b91c1c; font-weight:600; background:#fef2f2; }
   .lv-oil { height:8px; border-radius:4px; background:#fee2e2; overflow:hidden; margin:4px 10px; } .lv-oil div { height:100%; background:#16a34a; }
-  .lv-table td, .lv-table th { white-space:nowrap; font-size:13.5px; padding:3px 10px; }
+  /* Table view fits the window with no sideways scroll: table-layout:fixed +
+     a <colgroup> sizes every column, the wide text columns (Building / Status /
+     Alarm) ellipsize with the full value on hover, numbers are centred + tight. */
+  .lv-table { table-layout:fixed; width:100%; }
+  .lv-table td, .lv-table th { white-space:nowrap; font-size:12px; padding:2px 4px; overflow:hidden; text-overflow:ellipsis; text-align:center; }
+  .lv-table .pin2, .lv-table th.pin2, .lv-table .col-status, .lv-table .col-alarm { text-align:left; }
+  .lv-table td.col-status .chip:first-child { max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+  /* headers wrap to two short lines instead of truncating, at a smaller size */
+  .lv-table thead th { white-space:normal; font-size:10.5px; line-height:1.1; letter-spacing:0; padding:3px 4px; vertical-align:bottom; }
+  .lv-table .lv-nosens { font-size:10px; padding:1px 3px; }
   /* Table view: the table scrolls inside its own box sized to the window, so
      everything above it stays put; the column headings stick to its top and
      the tick + Building columns stick to its left. */
@@ -148,14 +157,15 @@
     <button class="btn danger" name="action" value="delete" type="submit" onclick="return lvConfirmBulkDelete(this.form)">Delete</button>
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
-    <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th>{% if heat_badge %}<th title="Did the boiler run for heat overnight, 9pm–9am? Read back from history so a warm morning can't hide it.">Heat o/n</th>{% endif %}<th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
-      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
+    <colgroup><col style="width:26px"><col style="width:150px"><col style="width:120px">{% if heat_badge %}<col style="width:48px">{% endif %}<col style="width:36px"><col style="width:80px"><col style="width:40px"><col style="width:62px"><col style="width:38px"><col style="width:46px"><col style="width:44px"><col style="width:46px"><col style="width:50px"><col style="width:42px"><col style="width:42px"><col style="width:40px"><col style="width:46px"><col style="width:42px"><col style="width:44px"><col style="width:42px"><col style="width:44px"><col style="width:48px"><col></colgroup>
+    <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th class="col-status">Status</th>{% if heat_badge %}<th title="Did the boiler run for heat overnight, 9pm–9am? Read back from history so a warm morning can't hide it.">Heat o/n</th>{% endif %}<th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th title="Heat run time today">Heat RT</th><th title="Hot-water run time today">HW RT</th><th>Total</th>
+      <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th title="High stack">Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th class="col-alarm">Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
       <tr class="sev-{{ r.sev }}" data-box="{{ r.box.id }}"{% if r.source == 'bloom' %} data-src="bloom"{% endif %}{% if r.state != 'live' %} style="color:var(--muted)"{% endif %}>
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
-        <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
-        <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip {{ 'crit' if r.sev == 'crit' else 'warn' }}" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
+        <td class="pin2"><a href="{{ r.detail_url }}" title="{{ r.box.name }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
+        <td class="col-status">{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="{{ (c.status ~ ' — ') if r.state == 'live' else '' }}Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}" title="{{ c.status }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip {{ 'crit' if r.sev == 'crit' else 'warn' }}" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
         {% if heat_badge %}{% set hv = r.heat %}<td style="text-align:center">{% if hv and hv.state != 'unknown' %}<span class="ho ho-{{ hv.tone }}" title="{{ hv.detail }}">{{ hv.label }}</span>{% endif %}</td>{% endif %}
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
@@ -171,7 +181,7 @@
         <td>{{ t(c.aqua) }}</td><td>{{ t(c.coil) }}</td>
         {% set dhs = c.get('dhw_supply') %}<td>{{ t(dhs if dhs is not none else c.mix) }}</td><td>{{ t(c.water) }}</td>
         {% endif %}
-        <td>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
+        <td class="col-alarm"{% if r.recent_alarm %} title="{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}"{% endif %}>{% if r.recent_alarm %}<span style="color:{{ '#b91c1c' if r.recent_alarm.level != 'info' else 'var(--muted)' }}">{{ r.recent_alarm.words }}, {{ r.recent_alarm.when }}</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody></table></div>

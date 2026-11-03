@@ -1250,7 +1250,9 @@ def _echo_live_rows(now_dt):
         tone = "crit" if lvl == "crit" else "warn" if lvl == "warn" else ("heat" if heating.get("demand") else "ok")
         c = {"code": None, "status": heating.get("reason") or heating.get("mode") or "Online", "tone": tone,
              "no_sensors": bool(heating.get("noSensors")),
-             "out": heating.get("outdoor"), "inside": heating.get("avgApt"), "dit": heating.get("target"),
+             "out": heating.get("outdoor"),
+             "inside": round(heating["avgApt"], 1) if heating.get("avgApt") is not None else None,
+             "dit": heating.get("target"),
              "heat_rt": None, "hw_rt": None, "total_rt": None,
              "aqua": None, "coil": None, "mix": None, "stack": None, "hi_stack": None, "water": None,
              "supp": heating.get("supply"), "retn": heating.get("ret"), "risr": None,
