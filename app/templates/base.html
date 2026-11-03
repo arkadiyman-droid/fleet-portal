@@ -52,6 +52,14 @@
     /* inline-pill geometry for the detail pages' clickable value spans */
     span.t-cold, span.t-hot, span.t-wx, span.t-scald,
     span.t-ofrig, span.t-ocold, span.t-ocool, span.t-owarm { padding: 0 6px; border-radius: 5px; font-weight: 700; }
+    /* overnight heat-ran verdict badge (app/heat_overnight.py): green ran,
+       red needed heat but never fired, grey idle. Shared by the Live wall,
+       the detail pages and the Overnight report. */
+    .ho { display: inline-block; padding: 1px 7px; border-radius: 7px; font-size: 11px; font-weight: 700; white-space: nowrap; cursor: help; }
+    .ho-ok { background: #16a34a; color: #fff; }
+    .ho-crit { background: #dc2626; color: #fff; }
+    .ho-idle { background: #e5e7eb; color: #374151; }
+    .ho-unknown { background: #f3f4f6; color: #9ca3af; }
     table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 8px; overflow: hidden; }
     th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); }
     th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
@@ -159,6 +167,7 @@
       <a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
       <a href="{{ url_for('admin.adopt') }}">Adopt</a>
       {% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %}
+      {% if g.is_superuser and heat_badge %}<a href="{{ url_for('admin.heat_overnight_page') }}" title="Which buildings ran for heat overnight">Overnight</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.analytics_page') }}">Analytics</a>{% endif %}
       <a href="{{ url_for('admin.updates_page') }}">Updates</a>
       <a href="{{ url_for('admin.alerts_page') }}">Alerts{% if open_alerts %} <span class="navbadge">{{ open_alerts }}</span>{% endif %}</a>

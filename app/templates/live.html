@@ -113,8 +113,8 @@
       <a class="f {{ 'on' if source == key }}" href="{{ url_for('admin.live_page', show=show, source=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
-    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings), ('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
-      <a class="f {{ 'f-crit' if key == 'problems' else 'f-warn' if key == 'warnings' else '' }} {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
+    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings)] + ([('noheat', 'No heat o/n ' ~ summary.noheat)] if heat_badge else []) + [('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
+      <a class="f {{ 'f-crit' if key in ('problems', 'noheat') else 'f-warn' if key == 'warnings' else '' }} {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
     <span class="card-sub">Sort:</span>
@@ -122,6 +122,7 @@
       <a class="f {{ 'on' if sort == key }}" href="{{ url_for('admin.live_page', show=show, source=source, sort=key, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     {% if show != 'hidden' and rows %}<a class="f" id="lv-legend-tog" href="#" title="Show or hide the colour key">Legend</a>{% endif %}
+    {% if heat_badge %}<a class="f" href="{{ url_for('admin.heat_overnight_page') }}" title="Which buildings needed heat overnight but never ran">Overnight report</a>{% endif %}
     <a class="f" style="margin-left:auto" href="{{ url_for('admin.live_page', show=show, source=source, sort=sort, view=('cards' if view == 'table' else 'table'), q=q) }}">{{ 'Cards' if view == 'table' else 'Table' }}</a>
     <form method="get" action="{{ url_for('admin.live_page') }}"><input type="hidden" name="show" value="{{ show }}"><input type="hidden" name="source" value="{{ source }}"><input type="hidden" name="sort" value="{{ sort }}"><input type="hidden" name="view" value="{{ view }}">
       <input name="q" value="{{ q }}" placeholder="Search building" style="padding:3px 8px;border:1px solid var(--border);border-radius:6px;font-size:12.5px"></form>
@@ -130,6 +131,7 @@
   {% if show != 'hidden' and rows %}<div class="lv-legend" id="lv-legend" hidden>{% for k, l in legend %}<span><i class="t-{{ k }}"></i>{{ l }}</span>{% endfor %}
     <span class="lv-sep"></span><span>Outdoor:</span><span><i class="t-ofrig"></i>frigid ≤20°</span><span><i class="t-ocold"></i>cold 21–40°</span><span><i class="t-ocool"></i>cool 41–60°</span><span>61–75° plain</span><span><i class="t-owarm"></i>warm &gt;75°</span>
     <span class="lv-sep"></span><span>{{ flame({'state': 'live', 'firing': 'heat'}) }} burner fired since the last read</span><span>Point at a coloured value for the reason.</span>
+    {% if heat_badge %}<span class="lv-sep"></span><span>Heat o/n (9pm–9am):</span><span><span class="ho ho-ok">Ran</span></span><span><span class="ho ho-crit">No heat</span> needed heat, never fired</span><span><span class="ho ho-idle">Idle</span> mild, none needed</span>{% endif %}
     <span class="lv-sep"></span><span>Row stripe:</span><span><i style="background:#dc2626"></i>problem</span><span><i style="background:#f59e0b"></i>warning</span><span><i style="background:#3b82f6"></i>heat call</span><span><i style="background:#22c55e"></i>ok</span><span><i style="background:#9ca3af"></i>dark</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
@@ -146,7 +148,7 @@
     <button class="btn danger" name="action" value="delete" type="submit" onclick="return lvConfirmBulkDelete(this.form)">Delete</button>
   </div>{% endif %}
   <div class="lv-scroll" id="lv-scroll"><table class="lv-table">
-    <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th><th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
+    <thead><tr><th class="pin1"><input type="checkbox" title="Tick all" onclick="document.querySelectorAll('input[name=box_id]').forEach(c => c.checked = this.checked)"></th><th class="pin2">Building</th><th>Status</th>{% if heat_badge %}<th title="Did the boiler run for heat overnight, 9pm–9am? Read back from history so a warm morning can't hide it.">Heat o/n</th>{% endif %}<th title="Burner fired since the last read">Fire</th><th>Read</th><th>Out</th><th>Avg</th><th>DIT</th><th>Heat RT</th><th>HW RT</th><th>Total</th>
       <th title="Hot-water target supply (the box's outdoor reset, while calling)">Target</th><th>Supp</th><th>Retn</th><th>Risr</th><th>Stack</th><th>Hi stk</th><th>Aqua</th><th>Coil</th><th title="Mixing-valve / domestic hot-water supply to building — Reliable Controls where scraped (click for the chart)">DHW</th><th>Water</th><th>Alarm</th></tr></thead>
     <tbody>
     {% for r in rows %}{% set c = r.c or {} %}
@@ -154,6 +156,7 @@
         <td class="pin1">{% if r.source == '2010' %}<input type="checkbox" name="box_id" value="{{ r.box.id }}">{% endif %}</td>
         <td class="pin2"><a href="{{ r.detail_url }}">{{ r.box.name }}</a>{% if r.source != '2010' %} <span class="card-sub">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %} <span class="card-sub" title="{{ c.system_label or '' }}">{{ {'steam': 'Steam', 'hot water': 'Hot water'}.get(c.system, '') }}{% if c.system and c.fuel %} · {% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %} · {{ c.n_boilers }} blr{% endif %}</span>{% endif %}</td>
         <td>{% set np = r.issues.problems|length %}<span class="lv-iss-open" data-issues="{{ r.issues|tojson|forceescape }}" title="Click for this building's issues">{% if r.state == 'live' %}<span class="chip {{ {'ok':'ok','heat':'info','warn':'warn','crit':'crit','idle':''}[c.tone] }}">{{ c.status }}</span>{% else %}<span class="chip crit">{{ {'dark':'Dark','login':'Login refused','other':'Not a gateway'}[r.state] }}</span>{% endif %}{% if np %} <span class="chip {{ 'crit' if r.sev == 'crit' else 'warn' }}" style="padding:1px 6px">{{ np }}</span>{% endif %}</span></td>
+        {% if heat_badge %}{% set hv = r.heat %}<td style="text-align:center">{% if hv and hv.state != 'unknown' %}<span class="ho ho-{{ hv.tone }}" title="{{ hv.detail }}">{{ hv.label }}</span>{% endif %}</td>{% endif %}
         <td style="text-align:center" data-v="{{ 1 if r.firing else 0 }}">{{ flame(r) }}</td>
         {% if r.state == 'live' %}
         <td data-v="{{ r.last_ok.timestamp()|int if r.last_ok else '' }}">{{ r.age or 'never' }}</td>{% set ot = (c.tint or {}).get('out') %}<td class="lv-out{% if ot %} t-{{ ot[0] }}{% endif %}"{% if ot %} title="{{ ot[1] }}"{% endif %}>{{ t(c.out) }}</td>{% if c.no_sensors %}<td data-v="" title="{{ nosens }}"><span class="lv-nosens">no sensors</span></td>{% else %}<td{{ tc(c, 'inside') }}>{{ t(c.inside) }}</td>{% endif %}<td>{{ t(c.dit) }}</td>
@@ -185,6 +188,7 @@
         {% if r.source != '2010' %}<span class="card-sub" style="font-size:11px">{{ 'Bloom' if r.source == 'bloom' else 'EchoTherm' }}</span>{% elif c.fuel or c.system %}<span class="card-sub" style="font-size:11px" title="{{ c.system_label or 'Heating system not reported' }} · {{ c.n_boilers }} boiler{{ 's' if c.n_boilers > 1 }}, from the box's own settings">{{ {'steam': 'Steam', 'hot water': 'HW'}.get(c.system, '') }}{% if c.system and c.fuel %}·{% endif %}{{ c.fuel or '' }}{% if c.n_boilers > 1 %}·{{ c.n_boilers }}{% endif %}</span>{% endif %}
         {{ flame(r) }}
       </div>
+      {% if heat_badge %}{% set hv = r.heat %}{% if hv and hv.state != 'unknown' %}<div style="text-align:center;margin:6px 6px 0"><span class="ho ho-{{ hv.tone }}" title="{{ hv.detail }}">Overnight: {{ hv.label }}</span></div>{% endif %}{% endif %}
       {% if r.state == 'live' or r.c %}
         <div class="lv-pill {{ c.tone if r.state == 'live' else 'dark' }}">{{ c.status if r.state == 'live' else 'Last known' }}</div>
         {% set live = r.state == 'live' %}

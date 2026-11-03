@@ -89,6 +89,7 @@
   {% set c = d.card %}
   <div class="bd-statusrow">
     <span class="bd-pill {{ c.tone }}">{{ c.status }}</span>
+    {% if heat_badge and heat and heat.state != 'unknown' %}<span class="ho ho-{{ heat.tone }}" title="{{ heat.detail }}">Overnight: {{ heat.label }}</span>{% endif %}
     {% if c.cfh %}<span class="card-sub">calling for heat</span>{% endif %}
     {% if read_ago %}<span class="card-sub">read {{ read_ago }}</span>{% endif %}
     {% if d.locid %}<a class="bd-ext" href="https://my.empoweredbuildings.com/property/{{ d.locid }}" target="_blank" rel="noopener">Open in Bloom ↗</a>{% endif %}

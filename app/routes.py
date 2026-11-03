@@ -693,8 +693,10 @@ def fleet_controller(controller_id):
     from app.legacy import tint as _tint              # outdoor weather band, same as the Live wall
     _h = (card.get("eval") or {}).get("heating") or {}
     otint = _tint({"out": _h.get("outdoor")}, None, None, None, []).get("out")
+    from app import heat_overnight
+    heat = heat_overnight.for_echo([ctrl.id]).get(ctrl.id)
     return render_template("fleet_controller.html", title=ctrl.name, card=card, status=ctrl.status, otint=otint,
-                           raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow())
+                           heat=heat, raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow())
 
 
 # ─── Alerts (app/alerts.py decides, app/notify.py sends) ────────────────
@@ -724,6 +726,14 @@ def _alert_badge():
         return {"open_alerts": n}
     except Exception:
         return {"open_alerts": 0}
+
+
+@admin_bp.app_context_processor
+def _heat_badge_flag():
+    """Whether the overnight heat-ran verdict shows on the Live wall, nav and
+    detail pages. Off while the signal is being calibrated; the /heat report is
+    still reachable by URL. Flip HEAT_BADGE on to restore the surfaces."""
+    return {"heat_badge": current_app.config.get("HEAT_BADGE", False)}
 
 
 def _hot_water_now(box_ids, now) -> dict:
@@ -1070,12 +1080,13 @@ def _issues(row, now, events, alert_state):
 
 
 def _legacy_rows(now, boxes=None):
-    from app import legacy
+    from app import heat_overnight, legacy
     rows = []
     if boxes is None:
         boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
             .order_by(LegacyBox.name).all()
     firing = _firing(now, [b.id for b in boxes])
+    heat = heat_overnight.for_legacy([b.id for b in boxes], now)
     events, astates = _issue_context(now, [b.id for b in boxes])
     for b in boxes:
         st = b.status
@@ -1106,6 +1117,7 @@ def _legacy_rows(now, boxes=None):
         rows.append({"box": b, "st": st, "c": c, "state": state, "why": why, "last_ok": last_ok,
                      "alarm": alarm, "recent_alarm": recent_alarm, "problem": problem, "critical": critical, "drift_min": round(drift.total_seconds() / 60) if drift else 0,
                      "firing": firing.get(b.id) if state == "live" else None,
+                     "heat": heat.get(b.id),
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
         rows[-1]["issues"] = _issues(rows[-1], now, events.get(b.id, []), astates.get(b.id))
         rows[-1]["problem"] = rows[-1]["problem"] or bool(rows[-1]["issues"]["problems"])
@@ -1147,7 +1159,7 @@ def _tag_legacy_rows(rows):
     return rows
 
 
-def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, problems, why=None, firing=None, keys=""):
+def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, problems, why=None, firing=None, keys="", heat=None):
     """A Live row for a non-oBIX building (Bloom or EchoTherm), shaped like a
     legacy row so live.html renders it unchanged: box is a namespace (so
     row.box.name works in Python sorts and Jinja), oBIX-only card fields are
@@ -1156,7 +1168,7 @@ def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, prob
     import types
     age = fleet_health.ago((now_dt - last_ok).total_seconds()) if last_ok else None
     return {"box": types.SimpleNamespace(name=name, id=box_id, hidden_by=None),
-            "source": source, "detail_url": detail_url, "c": c, "state": state, "why": why,
+            "source": source, "detail_url": detail_url, "c": c, "state": state, "why": why, "heat": heat,
             "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing,
             "problem": bool(problems) or state != "live",
             "critical": (state != "live") or bool(c and c.get("tone") == "crit"),
@@ -1178,13 +1190,16 @@ def _bloom_live_rows(now_dt):
             dhw_by_building[tw.building_id] = tw.status
     assets = (BloomAsset.query.filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
               .order_by(BloomAsset.name).all())
+    from app import heat_overnight
+    heat = heat_overnight.for_bloom([a.id for a in assets], now_dt)
     for a in assets:
         st = a.status
         card = bloom.card(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
         last_ok = st.last_ok_at if st else None
         url = url_for("admin.skyline_building", asset_id=a.id)
         if not card or not last_ok or now_dt - last_ok > stale:
-            out.append(_other_row(a.name, "bloom", f"b{a.id}", None, "dark", last_ok, now_dt, url, [], why="not reading"))
+            out.append(_other_row(a.name, "bloom", f"b{a.id}", None, "dark", last_ok, now_dt, url, [],
+                                  why="not reading", heat=heat.get(a.id)))
             continue
         # Mapped to the oBIX columns (user QA 2026-10-30): DHW supply -> Mix,
         # boiler firing -> Fire. No Bloom equivalent for Coil/Aqua/Stack/Hi
@@ -1212,13 +1227,16 @@ def _bloom_live_rows(now_dt):
             if td:
                 c["tint"]["dhw_supply"] = td
         out.append(_other_row(a.name, "bloom", f"b{a.id}", c, "live", last_ok, now_dt, url,
-                              card.get("alarms") or [], firing=card.get("firing"), keys="inside"))
+                              card.get("alarms") or [], firing=card.get("firing"), keys="inside", heat=heat.get(a.id)))
     return out
 
 
 def _echo_live_rows(now_dt):
+    from app import heat_overnight
     out = []
-    for ctrl in Controller.query.filter(Controller.is_active.is_(True)).order_by(Controller.name).all():
+    ctrls = Controller.query.filter(Controller.is_active.is_(True)).order_by(Controller.name).all()
+    heat = heat_overnight.for_echo([ctrl.id for ctrl in ctrls], now_dt)
+    for ctrl in ctrls:
         ev = fleet_health.evaluate(ctrl, getattr(ctrl, "status", None), None, now_dt)
         heating, lvl, online = (ev.get("heating") or {}), ev.get("level"), ev.get("online")
         problems = [txt for (l, txt) in ev.get("issues", []) if l in ("crit", "warn")]
@@ -1227,7 +1245,7 @@ def _echo_live_rows(now_dt):
         name = ctrl.name + (f" · {ctrl.building.name}" if ctrl.building else "")
         if not online:
             out.append(_other_row(name, "echotherm", f"e{ctrl.id}", None, "dark", last_ok, now_dt, url,
-                                  problems, why=ev.get("errorPlain") or "offline"))
+                                  problems, why=ev.get("errorPlain") or "offline", heat=heat.get(ctrl.id)))
             continue
         tone = "crit" if lvl == "crit" else "warn" if lvl == "warn" else ("heat" if heating.get("demand") else "ok")
         c = {"code": None, "status": heating.get("reason") or heating.get("mode") or "Online", "tone": tone,
@@ -1241,7 +1259,8 @@ def _echo_live_rows(now_dt):
              "n_boilers": 0, "tint": {}}
         from app.legacy import tint as _tint
         c["tint"] = _tint(c, c["inside"], c["dit"], None, [])
-        out.append(_other_row(name, "echotherm", f"e{ctrl.id}", c, "live", last_ok, now_dt, url, problems))
+        out.append(_other_row(name, "echotherm", f"e{ctrl.id}", c, "live", last_ok, now_dt, url, problems,
+                              heat=heat.get(ctrl.id)))
     return out
 
 
@@ -1258,6 +1277,7 @@ def live_page():
                "calling": sum(1 for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                "problems": sum(1 for r in rows if r["critical"]),
                "warnings": sum(1 for r in rows if r["problem"] and not r["critical"]),
+               "noheat": sum(1 for r in rows if (r.get("heat") or {}).get("state") == "no-heat"),
                "steam": sum(1 for r in rows if (r["c"] or {}).get("system") == "steam"),
                "hotwater": sum(1 for r in rows if (r["c"] or {}).get("system") == "hot water"),
                "s2010": sum(1 for r in rows if r["source"] == "2010"),
@@ -1277,6 +1297,7 @@ def live_page():
     summary["shown_total"] = len(rows)
     for k, f in (("problems", lambda r: r["critical"]),
                  ("warnings", lambda r: r["problem"] and not r["critical"]),
+                 ("noheat", lambda r: (r.get("heat") or {}).get("state") == "no-heat"),
                  ("calling", lambda r: r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                  ("dark", lambda r: r["state"] == "dark"), ("login", lambda r: r["state"] == "login"),
                  ("steam", lambda r: (r["c"] or {}).get("system") == "steam"),
@@ -1286,6 +1307,8 @@ def live_page():
         rows = [r for r in rows if r["critical"]]
     elif show == "warnings":
         rows = [r for r in rows if r["problem"] and not r["critical"]]
+    elif show == "noheat":
+        rows = [r for r in rows if (r.get("heat") or {}).get("state") == "no-heat"]
     elif show == "dark":
         rows = [r for r in rows if r["state"] in ("dark", "login", "other")]
     elif show == "calling":
@@ -1309,6 +1332,33 @@ def live_page():
                            source=source, legend=legacy.TINT_LEGEND,
                            q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
+
+
+@admin_bp.route("/heat")
+def heat_overnight_page():
+    """Did each building run for heat overnight? A dispatch list of the ones
+    that needed heat and never fired, read back from history so the morning's
+    warmer outdoor can't hide what failed in the cold (app/heat_overnight.py)."""
+    if not is_superuser():
+        abort(403)
+    from app import heat_overnight
+    now = datetime.utcnow()
+    rows = _tag_legacy_rows(_legacy_rows(now)) + _bloom_live_rows(now) + _echo_live_rows(now)
+    _start, _end, label = heat_overnight.window(now)
+    tally = {"ran": 0, "no-heat": 0, "idle": 0, "unknown": 0}
+    noheat = []
+    for r in rows:
+        state = (r.get("heat") or {}).get("state")
+        if state in tally:
+            tally[state] += 1
+        if state == "no-heat":
+            noheat.append(r)
+    # Coldest-first: the building that failed in the hardest cold needs the call most.
+    noheat.sort(key=lambda r: ((r["heat"].get("min_out") if r["heat"].get("min_out") is not None else 999),
+                               r["box"].name.lower()))
+    source_name = {"2010": "2010 box", "bloom": "Bloom", "echotherm": "EchoTherm"}
+    return render_template("heat_overnight.html", title="Overnight heat", rows=noheat, tally=tally,
+                           window_label=label, total=len(rows), source_name=source_name)
 
 
 @admin_bp.route("/live/<int:box_id>")
@@ -1470,8 +1520,10 @@ def skyline_building(asset_id):
             rc = _dhw_tint(dhw.supply_f)
             if rc:
                 tints["dhw_rc"] = rc
+    from app import heat_overnight
+    heat = heat_overnight.for_bloom([a.id]).get(a.id)
     return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back,
-                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago, tints=tints)
+                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago, tints=tints, heat=heat)
 
 
 @admin_bp.route("/skyline/<int:asset_id>/series.json")

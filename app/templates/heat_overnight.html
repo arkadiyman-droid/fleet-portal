@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Overnight heat — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}
+<style>
+  .oh-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:4px; }
+  .oh-tally { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 14px; }
+  .oh-tally .t { padding:4px 10px; border-radius:16px; font-size:13px; font-weight:600; border:1px solid var(--border); background:#fff; }
+  .oh-tally .t b { font-variant-numeric:tabular-nums; }
+  .oh-tally .t.ran { color:#15803d; border-color:#bbf7d0; background:#f0fdf4; }
+  .oh-tally .t.no { color:#b91c1c; border-color:#fecaca; background:#fef2f2; }
+  .oh-tally .t.idle { color:#475569; }
+  table.oh td, table.oh th { padding:7px 12px; font-size:13.5px; white-space:nowrap; }
+  table.oh td.wrap { white-space:normal; }
+  table.oh tbody tr:hover td { background:#fef2f2; }
+  .oh-num { font-variant-numeric:tabular-nums; text-align:right; }
+  .oh-empty { background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:10px; padding:16px 18px; font-size:15px; font-weight:600; }
+</style>
+{% endblock %}
+
+{% macro tt(v) %}{{ ('%.0f°'|format(v)) if v is not none else '—' }}{% endmacro %}
+
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
+  <div class="oh-head">
+    <h1>Overnight heat</h1>
+    <span class="card-sub">Did the boiler run for heat {{ window_label }} (9 pm–9 am)? Read back from history, so this morning's warmer outdoor can't hide what failed in the cold.</span>
+  </div>
+
+  <div class="oh-tally">
+    <span class="t ran">Ran <b>{{ tally['ran'] }}</b></span>
+    <span class="t no">Needed heat, never ran <b>{{ tally['no-heat'] }}</b></span>
+    <span class="t idle">Idle (mild, none needed) <b>{{ tally['idle'] }}</b></span>
+    {% if tally['unknown'] %}<span class="t">No overnight data <b>{{ tally['unknown'] }}</b></span>{% endif %}
+    <span class="t" style="color:var(--muted)">of {{ total }} buildings</span>
+  </div>
+
+  {% if not rows %}
+    <div class="oh-empty">Every building that needed heat {{ window_label }} ran for it. Nothing to chase.</div>
+  {% else %}
+    <p class="card-sub" style="margin:0 0 10px">These buildings were cold enough to call for heat but the boiler never fired — coldest first. Click one to open its history and confirm.</p>
+    <div class="lv-scroll" style="overflow:auto"><table class="oh">
+      <thead><tr><th>Building</th><th>Source</th><th class="oh-num">Coldest out</th><th class="oh-num">Peak supply</th><th class="oh-num">Now</th><th>State</th><th class="wrap">What history shows</th></tr></thead>
+      <tbody>
+      {% for r in rows %}{% set h = r.heat %}
+        <tr>
+          <td><a href="{{ r.detail_url }}">{{ r.box.name }}</a></td>
+          <td class="card-sub">{{ source_name.get(r.source, r.source) }}</td>
+          <td class="oh-num">{{ tt(h.min_out) }}</td>
+          <td class="oh-num">{{ tt(h.peak) }}</td>
+          <td class="oh-num">{{ tt((r.c or {}).get('supp')) if r.state == 'live' else '—' }}</td>
+          <td>{% if r.state == 'live' %}<span class="card-sub">{{ (r.c or {}).get('status') }}</span>{% else %}<span class="chip crit">{{ r.state }}</span>{% endif %}</td>
+          <td class="wrap">{{ h.detail }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% endif %}
+{% endblock %}

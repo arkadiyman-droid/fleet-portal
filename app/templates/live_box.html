@@ -36,6 +36,7 @@
   <div class="banner {{ {'live': ({'crit':'crit','warn':'warn'}.get(c.tone, 'ok')), 'dark':'crit', 'login':'crit', 'other':'crit'}[r.state] }}">
     {% if r.state == 'live' %}{{ c.status }} · read {{ r.age }}{% else %}{{ r.why }}{% endif %}
   </div>
+  {% if heat_badge and r.heat and r.heat.state != 'unknown' %}<div style="margin:8px 0 0"><span class="ho ho-{{ r.heat.tone }}">{{ r.heat.label }}</span> <span class="card-sub">overnight — {{ r.heat.detail }}</span></div>{% endif %}
 
   {% if b.is_active %}{% set a = b.alert_state %}
   <div class="section" style="margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
