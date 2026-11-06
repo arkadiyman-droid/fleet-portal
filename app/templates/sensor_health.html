@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Sensor health — Fleet Portal{% endblock %}
+{% block main_class %}wide{% endblock %}
+{% block head %}
+<style>
+  .sh-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:4px; }
+  .sh-tally { display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 14px; }
+  .sh-tally .t { padding:4px 10px; border-radius:16px; font-size:13px; font-weight:600; border:1px solid var(--border); background:#fff; }
+  .sh-tally .t b { font-variant-numeric:tabular-nums; }
+  table.sh td, table.sh th { padding:7px 12px; font-size:13.5px; }
+  table.sh td.wrap { white-space:normal; }
+  table.sh td.nowrap, table.sh th { white-space:nowrap; }
+  table.sh tbody tr:hover td { background:#f8fafc; }
+  .sf { display:inline-block; padding:1px 8px; border-radius:7px; font-size:12px; font-weight:700; white-space:nowrap; }
+  .sf-stuck { background:#dc2626; color:#fff; }
+  .sf-dropped { background:#b91c1c; color:#fff; }
+  .sf-frozen { background:#ea580c; color:#fff; }
+  .sf-noisy { background:#f59e0b; color:#1f1300; }
+  .sh-empty { background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:10px; padding:16px 18px; font-size:15px; font-weight:600; }
+  .sh-pr1 td.nowrap:first-child { box-shadow:inset 3px 0 0 #dc2626; }
+</style>
+{% endblock %}
+
+{% block content %}
+  <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
+  <div class="sh-head">
+    <h1>Sensor health</h1>
+    <span class="card-sub">Probes that look faulty over the last {{ window_days }} days — read from each box's stored history. Click a row's chart to see it.</span>
+  </div>
+
+  <div class="sh-tally">
+    <span class="t"><span class="sf sf-stuck">Stuck high</span> <b>{{ kinds.get('stuck', 0) }}</b></span>
+    <span class="t"><span class="sf sf-dropped">Dropped out</span> <b>{{ kinds.get('dropped', 0) }}</b></span>
+    <span class="t"><span class="sf sf-frozen">Frozen</span> <b>{{ kinds.get('frozen', 0) }}</b></span>
+    <span class="t"><span class="sf sf-noisy">Noisy</span> <b>{{ kinds.get('noisy', 0) }}</b></span>
+    <span class="t" style="color:var(--muted)">{{ findings|length }} sensor{{ 's' if findings|length != 1 }} across the fleet</span>
+  </div>
+
+  {% if not findings %}
+    <div class="sh-empty">No sensors look faulty over the last {{ window_days }} days. 👍</div>
+  {% else %}
+    <p class="card-sub" style="margin:0 0 10px">Control sensors (aquastat, supply) first, then the longest-standing. “Stuck high” = an open/disconnected probe reading over its ceiling; “Frozen” = the exact same value for {{ flat_hours }} h+ (a stale reading); “Dropped out” = it was reading, then went silent; “Noisy” = a loose probe jumping around.</p>
+    <div class="lv-scroll" style="overflow:auto"><table class="sh">
+      <thead><tr><th>Building</th><th>Sensor</th><th>Fault</th><th class="wrap">What the history shows</th><th class="nowrap">Since</th></tr></thead>
+      <tbody>
+      {% for f in findings %}
+        <tr data-box="{{ f.box_id }}"{% if f.priority <= 1 %} class="sh-pr1"{% endif %}>
+          <td class="nowrap"><a href="{{ url_for('admin.live_box', box_id=f.box_id) }}">{{ f.box }}</a>
+            <span class="lv-t lv-chartbtn" data-k="{{ f.attr }}" title="Open this sensor's chart">chart</span></td>
+          <td class="nowrap">{{ f.sensor }}</td>
+          <td class="nowrap"><span class="sf sf-{{ f.kind }}">{{ f.fault }}</span></td>
+          <td class="wrap">{{ f.evidence }}</td>
+          <td class="nowrap" title="{{ f.since.strftime('%Y-%m-%d %H:%M UTC') }}">{{ f.age }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  {% endif %}
+
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+<script src="{{ url_for('static', filename='js/sensorchart.js') }}"></script>
+{% endblock %}

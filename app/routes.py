@@ -1349,6 +1349,22 @@ def live_page():
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
 
+@admin_bp.route("/sensors")
+def sensor_health_page():
+    """Bad sensors across the 2010 boxes — stuck high, frozen, dropped out or
+    noisy, read from the stored history (app/sensor_health.py)."""
+    if not is_superuser():
+        abort(403)
+    from app import sensor_health
+    findings = sensor_health.scan()
+    kinds = {}
+    for f in findings:
+        kinds[f["kind"]] = kinds.get(f["kind"], 0) + 1
+    return render_template("sensor_health.html", title="Sensor health", findings=findings,
+                           kinds=kinds, window_days=sensor_health.WINDOW_DAYS,
+                           flat_hours=sensor_health.FLAT_HOURS)
+
+
 @admin_bp.route("/heat")
 def heat_overnight_page():
     """Did each building run for heat overnight? A dispatch list of the ones

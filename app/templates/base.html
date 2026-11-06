@@ -169,6 +169,7 @@
       {% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %}
       {% if g.is_superuser and heat_badge %}<a href="{{ url_for('admin.heat_overnight_page') }}" title="Which buildings ran for heat overnight">Overnight</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.analytics_page') }}">Analytics</a>{% endif %}
+      {% if g.is_superuser %}<a href="{{ url_for('admin.sensor_health_page') }}" title="Sensors that look faulty">Sensors</a>{% endif %}
       <a href="{{ url_for('admin.updates_page') }}">Updates</a>
       <a href="{{ url_for('admin.alerts_page') }}">Alerts{% if open_alerts %} <span class="navbadge">{{ open_alerts }}</span>{% endif %}</a>
       <a href="{{ url_for('admin.list_clients') }}">Clients</a>
