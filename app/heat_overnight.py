@@ -130,9 +130,11 @@ def verdict_legacy(rows, start):
     cur = [r for r in rows if r.ts >= start]
     if not cur:
         return _unknown()
-    supps = [r.supp for r in cur if r.supp is not None and 1 <= r.supp <= 260]
-    retns = [r.retn for r in cur if r.retn is not None and 1 <= r.retn <= 260]
-    outs = [r.out for r in cur if r.out is not None and -40 <= r.out <= 130]
+    from app import despike
+    rng = lambda v, lo, hi: v if (v is not None and lo <= v <= hi) else None
+    supps = despike.drop([rng(r.supp, 1, 260) for r in cur])       # drop single-sample glitches
+    retns = despike.drop([rng(r.retn, 1, 260) for r in cur])
+    outs = despike.drop([rng(r.out, -40, 130) for r in cur])
     peak, rise = _peak_rise(supps)
     retn_peak, retn_rise = _peak_rise(retns)
     min_out = min(outs) if outs else None
@@ -190,9 +192,11 @@ def verdict_echo(rows, start):
             continue
         secs += sum(ctrl_history._seconds_used(a, b, f"heat{i}") for i in (1, 2))
     minutes = secs / 60.0
-    supps = [v for v in (_num((r.values or {}).get("supp")) for r in cur) if v is not None and 1 <= v <= 260]
-    retns = [v for v in (_num((r.values or {}).get("hwr")) for r in cur) if v is not None and 1 <= v <= 260]
-    outs = [v for v in (_num((r.values or {}).get("out")) for r in cur) if v is not None and -40 <= v <= 130]
+    from app import despike
+    rng = lambda v, lo, hi: v if (v is not None and lo <= v <= hi) else None
+    supps = despike.drop([rng(_num((r.values or {}).get("supp")), 1, 260) for r in cur])
+    retns = despike.drop([rng(_num((r.values or {}).get("hwr")), 1, 260) for r in cur])
+    outs = despike.drop([rng(_num((r.values or {}).get("out")), -40, 130) for r in cur])
     peak, rise = _peak_rise(supps)
     retn_peak, retn_rise = _peak_rise(retns)
     min_out = min(outs) if outs else None
@@ -206,9 +210,10 @@ def verdict_bloom(rows, start):
     cur = [r for r in rows if r.ts >= start]
     if not cur:
         return _unknown()
-    supps = [v for v in (_num((r.data or {}).get("supp")) for r in cur) if v is not None]
-    retns = [v for v in (_num((r.data or {}).get("retn")) for r in cur) if v is not None]
-    outs = [v for v in (_num((r.data or {}).get("out")) for r in cur) if v is not None]
+    from app import despike
+    supps = despike.drop([_num((r.data or {}).get("supp")) for r in cur])
+    retns = despike.drop([_num((r.data or {}).get("retn")) for r in cur])
+    outs = despike.drop([_num((r.data or {}).get("out")) for r in cur])
     boilers = [v for v in (_num((r.data or {}).get("boiler")) for r in cur) if v is not None]
     peak, rise = _peak_rise(supps)
     retn_peak, retn_rise = _peak_rise(retns)

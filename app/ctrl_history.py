@@ -142,8 +142,15 @@ def series(ctrl, days, keys, now=None) -> dict:
         acc[1] += sum(_seconds_used(a, b, f"hw{i}") for i in (1, 2)) / 60
     hk = sorted(hours)
     first = rs[0].ts if rs else None
+    # drop single-sample sensor glitches (app/despike); leave stack temps, which
+    # can spike for real on a short burner cycle.
+    from app import despike
+    series = {}
+    for k in keys:
+        line = [val(r, k) for r in shown]
+        series[k] = line if "stack" in k else despike.clean(line)
     return {"range": [ms(start), ms(now)], "t": [ms(r.ts) for r in shown], "res": "a reading every 5 minutes",
-            "series": {k: [val(r, k) for r in shown] for k in keys}, "labels": {k: labels[k] for k in keys},
+            "series": series, "labels": {k: labels[k] for k in keys},
             "catalog": cat, "days": days,
             "note": (None if first and first <= start else
                      "The portal keeps a controller's history from 2026-10-15 on: earlier days are empty."),

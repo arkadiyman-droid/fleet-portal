@@ -632,6 +632,9 @@ def series(asset, days, keys, now=None) -> dict:
         out["t"] = [_ms(r.ts) for r in rows]
         for k in keys:
             out["series"][k] = [(r.data or {}).get(k) for r in rows]
+    from app import despike
+    for k in list(out["series"]):                    # drop single-sample sensor glitches (app/despike)
+        out["series"][k] = despike.clean(out["series"][k])
     if not rows:
         out["note"] = "No history yet — readings are recorded from now on."
     return out

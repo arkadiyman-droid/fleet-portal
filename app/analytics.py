@@ -483,6 +483,13 @@ def box_sensor_series(box, days, keys, now=None) -> dict:
                 out["note"] = "Box sensors and the riser are kept as every read for 90 days, not as hourly summaries: pick 7 days or less for them."
         for h in hs:
             hours[h.hour] = [h.heat_min, h.hw_min]
+    # drop single-sample sensor glitches so one railed read can't stretch the
+    # axis (app/despike). Stack temperatures can spike for real on a short
+    # burner cycle, so they are left alone.
+    from app import despike
+    for k in list(out["series"]):
+        if "stack" not in k:
+            out["series"][k] = despike.clean(out["series"][k])
     hk = sorted(hours)
     out["bars"] = {"t": [_ms(h) for h in hk], "heat": [min(hours[h][0], 240) for h in hk],
                    "hw": [min(hours[h][1], 240) for h in hk], "step": "hour"}

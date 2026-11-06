@@ -305,16 +305,19 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False
     """The hourly row for one box: prev = its last read before the hour (or
     None), cur = its reads inside the hour, oldest first."""
     seq = ([prev] if prev is not None else []) + cur
-    outs = _vals(cur, "out", -40, 130)
+    from app import despike, legacy
+    # drop single-sample sensor glitches from the slow water-loop temps so one
+    # railed read can't inflate a max/mean (app/despike). Stack can spike for
+    # real on a short burner cycle, so it is left alone.
+    outs = despike.drop(_vals(cur, "out", -40, 130))
     out = _mean(outs) if outs else fleet_out
-    from app import legacy
-    ins = _vals([r for r in cur if not legacy.no_sensors(r.apt)], "inside", 35, 110)   # not the no-sensor 65
+    ins = despike.drop(_vals([r for r in cur if not legacy.no_sensors(r.apt)], "inside", 35, 110))   # not the no-sensor 65
     dits = _vals(cur, "dit", 40, 90)
-    aq = _vals(cur, "aqua", 0, 260)
+    aq = despike.drop(_vals(cur, "aqua", 0, 260))
     stk = _vals(cur, "stack", 0, 1500)
     hst = _vals(cur, "hi_stack", 0, 1500)
-    coil = _vals(cur, "coil", 0, 260)
-    mix = _vals(cur, "mix", 0, 260)
+    coil = despike.drop(_vals(cur, "coil", 0, 260))
+    mix = despike.drop(_vals(cur, "mix", 0, 260))
     width = max((len(r.apt) for r in cur if r.apt), default=0)
     apt_avg = []
     for i in range(width):
@@ -334,7 +337,7 @@ def hour_row(box_id, hour, prev, cur, fleet_out, poll_min, ignore_ignition=False
         "in_avg": _mean(ins), "in_min": min(ins) if ins else None, "in_max": max(ins) if ins else None,
         "dit": dits[-1] if dits else None,
         "aqua_avg": _mean(aq), "aqua_max": max(aq) if aq else None,
-        "supp_avg": _mean(_vals(cur, "supp", 0, 260)), "retn_avg": _mean(_vals(cur, "retn", 0, 260)),
+        "supp_avg": _mean(despike.drop(_vals(cur, "supp", 0, 260))), "retn_avg": _mean(despike.drop(_vals(cur, "retn", 0, 260))),
         "coil_min": min(coil) if coil else None, "coil_max": max(coil) if coil else None,
         "mix_min": min(mix) if mix else None, "mix_max": max(mix) if mix else None,
         "stack_avg": _mean(stk), "stack_max": max(stk) if stk else None, "hi_stack": max(hst) if hst else None,

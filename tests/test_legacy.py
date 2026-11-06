@@ -227,9 +227,21 @@ def test_a_refused_login_drops_the_session(monkeypatch):
 # ── colours (decoded from Anagha's Live page, 2026-10-15) ───────────────────
 
 def _tint(**kw):
+    # The outdoor weather band (the "out" key) is a separate feature, covered by
+    # test_outdoor_band; these cases pass `out` only as context for the inside
+    # and plant colours, so it is excluded here.
     role = {k: kw.get(k) for k in ("out", "supp", "retn", "aqua", "coil", "mix")}
     return {k: v[0] for k, v in legacy.tint(role, kw.get("avg"), kw.get("dit", 68), kw.get("stack"),
-                                            kw.get("temps", [(0, "Out", 60)])).items()}
+                                            kw.get("temps", [(0, "Out", 60)])).items() if k != "out"}
+
+
+def test_outdoor_band():
+    band = lambda out: legacy.tint({"out": out}, None, 68, None, []).get("out", (None,))[0]
+    assert band(15) == "ofrig"      # <= 20: frigid
+    assert band(30) == "ocold"      # 21-40: cold
+    assert band(55) == "ocool"      # 41-60: cool
+    assert band(68) is None         # 61-75: mild, no band
+    assert band(80) == "owarm"      # > 75: warm
 
 
 def test_inside_colours_match_anagha():
