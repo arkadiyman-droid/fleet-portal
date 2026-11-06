@@ -265,6 +265,14 @@ def test_plant_colours_match_anagha():
     assert _tint(mix=139) == {} and _tint(mix=144) == {"mix": "scald"}
 
 
+def test_bad_read_ceiling_not_coloured():
+    # a railed read above boiling is a bad sensor, not a scald / fault: no colour
+    assert legacy.dhw_tint(250) is None
+    assert _tint(mix=250) == {}
+    assert _tint(supp=250, retn=250) == {}
+    assert _tint(mix=144) == {"mix": "scald"}      # a real 144 still flags
+
+
 def test_every_colour_says_why():
     why = legacy.tint({"out": 58, "aqua": 84}, 79, 68, 625, [(0, "Out", 58)])
     assert "11 F above the desired 68 F" in why["inside"][1] and "84 F" in why["aqua"][1] and "625" in why["stack"][1]

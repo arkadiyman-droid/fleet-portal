@@ -52,3 +52,19 @@ def drop(vals, jump=DEFAULT_JUMP):
     """The values with single-sample spikes removed entirely (for max / mean /
     peak). `vals` is time-ordered; None entries are ignored."""
     return [v for v in clean(vals, jump) if v is not None]
+
+
+def fill(vals, jump=DEFAULT_JUMP):
+    """Like clean, but each spike is replaced by the last good value before it
+    (carry-forward) rather than None — so a corrected chart line has no gap and
+    a stored series stays continuous. A genuinely missing read (None in the
+    input) is left as None; only a removed spike is filled."""
+    cleaned = clean(vals, jump)
+    out = list(cleaned)
+    last = None
+    for i in range(len(out)):
+        if out[i] is None and vals[i] is not None and last is not None:
+            out[i] = last                 # a removed spike: carry the previous good value
+        if out[i] is not None:
+            last = out[i]
+    return out

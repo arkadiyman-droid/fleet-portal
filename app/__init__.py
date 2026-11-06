@@ -205,4 +205,25 @@ def create_app():
             click.echo(f"parsed: {r.get('parsed')}")
             click.echo(json.dumps(r.get('gels', {}), indent=2))
 
+    @app.cli.command("despike-history")
+    @click.option("--apply", "do_apply", is_flag=True, help="write the corrections (default is a dry run)")
+    @click.option("--days", type=int, default=None, help="only readings this many days back (default: all history)")
+    @click.option("--no-rollups", is_flag=True, help="skip rebuilding the 2010 hourly/daily rollups")
+    def despike_history(do_apply, days, no_rollups):
+        """De-spike the stored readings: rewrite single-sample sensor glitches to
+        the previous good value across all three sources (app/despike_backfill).
+        Dry run by default — prints what WOULD change; pass --apply to write."""
+        import datetime as _d
+        from app import despike_backfill
+        since = (_d.datetime.utcnow() - _d.timedelta(days=days)) if days else None
+        rep = despike_backfill.run(apply=do_apply, since=since, rebuild_rollups=not no_rollups)
+        click.echo(("APPLIED" if do_apply else "DRY RUN") + (f" · last {days} days" if days else " · all history"))
+        click.echo(f"  2010 box readings fixed : {rep['legacy_rows']}")
+        click.echo(f"  controller readings fixed: {rep['controller_rows']}")
+        click.echo(f"  Bloom readings fixed     : {rep['bloom_rows']}")
+        click.echo(f"  rollup hours affected    : {rep['affected_hours']}"
+                   + (f" (rebuilt {rep['hours_rebuilt']})" if do_apply else ""))
+        if not do_apply:
+            click.echo("  (nothing written — re-run with --apply)")
+
     return app

@@ -317,6 +317,11 @@ def _card(data: dict) -> dict:
 # (alerts.hydronic_loop_cold).
 LOOP_COLD_F = 80
 
+# Above boiling at atmospheric pressure (212 F, +margin): a water-loop reading
+# over this cannot be a real temperature — it is a railed / glitched sensor, so
+# it is never coloured (no scald flash on a one-poll 250 F spike, 2026-11-05).
+WATER_MAX_F = 230
+
 # A loop that is actually hot -- used to tell a latched/nuisance Safety trip
 # that is still delivering heat from one that has really stopped the building.
 # Same rule the Anagha heat-test settled on: the loop is hot if either side is
@@ -386,6 +391,8 @@ def dhw_tint(v):
     """Hot-water supply colour, Anagha's rule: blue under 100 F, teal when
     lukewarm (<=120 F, New York's tap minimum), orange a scald risk (>=140 F).
     Shared by the Bloom 'mix' reading and the Reliable Controls DHW scrape."""
+    if v and v > WATER_MAX_F:            # a railed read, not real hot water: no scald flash
+        return None
     if not v:
         return None
     if v < 100:
@@ -423,9 +430,11 @@ def tint(role, avg, dit, stack, temps) -> dict:
             t["inside"] = ("cold", f"{dit - avg} F below the desired {dit} F")
     for key, name in (("supp", "Supply"), ("retn", "Return")):
         v = role.get(key)
-        if v and v < 90:
+        if not v or v > WATER_MAX_F:                    # 0/None = no sensor; over the ceiling = a railed read
+            continue
+        if v < 90:
             t[key] = ("cold", f"{name} {v} F, under 90 F: the loop is cold")
-        elif v and v > 140:
+        elif v > 140:
             t[key] = ("hot", f"{name} {v} F, over 140 F")
     v = role.get("aqua")
     if v and v < 150:

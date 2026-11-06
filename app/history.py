@@ -504,4 +504,6 @@ def maintain(app, now=None):
     drop_old(now, int(app.config.get("LEGACY_RAW_DAYS", 90)))
     if hours or days:
         log.info("History: summed %d hour(s), %d day(s)", hours, days)
+    from app import despike_backfill            # persist new single-sample glitches (throttled ~hourly)
+    despike_backfill.correct_recent(app, now)
     return hours, days

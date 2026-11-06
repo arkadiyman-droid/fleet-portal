@@ -489,7 +489,7 @@ def box_sensor_series(box, days, keys, now=None) -> dict:
     from app import despike
     for k in list(out["series"]):
         if "stack" not in k:
-            out["series"][k] = despike.clean(out["series"][k])
+            out["series"][k] = despike.fill(out["series"][k])
     hk = sorted(hours)
     out["bars"] = {"t": [_ms(h) for h in hk], "heat": [min(hours[h][0], 240) for h in hk],
                    "hw": [min(hours[h][1], 240) for h in hk], "step": "hour"}

@@ -148,7 +148,7 @@ def series(ctrl, days, keys, now=None) -> dict:
     series = {}
     for k in keys:
         line = [val(r, k) for r in shown]
-        series[k] = line if "stack" in k else despike.clean(line)
+        series[k] = line if "stack" in k else despike.fill(line)
     return {"range": [ms(start), ms(now)], "t": [ms(r.ts) for r in shown], "res": "a reading every 5 minutes",
             "series": series, "labels": {k: labels[k] for k in keys},
             "catalog": cat, "days": days,

@@ -40,3 +40,13 @@ def test_empty_and_allnone():
     assert despike.clean([]) == []
     assert despike.clean([None, None]) == [None, None]
     assert despike.drop([None, None]) == []
+
+
+def test_fill_carries_previous_value():
+    # the spike becomes the previous good value, not a gap
+    assert despike.fill([120, 121, 250, 118, 120]) == [120, 121, 121, 118, 120]
+
+
+def test_fill_leaves_real_gaps_and_keeps_good_data():
+    assert despike.fill([120, None, 121, 250, 122]) == [120, None, 121, 121, 122]
+    assert despike.fill([70, 72, 110, 138, 140]) == [70, 72, 110, 138, 140]
