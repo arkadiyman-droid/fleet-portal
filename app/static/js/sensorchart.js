@@ -95,14 +95,26 @@
       cur.catalog = d.catalog;
       $("lvx-title").textContent = d.name;
       $("lvx-open").href = d.url + "#history";
-      $("lvx-res").textContent = "Showing " + d.res + " · times in New York";
+      $("lvx-res").textContent = "Showing " + d.res + " · times in New York · scroll to zoom, drag to pan, double-click to reset";
       $("lvx-note").hidden = !d.note; $("lvx-note").textContent = d.note || "";
       const color = k => COLORS[cur.keys.indexOf(k) % COLORS.length];
-      EchoCharts.line($("lvx-chart"), {t: d.t, range: d.range, unit: "°", height: 300,
-        series: cur.keys.map(k => ({name: d.labels[k] || k, color: color(k), data: d.series[k] || [], width: 2}))});
       const B = d.bars || {};
-      EchoCharts.bars($("lvx-bars"), {t: B.t || [], range: d.range, step: "hour", unit: " min", height: 140,
-        series: [{name: "Heat", color: "#f97316", data: B.heat || []}, {name: "Hot water", color: "#0ea5e9", data: B.hw || []}]});
+      // A shared view window the line and the bars both read, so scroll-to-zoom
+      // and drag-to-pan move them together. Re-made on every load (range button,
+      // added sensor) so it resets to the full fetched window. charts.js clamps
+      // panning to [range], so zoom into a wider range to scroll further back.
+      const range = d.range || [d.t[0], (d.t[d.t.length - 1] || d.t[0]) + 3600e3];
+      const view = {t0: range[0], t1: range[1], bounds: [range[0], range[1]]};
+      // Redraw directly (the SVGs are tiny) rather than via requestAnimationFrame,
+      // which is paused in a background tab.
+      const sync = () => render();
+      function render() {
+        EchoCharts.line($("lvx-chart"), {t: d.t, view, onzoom: sync, unit: "°", height: 300,
+          series: cur.keys.map(k => ({name: d.labels[k] || k, color: color(k), data: d.series[k] || [], width: 2}))});
+        EchoCharts.bars($("lvx-bars"), {t: B.t || [], view, onzoom: sync, step: "hour", unit: " min", height: 140,
+          series: [{name: "Heat", color: "#f97316", data: B.heat || []}, {name: "Hot water", color: "#0ea5e9", data: B.hw || []}]});
+      }
+      render();
       chips(color);
     }).catch(() => { $("lvx-res").textContent = "could not load the chart"; });
   }

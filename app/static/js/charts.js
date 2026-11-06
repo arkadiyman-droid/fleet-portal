@@ -43,6 +43,7 @@
   }
 
   function timeTicks(t0, t1, width) {
+    if (!isFinite(t0) || !isFinite(t1) || t1 <= t0) return [];   // never let a bad range throw
     const span = t1 - t0, n = Math.max(2, Math.floor(width / 90));
     const steps = [3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 864e5, 2 * 864e5, 7 * 864e5, 14 * 864e5, 30 * 864e5];
     const step = steps.find(s => span / s <= n) || 60 * 864e5;
@@ -114,6 +115,50 @@
     return Math.abs(t[lo] - v) <= Math.abs(t[hi] - v) ? lo : hi;
   }
 
+  // Zoom (wheel) and pan (drag) a chart's visible time window. `view` is a
+  // shared {t0, t1, bounds:[min,max]} object (the same for the line and the
+  // bars so they move together); `redraw` rebuilds both. Double-click resets.
+  const MIN_SPAN = 5 * 60e3;        // never zoom in past 5 minutes
+  function interact(f, hit, view, redraw) {
+    const tAt = cx => {
+      const r = f.s.getBoundingClientRect();
+      return view.t0 + ((cx - r.left) * f.W / r.width - M.left) / f.iw * (view.t1 - view.t0);
+    };
+    const clamp = () => {
+      const [b0, b1] = view.bounds;
+      if (view.t1 - view.t0 > b1 - b0) { view.t0 = b0; view.t1 = b1; return; }
+      if (view.t1 - view.t0 < MIN_SPAN) { const c = (view.t0 + view.t1) / 2; view.t0 = c - MIN_SPAN / 2; view.t1 = c + MIN_SPAN / 2; }
+      if (view.t0 < b0) { view.t1 += b0 - view.t0; view.t0 = b0; }
+      if (view.t1 > b1) { view.t0 -= view.t1 - b1; view.t1 = b1; if (view.t0 < b0) view.t0 = b0; }
+    };
+    hit.style.cursor = "grab";
+    hit.addEventListener("wheel", ev => {
+      ev.preventDefault();
+      const pivot = tAt(ev.clientX), k = ev.deltaY > 0 ? 1.25 : 0.8;   // out / in, around the cursor
+      if (!isFinite(pivot)) return;                                    // no layout yet: ignore
+      view.t0 = pivot - (pivot - view.t0) * k;
+      view.t1 = pivot + (view.t1 - pivot) * k;
+      clamp(); redraw();
+    }, {passive: false});
+    hit.addEventListener("mousedown", ev => {
+      ev.preventDefault();
+      const r = f.s.getBoundingClientRect(), sx = ev.clientX, s0 = view.t0, s1 = view.t1;
+      if (!r.width) return;
+      const perPx = (s1 - s0) * f.W / (f.iw * r.width);
+      hit.style.cursor = "grabbing";
+      const move = e => { const dx = e.clientX - sx; view.t0 = s0 - dx * perPx; view.t1 = s1 - dx * perPx; clamp(); redraw(); };
+      const up = () => { document.removeEventListener("mousemove", move); document.removeEventListener("mouseup", up); hit.style.cursor = "grab"; };
+      document.addEventListener("mousemove", move); document.addEventListener("mouseup", up);
+    });
+    hit.addEventListener("dblclick", () => { view.t0 = view.bounds[0]; view.t1 = view.bounds[1]; redraw(); });
+  }
+
+  function onResize(el, draw) {           // one resize handler per element (no leak when redrawn)
+    if (el.__echoResize) window.removeEventListener("resize", el.__echoResize);
+    el.__echoResize = draw;
+    window.addEventListener("resize", draw);
+  }
+
   function line(el, o) {
     const draw = () => {
       const f = frame(el, o.height), t = o.t || [];
@@ -127,10 +172,15 @@
       let lo = Infinity, hi = -Infinity;
       shown.forEach(s => s.data.forEach(v => { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
       const yt = niceTicks(lo, hi, 5);
-      const t0 = o.range ? o.range[0] : t[0], t1 = o.range ? o.range[1] : (t[t.length - 1] === t0 ? t0 + 3600e3 : t[t.length - 1]);
+      const vw = o.view;
+      const t0 = vw ? vw.t0 : (o.range ? o.range[0] : t[0]);
+      const t1 = vw ? vw.t1 : (o.range ? o.range[1] : (t[t.length - 1] === t0 ? t0 + 3600e3 : t[t.length - 1]));
       const x = v => M.left + (v - t0) / (t1 - t0) * f.iw;
       const y = v => M.top + f.ih - (v - yt[0]) / (yt[yt.length - 1] - yt[0]) * f.ih;
       axes(f.s, f, x, y, yt, timeTicks(t0, t1, f.iw), o.unit);
+      const clip = "c" + Math.random().toString(36).slice(2);   // keep zoomed-in lines inside the plot
+      svg("rect", {x: M.left, y: M.top, width: f.iw, height: f.ih}, svg("clipPath", {id: clip}, f.s));
+      const plot = svg("g", {"clip-path": `url(#${clip})`}, f.s);
       const gaps = []; for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
       gaps.sort((a, b) => a - b);
       const brk = (gaps[gaps.length >> 1] || 3600e3) * 3.5;
@@ -142,12 +192,12 @@
           pen = true;
         });
         svg("path", {d, fill: "none", stroke: s.color, "stroke-width": s.width || 1.6, "stroke-linejoin": "round",
-                     "stroke-dasharray": s.dash || ""}, f.s);
+                     "stroke-dasharray": s.dash || ""}, plot);
       });
       (o.marks || []).forEach(m => {
         if (m.t < t0 || m.t > t1) return;
         svg("line", {x1: x(m.t), x2: x(m.t), y1: M.top, y2: M.top + f.ih, stroke: m.color, "stroke-width": 1,
-                     "stroke-dasharray": "3 3", opacity: .8}, f.s);
+                     "stroke-dasharray": "3 3", opacity: .8}, plot);
       });
       const cross = svg("line", {y1: M.top, y2: M.top + f.ih, stroke: "#111827", "stroke-width": 1, opacity: 0}, f.s);
       const tip = tipBox(el);
@@ -162,9 +212,10 @@
         place(tip, el, (ev.clientX - el.getBoundingClientRect().left), ev.clientY - el.getBoundingClientRect().top);
       });
       hit.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("opacity", 0); });
+      if (o.view && o.onzoom) interact(f, hit, o.view, o.onzoom);
     };
     draw();
-    window.addEventListener("resize", draw);
+    onResize(el, draw);
   }
 
   function bars(el, o) {
@@ -180,17 +231,22 @@
       const step = o.step === "day" ? 864e5 : 3600e3;
       const tot = t.map((_, i) => shown.reduce((a, s) => a + (s.data[i] || 0), 0));
       const yt = niceTicks(0, Math.max(1, ...tot), 4);
-      const t0 = o.range ? o.range[0] : t[0], t1 = o.range ? o.range[1] : t[t.length - 1] + step;
+      const vw = o.view;
+      const t0 = vw ? vw.t0 : (o.range ? o.range[0] : t[0]);
+      const t1 = vw ? vw.t1 : (o.range ? o.range[1] : t[t.length - 1] + step);
       const x = v => M.left + (v - t0) / (t1 - t0) * f.iw;
       const y = v => M.top + f.ih - v / yt[yt.length - 1] * f.ih;
       axes(f.s, f, x, y, yt, timeTicks(t0, t1, f.iw), o.unit);
+      const clip = "c" + Math.random().toString(36).slice(2);
+      svg("rect", {x: M.left, y: M.top, width: f.iw, height: f.ih}, svg("clipPath", {id: clip}, f.s));
+      const plot = svg("g", {"clip-path": `url(#${clip})`}, f.s);
       const bw = Math.max(1, f.iw / ((t1 - t0) / step) - (f.iw / ((t1 - t0) / step) > 4 ? 1 : 0));
       t.forEach((ti, i) => {
         let base = 0;
         shown.forEach(s => {
           const v = s.data[i] || 0;
           if (!v) return;
-          svg("rect", {x: x(ti), y: y(base + v), width: bw, height: Math.max(0.5, y(base) - y(base + v)), fill: s.color}, f.s);
+          svg("rect", {x: x(ti), y: y(base + v), width: bw, height: Math.max(0.5, y(base) - y(base + v)), fill: s.color}, plot);
           base += v;
         });
       });
@@ -205,9 +261,10 @@
         place(tip, el, ev.clientX - el.getBoundingClientRect().left, ev.clientY - el.getBoundingClientRect().top);
       });
       hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+      if (o.view && o.onzoom) interact(f, hit, o.view, o.onzoom);
     };
     draw();
-    window.addEventListener("resize", draw);
+    onResize(el, draw);
   }
 
   function color(v, req) {
