@@ -34,17 +34,20 @@ NOISE_JUMP = 40              # F between consecutive reads that counts as a jolt
 NOISE_PER_DAY = 12           # this many jolts a day = a noisy probe
 MAX_GAP = _dt.timedelta(minutes=70)      # a longer gap breaks a run (the box was dark)
 
-# attr, label, ceiling F, floor F (None = skip), priority (1 = control/safety), faults
+# attr, label, ceiling F, floor F (None = skip), priority (1 = control/safety), faults, wireless
+# The riser is a wireless Inovonics sensor with a remote probe (the user, 2026-11-06);
+# a dead one holds its last value, fails open, or stops reporting. The rest are wired to
+# the controller in the boiler room.
 _WATER = frozenset({"stuck", "stucklow", "dropped", "frozen", "noisy"})
 CHANNELS = [
-    ("aqua", "Aquastat", 260, 40, 1, _WATER),
-    ("supp", "Supply", 230, 40, 1, _WATER),
-    ("mix", "DHW mix", 230, 40, 2, _WATER),
-    ("retn", "Return", 230, 40, 3, _WATER),
-    ("coil", "Coil", 230, 40, 3, _WATER),
-    ("risr", "Riser", 230, 40, 3, _WATER),
-    ("stack", "Stack", 1500, None, 3, frozenset({"stuck"})),  # stack legitimately swings; rail only
-    ("hi_stack", "Hi stack", 1500, None, 4, frozenset({"stuck"})),
+    ("aqua", "Aquastat", 260, 40, 1, _WATER, False),
+    ("supp", "Supply", 230, 40, 1, _WATER, False),
+    ("mix", "DHW mix", 230, 40, 2, _WATER, False),
+    ("retn", "Return", 230, 40, 3, _WATER, False),
+    ("coil", "Coil", 230, 40, 3, _WATER, False),
+    ("risr", "Riser", 230, 40, 3, _WATER, True),
+    ("stack", "Stack", 1500, None, 3, frozenset({"stuck"}), False),  # stack swings for real; rail only
+    ("hi_stack", "Hi stack", 1500, None, 4, frozenset({"stuck"}), False),
 ]
 ATTRS = [c[0] for c in CHANNELS]
 
@@ -84,23 +87,26 @@ def _runs(times, vals):
 def fault(times, vals, ch, now):
     """The worst fault for one channel of one box, or None. `times`/`vals` are
     the window's reads in order (vals may hold None / 0 for missing / no sensor)."""
-    attr, label, ceiling, floor, prio, faults = ch
+    attr, label, ceiling, floor, prio, faults, wireless = ch
     live = [(t, v) for t, v in zip(times, vals) if _present(v)]
     nlive = len(live)
+    why = lambda w, wired: f" — {w}" if wireless else f" — {wired}"
 
     if "stuck" in faults and nlive >= MIN_READS:
         railed = [(t, v) for t, v in live if v > ceiling]
         if len(railed) / nlive >= RAIL_FRAC:
             avg = round(sum(v for _t, v in railed) / len(railed))
             return _mk("stuck", label, prio, railed[0][0], now,
-                       f"reading {avg}° (over {ceiling}°) on {len(railed)} of {nlive} reads — an open probe")
+                       f"reading {avg}° (over {ceiling}°) on {len(railed)} of {nlive} reads"
+                       + why("the wireless Inovonics probe has failed open", "an open probe"))
 
     if "stucklow" in faults and floor is not None and nlive >= MIN_READS:
         low = [(t, v) for t, v in live if v < floor]
         if len(low) / nlive >= RAIL_FRAC:
             avg = round(sum(v for _t, v in low) / len(low))
             return _mk("stucklow", label, prio, low[0][0], now,
-                       f"reading {avg}° (under {floor}°) on {len(low)} of {nlive} reads — a shorted or miscalibrated probe")
+                       f"reading {avg}° (under {floor}°) on {len(low)} of {nlive} reads"
+                       + why("the wireless Inovonics probe is shorted or failed", "a shorted or miscalibrated probe"))
 
     if "dropped" in faults and nlive >= MIN_READS:
         last_i = max((i for i, v in enumerate(vals) if _present(v)), default=None)
@@ -108,7 +114,8 @@ def fault(times, vals, ch, now):
             dead = now - times[last_i]
             if dead >= _dt.timedelta(hours=FLAT_HOURS):
                 return _mk("dropped", label, prio + 1, times[last_i], now,
-                           f"was reading, then nothing for {_hrs(dead)} (last {vals[last_i]}°)")
+                           f"was reading, then nothing for {_hrs(dead)} (last {vals[last_i]}°)"
+                           + why("the wireless Inovonics probe stopped reporting", "the sensor stopped reporting"))
 
     if "frozen" in faults:
         best = None
@@ -120,7 +127,8 @@ def fault(times, vals, ch, now):
         if best:
             s, e, val, n = best
             return _mk("frozen", label, prio, s, now,
-                       f"stuck at exactly {val}° for {_hrs(e - s)} ({n} reads) — a hot loop should cycle")
+                       f"stuck at exactly {val}° for {_hrs(e - s)} ({n} reads)"
+                       + why("a dead wireless Inovonics probe holding its last value", "a hot loop should cycle"))
 
     if "noisy" in faults and nlive >= MIN_READS:
         jolts = sum(1 for (ta, va), (tb, vb) in zip(live, live[1:])
@@ -128,7 +136,8 @@ def fault(times, vals, ch, now):
         days = max(1.0, (live[-1][0] - live[0][0]).total_seconds() / 86400)
         if jolts / days >= NOISE_PER_DAY:
             return _mk("noisy", label, prio + 2, live[0][0], now,
-                       f"{round(jolts / days)} big jumps a day (over {NOISE_JUMP}°) — a loose probe")
+                       f"{round(jolts / days)} big jumps a day (over {NOISE_JUMP}°)"
+                       + why("a flaky wireless Inovonics probe", "a loose probe"))
     return None
 
 
@@ -163,6 +172,6 @@ def scan(now=None):
         for ch in CHANNELS:
             f = fault(d["t"], d[ch[0]], ch, now)
             if f:
-                out.append({**f, "box_id": bid, "box": live_boxes[bid], "attr": ch[0]})
+                out.append({**f, "box_id": bid, "box": live_boxes[bid], "attr": ch[0], "wireless": ch[6]})
     out.sort(key=lambda f: (f["priority"], f["since"]))     # control first, then longest-standing
     return out

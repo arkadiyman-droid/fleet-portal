@@ -47,7 +47,7 @@
         <tr data-box="{{ f.box_id }}"{% if f.priority <= 1 %} class="sh-pr1"{% endif %}>
           <td class="nowrap"><a href="{{ url_for('admin.live_box', box_id=f.box_id) }}">{{ f.box }}</a>
             <span class="lv-t lv-chartbtn" data-k="{{ f.attr }}" title="Open this sensor's chart">chart</span></td>
-          <td class="nowrap">{{ f.sensor }}</td>
+          <td class="nowrap">{{ f.sensor }}{% if f.wireless %} <span class="card-sub" style="font-size:11px" title="Wireless Inovonics sensor with a remote probe">· wireless</span>{% endif %}</td>
           <td class="nowrap"><span class="sf sf-{{ f.kind }}">{{ f.fault }}</span></td>
           <td class="wrap">{{ f.evidence }}</td>
           <td class="nowrap" title="{{ f.since.strftime('%Y-%m-%d %H:%M UTC') }}">{{ f.age }}</td>
