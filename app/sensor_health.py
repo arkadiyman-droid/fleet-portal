@@ -146,6 +146,16 @@ def _mk(kind, sensor, prio, since, now, evidence):
             "since": since, "age": _hrs(now - since), "evidence": evidence}
 
 
+def _box_findings(box_id, box_name, d, now):
+    """Every bad channel for one box's window of reads (d: {'t': [...], attr: [...]})."""
+    out = []
+    for ch in CHANNELS:
+        f = fault(d["t"], d[ch[0]], ch, now)
+        if f:
+            out.append({**f, "box_id": box_id, "box": box_name, "attr": ch[0], "wireless": ch[6]})
+    return out
+
+
 def scan(now=None):
     """Every bad (box, sensor) across the 2010 boxes, worst-first (control
     sensors and the longest-standing faults on top)."""
@@ -169,11 +179,32 @@ def scan(now=None):
             d[a].append(r[2 + j])
     out = []
     for bid, d in by_box.items():
-        for ch in CHANNELS:
-            f = fault(d["t"], d[ch[0]], ch, now)
-            if f:
-                out.append({**f, "box_id": bid, "box": live_boxes[bid], "attr": ch[0], "wireless": ch[6]})
+        out.extend(_box_findings(bid, live_boxes[bid], d, now))
     out.sort(key=lambda f: (f["priority"], f["since"]))     # control first, then longest-standing
+    return out
+
+
+def for_box(box_id, box_name=None, now=None):
+    """Bad sensors for a single box, worst-first — for its detail page (reads
+    only that box's recent history, so it is cheap to call per page view)."""
+    from app.extensions import db
+    from app.models import LegacyBox, LegacyReading
+    now = now or _dt.datetime.utcnow()
+    if box_name is None:
+        b = LegacyBox.query.filter_by(id=box_id).first()
+        if b is None or b.deleted_at is not None:
+            return []
+        box_name = b.name
+    cutoff = now - _dt.timedelta(days=WINDOW_DAYS)
+    cols = [getattr(LegacyReading, a) for a in ATTRS]
+    rows = (db.session.query(LegacyReading.ts, *cols)
+            .filter(LegacyReading.box_id == box_id, LegacyReading.ts >= cutoff)
+            .order_by(LegacyReading.ts).all())
+    if not rows:
+        return []
+    d = {"t": [r[0] for r in rows], **{a: [r[1 + j] for r in rows] for j, a in enumerate(ATTRS)}}
+    out = _box_findings(box_id, box_name, d, now)
+    out.sort(key=lambda f: (f["priority"], f["since"]))
     return out
 
 

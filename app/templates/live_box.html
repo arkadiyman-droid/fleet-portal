@@ -15,6 +15,12 @@
   .hx-legend i { display:inline-block; width:18px; height:9px; border-radius:2px; vertical-align:-1px; margin-right:4px; }
   table.hx-days td, table.hx-days th { padding:5px 8px; font-size:12.5px; white-space:nowrap; font-variant-numeric:tabular-nums; }
   .kv .t-cold { background:#2675b9; color:#fff; border-radius:5px; padding:0 6px; font-weight:700; }   /* as on Live */
+  .bs { margin:8px 0 0; display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+  .bs .bs-n { font-weight:700; color:var(--crit); }
+  .sf { display:inline-block; padding:1px 8px; border-radius:7px; font-size:12px; font-weight:700; white-space:nowrap; cursor:pointer; }
+  .sf-stuck { background:#dc2626; color:#fff; } .sf-stucklow { background:#1d4ed8; color:#fff; }
+  .sf-dropped { background:#b91c1c; color:#fff; } .sf-frozen { background:#ea580c; color:#fff; }
+  .sf-noisy { background:#f59e0b; color:#1f1300; }
 </style>
 {% endblock %}
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
@@ -37,6 +43,9 @@
     {% if r.state == 'live' %}{{ c.status }} · read {{ r.age }}{% else %}{{ r.why }}{% endif %}
   </div>
   {% if heat_badge and r.heat and r.heat.state != 'unknown' %}<div style="margin:8px 0 0"><span class="ho ho-{{ r.heat.tone }}">{{ r.heat.label }}</span> <span class="card-sub">overnight — {{ r.heat.detail }}</span></div>{% endif %}
+  {% if bad_sensors %}<div class="bs"><span class="bs-n">{{ bad_sensors|length }}</span> <span>sensor{{ 's' if bad_sensors|length != 1 }} look{{ '' if bad_sensors|length != 1 else 's' }} faulty</span>
+    {% for f in bad_sensors %}<span class="lv-t sf sf-{{ f.kind }}" data-k="{{ f.attr }}" title="{{ f.sensor }} — {{ f.fault }}: {{ f.evidence }} · click for the chart">{{ f.sensor }}{% if f.wireless %} ⚡{% endif %}</span>{% endfor %}
+    <span class="card-sub">over the last {{ sensor_window_days }} days · <a href="{{ url_for('admin.sensor_health_page') }}">all sensors</a></span></div>{% endif %}
 
   {% if b.is_active %}{% set a = b.alert_state %}
   <div class="section" style="margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">

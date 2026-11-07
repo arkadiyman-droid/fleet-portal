@@ -1401,13 +1401,15 @@ def live_box(box_id):
     if b.deleted_at:
         abort(404)
     row = _legacy_rows(datetime.utcnow(), [b])[0]
-    from app import history, legacy
+    from app import history, legacy, sensor_health
     from app.models import LegacyDaily, LegacyEvent
     daily = LegacyDaily.query.filter_by(box_id=b.id).order_by(LegacyDaily.day.desc()).limit(31).all()
     events = LegacyEvent.query.filter_by(box_id=b.id).order_by(LegacyEvent.ts.desc()).limit(30).all()
+    bad_sensors = sensor_health.for_box(b.id, b.name)
     return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm, now_utc=datetime.utcnow(),
                            dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30), daily=daily, events=events,
-                           local=history.local, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90))
+                           local=history.local, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90),
+                           bad_sensors=bad_sensors, sensor_window_days=sensor_health.WINDOW_DAYS)
 
 
 def _live_box_or_404(box_id):
