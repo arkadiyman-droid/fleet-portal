@@ -1361,6 +1361,7 @@ def sensor_health_page():
     for f in findings:
         kinds[f["kind"]] = kinds.get(f["kind"], 0) + 1
     return render_template("sensor_health.html", title="Sensor health", findings=findings,
+                           buildings=sensor_health.by_building(findings),
                            kinds=kinds, window_days=sensor_health.WINDOW_DAYS,
                            flat_hours=sensor_health.FLAT_HOURS)
 

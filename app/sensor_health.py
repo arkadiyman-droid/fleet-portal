@@ -175,3 +175,19 @@ def scan(now=None):
                 out.append({**f, "box_id": bid, "box": live_boxes[bid], "attr": ch[0], "wireless": ch[6]})
     out.sort(key=lambda f: (f["priority"], f["since"]))     # control first, then longest-standing
     return out
+
+
+def by_building(findings):
+    """Group findings into a per-building tally, worst-first (most bad sensors,
+    then most-critical sensor): a dispatch sheet — one visit clears several."""
+    g = {}
+    for f in findings:
+        b = g.setdefault(f["box_id"], {"box_id": f["box_id"], "box": f["box"], "items": []})
+        b["items"].append(f)
+    buildings = list(g.values())
+    for b in buildings:
+        b["items"].sort(key=lambda x: (x["priority"], x["since"]))
+        b["count"] = len(b["items"])
+        b["top_priority"] = min(x["priority"] for x in b["items"])
+    buildings.sort(key=lambda b: (-b["count"], b["top_priority"], b["box"].lower()))
+    return buildings

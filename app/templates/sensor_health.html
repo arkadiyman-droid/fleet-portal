@@ -13,6 +13,7 @@
   table.sh tbody tr:hover td { background:#f8fafc; }
   .sf { display:inline-block; padding:1px 8px; border-radius:7px; font-size:12px; font-weight:700; white-space:nowrap; }
   .sf-stuck { background:#dc2626; color:#fff; }
+  .sf-stucklow { background:#1d4ed8; color:#fff; }
   .sf-dropped { background:#b91c1c; color:#fff; }
   .sf-frozen { background:#ea580c; color:#fff; }
   .sf-noisy { background:#f59e0b; color:#1f1300; }
@@ -30,6 +31,7 @@
 
   <div class="sh-tally">
     <span class="t"><span class="sf sf-stuck">Stuck high</span> <b>{{ kinds.get('stuck', 0) }}</b></span>
+    <span class="t"><span class="sf sf-stucklow">Stuck low</span> <b>{{ kinds.get('stucklow', 0) }}</b></span>
     <span class="t"><span class="sf sf-dropped">Dropped out</span> <b>{{ kinds.get('dropped', 0) }}</b></span>
     <span class="t"><span class="sf sf-frozen">Frozen</span> <b>{{ kinds.get('frozen', 0) }}</b></span>
     <span class="t"><span class="sf sf-noisy">Noisy</span> <b>{{ kinds.get('noisy', 0) }}</b></span>
@@ -40,6 +42,21 @@
     <div class="sh-empty">No sensors look faulty over the last {{ window_days }} days. 👍</div>
   {% else %}
     <p class="card-sub" style="margin:0 0 10px">Control sensors (aquastat, supply) first, then the longest-standing. “Stuck high” = an open/disconnected probe reading over its ceiling; “Frozen” = the exact same value for {{ flat_hours }} h+ (a stale reading); “Dropped out” = it was reading, then went silent; “Noisy” = a loose probe jumping around.</p>
+    <h2 style="font-size:14px;margin:10px 0 4px">By building <span class="card-sub" style="font-weight:400;text-transform:none;letter-spacing:0">— {{ buildings|length }} building{{ 's' if buildings|length != 1 }}, worst first; one visit clears several. Click a sensor for its chart.</span></h2>
+    <div class="lv-scroll" style="overflow:auto;margin-bottom:16px"><table class="sh">
+      <thead><tr><th class="nowrap">Building</th><th class="nowrap">Bad</th><th class="wrap">Sensors</th></tr></thead>
+      <tbody>
+      {% for b in buildings %}
+        <tr data-box="{{ b.box_id }}"{% if b.top_priority <= 1 %} class="sh-pr1"{% endif %}>
+          <td class="nowrap"><a href="{{ url_for('admin.live_box', box_id=b.box_id) }}">{{ b.box }}</a></td>
+          <td class="nowrap" style="font-variant-numeric:tabular-nums"><b>{{ b.count }}</b></td>
+          <td class="wrap">{% for i in b['items'] %}<span class="lv-t sf sf-{{ i.kind }}" data-k="{{ i.attr }}" style="cursor:pointer;margin:1px 3px 1px 0;display:inline-block" title="{{ i.sensor }} — {{ i.fault }}: {{ i.evidence }} · click for the chart">{{ i.sensor }}{% if i.wireless %} ⚡{% endif %}</span>{% endfor %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+
+    <h2 style="font-size:14px;margin:10px 0 4px">Every fault in detail</h2>
     <div class="lv-scroll" style="overflow:auto"><table class="sh">
       <thead><tr><th>Building</th><th>Sensor</th><th>Fault</th><th class="wrap">What the history shows</th><th class="nowrap">Since</th></tr></thead>
       <tbody>
