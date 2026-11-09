@@ -70,7 +70,10 @@ def test_calling_for_heat_with_a_cold_loop_is_a_crit_problem():
 
 
 def test_a_fault_alarm_makes_the_card_crit_and_is_listed():
-    alarms = [{"type": "pmp-run-fail", "txt": "Heating Pump 1 did not start when commanded", "end": None}]
+    # A card reddens only for Bloom's own severity-1 alarms (boiler alarm,
+    # heating-HW low-temp); grading is by vendor severity, not alarm type.
+    alarms = [{"type": "blr-alm", "severity": 1,
+               "txt": "Boiler alarm — did not start when commanded", "end": None}]
     c = bloom.card({"asset": BLD, "alarms": alarms})
     assert c["fault"] is True and c["tone"] == "crit"
     assert c["n_alarms"] == 1 and "did not start" in c["alarms"][0]
