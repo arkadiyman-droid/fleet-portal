@@ -72,7 +72,7 @@ def _echo_entry(name, ctrl, now, now_dt):
 def _legacy_entry(name, box, now_dt):
     from app import legacy
     st = box.status
-    c = legacy.card(st.data) if st and st.data else None
+    c = legacy.card(st.data, guard_out=True) if st and st.data else None   # live display: drop a railed OAT to "—"
     last_ok = st.last_ok_at if st else None
     if box.identity == "other" or (not last_ok) or (now_dt - last_ok) > legacy.STALE or not c:
         e = _blank(name, "2010", f"/live/{box.id}")

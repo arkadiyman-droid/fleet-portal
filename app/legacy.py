@@ -234,8 +234,8 @@ def hhmm(minutes):
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
-def card(data: dict) -> dict:
-    c = _card(data)
+def card(data: dict, guard_out: bool = False) -> dict:
+    c = _card(data, guard_out)
     c["tint"] = card_tints(c)
     return c
 
@@ -250,8 +250,13 @@ def no_sensors(apts) -> bool:
     return not any(a for a in (apts or []) if a)
 
 
-def _card(data: dict) -> dict:
-    """The Anagha-style card from one box's stored reading (LegacyStatus.data)."""
+def _card(data: dict, guard_out: bool = False) -> dict:
+    """The Anagha-style card from one box's stored reading (LegacyStatus.data).
+
+    guard_out=True drops an implausible outdoor read (a railed oBIX
+    outsideTemperature, outside OUT_MIN_F..OUT_MAX_F) to None, so the out cell,
+    its weather band, and the inside-warmth explanation all treat it as no
+    reading — for display paths (the Live wall), never for the stored row."""
     st = (data or {}).get("status") or {}
     names = (data or {}).get("names") or {}
     temps = []
@@ -265,6 +270,8 @@ def _card(data: dict) -> dict:
         for _i, nm, val in temps:
             if nm.lower().startswith(prefixes) and key not in role:
                 role[key] = val
+    if guard_out and role.get("out") is not None and not plausible_out(role["out"]):
+        role["out"] = None                       # railed outdoor read: show as no reading, not a false temp
     code = status_code(st.get("callForHeat"))
     phrase, tone = STATUS.get(code, (code or "No status", "idle"))
     # Run times are the sum over the box's boilers, as Anagha shows them
@@ -321,6 +328,20 @@ LOOP_COLD_F = 80
 # over this cannot be a real temperature — it is a railed / glitched sensor, so
 # it is never coloured (no scald flash on a one-poll 250 F spike, 2026-11-05).
 WATER_MAX_F = 230
+
+# A believable outdoor-air reading sits in this band. Outside it the box's own
+# oBIX outsideTemperature point has railed for one poll (a sensor open/short or a
+# garbled read — e.g. 40 Maine Ave reporting 145 F for a single cycle, 2026-11-09)
+# and snaps back next read. The stored series keeps the raw value (despiked on
+# read, same as every chart/metric: heat_overnight mirrors this -40..130 gate);
+# display callers pass guard_out=True so the Live wall shows "—" for that one
+# cycle instead of a false temperature.
+OUT_MIN_F, OUT_MAX_F = -40, 130
+
+
+def plausible_out(v) -> bool:
+    """True when v is a believable outdoor-air temperature (not a railed read)."""
+    return v is not None and OUT_MIN_F <= v <= OUT_MAX_F
 
 # A loop that is actually hot -- used to tell a latched/nuisance Safety trip
 # that is still delivering heat from one that has really stopped the building.

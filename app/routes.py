@@ -1103,7 +1103,7 @@ def _legacy_rows(now, boxes=None):
     events, astates = _issue_context(now, [b.id for b in boxes])
     for b in boxes:
         st = b.status
-        c = legacy.card(st.data) if st and st.data else None
+        c = legacy.card(st.data, guard_out=True) if st and st.data else None   # live display: drop a railed OAT to "—"
         last_ok = st.last_ok_at if st else None
         if b.identity == "other":
             state, why = "other", "Another device answers at this address: no login is sent there"
