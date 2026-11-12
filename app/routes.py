@@ -1342,9 +1342,13 @@ def live_page():
     sort = request.args.get("sort", "problems")
     rows.sort(key=_LIVE_SORTS.get(sort, _LIVE_SORTS["problems"]))
     view = "table" if request.args.get("view") == "table" else "cards"
-    from app import legacy
+    from app import heat_overnight, legacy
+    # The window the Heat o/n column is reporting ("last night" through the day,
+    # frozen until 9pm; "tonight so far" once the new window opens) — shown in the
+    # header so a frozen overnight verdict isn't mistaken for the live moment.
+    _hs, _he, heat_window_label = heat_overnight.window(now)
     return render_template("live.html", title="Live", rows=rows, summary=summary, newest=newest, show=show,
-                           source=source, legend=legacy.TINT_LEGEND,
+                           source=source, legend=legacy.TINT_LEGEND, heat_window_label=heat_window_label,
                            q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
