@@ -25,6 +25,14 @@ ExecStart=/home/pi/fleet-portal/.venv/bin/gunicorn \
     --error-logfile - \
     wsgi:app
 
+# Graceful reload: SIGHUP to the master (MainPID for a Type=simple unit) tells
+# gunicorn to re-read the config and respawn workers; since the app is NOT
+# preloaded (no --preload above), the new workers import the current code and
+# templates, so `systemctl reload fleet-portal` picks up a deploy without
+# dropping a request. Do NOT signal a worker — workers ignore SIGHUP, so a HUP
+# aimed at the wrong pid looks like it worked but reloads nothing.
+ExecReload=/bin/kill -HUP $MAINPID
+
 Restart=on-failure
 RestartSec=5
 
