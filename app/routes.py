@@ -1569,6 +1569,21 @@ def fans_page():
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1)
 
 
+@admin_bp.route("/fans/<int:site_id>/series.json")
+def fans_series(site_id):
+    """History for one building's fans — outdoor, fans running, and an on/off
+    row per fan (app/bloom_fans.series) — drawn in the expanded row on /fans."""
+    if not is_superuser():
+        abort(403)
+    from app import bloom_fans
+    from app.models import BloomFanSite
+    site = BloomFanSite.query.get_or_404(site_id)
+    days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
+    data = bloom_fans.series(site, days)
+    data["name"] = site.name
+    return jsonify(data)
+
+
 @admin_bp.route("/skyline/<int:asset_id>")
 def skyline_building(asset_id):
     """Everything Bloom has for one Skyline building, with a Back button

@@ -50,6 +50,10 @@
   .fn-sch .h { text-align:center; color:var(--muted); font-size:9px; }
   .fn-sch .lbl { padding-left:8px; color:var(--muted); white-space:nowrap; }
   .fn-sch.used .n { font-weight:700; color:#1e3a8a; }
+  .fn-hist { grid-column:1 / -1; border-top:1px solid #eef2f7; padding-top:10px; min-width:0; }
+  .fn-hh { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:4px; }
+  .fn-hh button.r { padding:2px 10px; border:1px solid var(--border); border-radius:14px; background:#fff; cursor:pointer; font:inherit; font-size:12px; color:var(--muted); }
+  .fn-hh button.r.on { background:var(--text); color:#fff; border-color:var(--text); }
   @media (max-width: 1100px) { .fn-body { grid-template-columns:1fr; } }
 </style>
 {% endblock %}
@@ -128,9 +132,70 @@
         {% endfor %}
         <p class="card-sub" style="margin:6px 0 0">A schedule marked "below N°" only applies once it is colder than N° outside; above that the fans have been seen running around the clock.</p>
       </div>
+      <div class="fn-hist" data-site="{{ r.id }}">
+        <div class="fn-hh"><h3 style="margin:0">History</h3>
+          {% for k, l in [('1', '24 h'), ('2', '2 days'), ('7', '7 days'), ('30', '30 days')] %}<button type="button" class="r" data-days="{{ k }}">{{ l }}</button>{% endfor %}
+          <span class="card-sub fn-res"></span>
+        </div>
+        <div class="fn-h-out"></div>
+        <div class="card-sub" style="margin:8px 0 0 42px">Each fan · green = running</div>
+        <div class="fn-h-fans"></div>
+        <p class="card-sub fn-h-note" hidden style="color:#b45309"></p>
+      </div>
     </div>
   </details>
   {% endfor %}
 </div>
+{# ?v= gives the edited charts.js (EchoCharts.strips) its own cache entry. #}
+<script src="{{ url_for('static', filename='js/charts.js') }}?v=strips1"></script>
+<script>
+/* History in an expanded row: outdoor temperature over the cold setpoint, and
+   an on/off strip per fan, sharing one zoomable time axis. Loaded the first
+   time a row is opened, from /fans/<id>/series.json (app/bloom_fans.series). */
+(function () {
+  "use strict";
+  const URL_T = {{ url_for('admin.fans_series', site_id=0)|tojson }};
+  function load(box) {
+    let days = "1";
+    try { days = localStorage.getItem("fn-days") || "1"; } catch (e) {}
+    box.dataset.days = box.dataset.days || days;
+    const res = box.querySelector(".fn-res"), note = box.querySelector(".fn-h-note");
+    box.querySelectorAll("button.r").forEach(b => b.classList.toggle("on", b.dataset.days === box.dataset.days));
+    res.textContent = "loading…";
+    const want = box.dataset.days;
+    fetch(URL_T.replace("/0/", "/" + encodeURIComponent(box.dataset.site) + "/") + "?days=" + want, {credentials: "same-origin"})
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(d => {
+        if (box.dataset.days !== want) return;
+        res.textContent = "Showing " + d.res + " · times in New York · scroll to zoom, drag to pan, double-click to reset";
+        note.hidden = !d.note; note.textContent = d.note || "";
+        const view = {t0: d.range[0], t1: d.range[1], bounds: [d.range[0], d.range[1]]};
+        const lines = [{name: "Outdoor", color: "#2563eb", data: d.out, width: 2}];
+        if (d.sp !== null && d.sp !== undefined)
+          lines.push({name: "Cold schedule starts below " + d.sp + "°", color: "#6b7280", data: d.t.map(() => d.sp), dash: "5 4", width: 1.2});
+        function render() {
+          EchoCharts.line(box.querySelector(".fn-h-out"), {t: d.t, view, onzoom: render, unit: "°", height: 170, series: lines});
+          EchoCharts.strips(box.querySelector(".fn-h-fans"), {t: d.t, view, onzoom: render, rows: d.fans});
+        }
+        render();
+      })
+      .catch(() => { res.textContent = "could not load the history"; });
+  }
+  document.addEventListener("toggle", ev => {
+    const row = ev.target;
+    if (!row.classList || !row.classList.contains("fn-row") || !row.open) return;
+    const box = row.querySelector(".fn-hist");
+    if (box && !box.dataset.loaded) { box.dataset.loaded = "1"; load(box); }
+  }, true);
+  document.addEventListener("click", ev => {
+    const b = ev.target.closest(".fn-hist button.r");
+    if (!b) return;
+    const box = b.closest(".fn-hist");
+    box.dataset.days = b.dataset.days;
+    try { localStorage.setItem("fn-days", b.dataset.days); } catch (e) {}
+    load(box);
+  });
+})();
+</script>
 {% endif %}
 {% endblock %}

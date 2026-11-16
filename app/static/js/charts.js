@@ -6,6 +6,7 @@
  *   t: epoch ms; series: [{name, color, data, hidden}] (null = no value).
  *   Click a legend entry to show/hide it; hover for the values.
  * window.EchoCharts.bars(el, {t, series, unit, height, step})   stacked bars
+ * window.EchoCharts.strips(el, {t, rows, view, onzoom})         on/off rows (fans)
  * window.EchoCharts.heat(el, {t, rows, v, req, height})         heat map
  *   rows: labels; v[row][col]; req[col] = the minimum that hour (or null):
  *   a cell under it is drawn red.
@@ -267,6 +268,67 @@
     onResize(el, draw);
   }
 
+  // On/off strips: one row per item (a fan), filled where it was running.
+  // rows: [{label, name, data}] with data[i] = 1 / 0 / a 0-1 fraction (hourly
+  // averages: drawn as opacity) / null (no sample). Shares `view` with a line
+  // chart above it so the two zoom and pan together.
+  function strips(el, o) {
+    const draw = () => {
+      const rows = o.rows || [], t = o.t || [], rh = o.rowHeight || 15;
+      const f = frame(el, Math.max(1, rows.length) * rh + M.top + M.bottom);
+      if (!t.length || !rows.length) {
+        svg("text", {x: f.W / 2, y: f.H / 2, "text-anchor": "middle", fill: "#9ca3af", "font-size": 13}, f.s)
+          .textContent = "No history in this range yet";
+        return;
+      }
+      const vw = o.view;
+      const gaps = []; for (let i = 1; i < t.length; i++) gaps.push(t[i] - t[i - 1]);
+      gaps.sort((a, b) => a - b);
+      const med = gaps[gaps.length >> 1] || 300e3, brk = med * 3.5;
+      const t0 = vw ? vw.t0 : (o.range ? o.range[0] : t[0]);
+      const t1 = vw ? vw.t1 : (o.range ? o.range[1] : t[t.length - 1] + med);
+      const x = v => M.left + (v - t0) / (t1 - t0) * f.iw;
+      axes(f.s, f, x, () => 0, [], timeTicks(t0, t1, f.iw), "");
+      const clip = "c" + Math.random().toString(36).slice(2);
+      svg("rect", {x: M.left, y: M.top, width: f.iw, height: f.ih}, svg("clipPath", {id: clip}, f.s));
+      const plot = svg("g", {"clip-path": `url(#${clip})`}, f.s);
+      const end = i => (i + 1 < t.length && t[i + 1] - t[i] <= brk) ? t[i + 1] : t[i] + med;   // a sample holds until the next
+      rows.forEach((r, ri) => {
+        const y = M.top + ri * rh;
+        svg("text", {x: M.left - 6, y: y + rh / 2 + 4, "text-anchor": "end", "font-size": 11, fill: "#6b7280"}, f.s)
+          .textContent = r.label;
+        svg("rect", {x: M.left, y: y + 1, width: f.iw, height: rh - 2, fill: "#f1f5f9"}, plot);   // under this row's bars
+        let i = 0;
+        while (i < t.length) {                       // merge a run of equal values into one rect
+          const v = r.data[i];
+          let j = i;
+          while (j + 1 < t.length && r.data[j + 1] === v && t[j + 1] - t[j] <= brk) j++;
+          if (v) svg("rect", {x: x(t[i]), y: y + 1, width: Math.max(0.5, x(end(j)) - x(t[i])), height: rh - 2,
+                              fill: o.color || "#16a34a", opacity: Math.max(0.15, Math.min(1, v))}, plot);
+          i = j + 1;
+        }
+      });
+      const cross = svg("line", {y1: M.top, y2: M.top + f.ih, stroke: "#111827", "stroke-width": 1, opacity: 0}, f.s);
+      const tip = tipBox(el);
+      const hit = svg("rect", {x: M.left, y: M.top, width: f.iw, height: f.ih, fill: "transparent"}, f.s);
+      hit.addEventListener("mousemove", ev => {
+        const r = f.s.getBoundingClientRect(), px = (ev.clientX - r.left) * f.W / r.width;
+        const i = nearest(t, t0 + (px - M.left) / f.iw * (t1 - t0) - med / 2);
+        const vals = rows.map(row => row.data[i]), known = vals.filter(v => v !== null && v !== undefined);
+        const on = rows.filter((row, k) => vals[k] >= 0.5), off = rows.filter((row, k) => vals[k] !== null && vals[k] !== undefined && vals[k] < 0.5);
+        cross.setAttribute("x1", x(t[i])); cross.setAttribute("x2", x(t[i])); cross.setAttribute("opacity", .35);
+        tip.innerHTML = `<b>${fmt.full.format(t[i])}</b><br>` + (known.length
+          ? `${on.length} of ${known.length} running` + (off.length && off.length <= 6 ? `<br>off: ${off.map(row => row.name).join(", ")}` : "")
+          : "no sample");
+        place(tip, el, ev.clientX - el.getBoundingClientRect().left, ev.clientY - el.getBoundingClientRect().top);
+      });
+      hit.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("opacity", 0); });
+      if (o.view && o.onzoom) interact(f, hit, o.view, o.onzoom);
+    };
+    draw();
+    onResize(el, draw);
+  }
+
   function color(v, req) {
     if (v === null || v === undefined) return "#f3f4f6";
     if (req && v < req) return v < req - 4 ? "#991b1b" : "#dc2626";
@@ -326,5 +388,5 @@
     window.addEventListener("resize", draw);
   }
 
-  window.EchoCharts = {line, bars, heat, color};
+  window.EchoCharts = {line, bars, heat, strips, color};
 })();

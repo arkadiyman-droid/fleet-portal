@@ -130,5 +130,38 @@ def test_latched_fail_flag_on_a_running_fan_is_flagged_not_down():
     assert s["fail"] == 0 and s["groups"][0]["fans"][1]["flagged"] is True
 
 
+FANS = [{"name": "Exhaust Fan 1"}, {"name": "Exhaust Fan 2"}, {"name": "Exhaust Fan 10"}]
+
+
+def _samp(minutes_ago, rs, out):
+    return (NOW - dt.timedelta(minutes=minutes_ago),
+            {"on": rs.count("1"), "total": len(rs), "fail": 0, "out": out, "cut": False, "rs": rs})
+
+
+def test_series_raw_has_one_row_per_fan():
+    d = bf.series_from([_samp(10, "011", 40), _samp(5, "111", 39), _samp(0, "11", None)], FANS, 35, 1, NOW)
+    assert d["res"] == "every read" and len(d["t"]) == 3 and d["t"] == sorted(d["t"])
+    assert d["out"] == [40, 39, None] and d["on"] == [2, 3, 2] and d["sp"] == 35
+    assert [f["label"] for f in d["fans"]] == ["1", "2", "10"]
+    assert d["fans"][0]["data"] == [0, 1, 1]
+    assert d["fans"][2]["data"] == [1, 1, None]          # a short rs (fan added later) is unknown, not off
+    assert d["range"][1] - d["range"][0] == 86400 * 1000 and d["note"] is None
+
+
+def test_series_over_a_week_is_hourly_with_run_fractions():
+    hour = NOW.replace(minute=0)                           # NOW is 16:50; these four land in the 16:00 bucket
+    samples = [(hour + dt.timedelta(minutes=m), {"on": on, "out": o, "fail": 0, "rs": rs})
+               for m, rs, on, o in ((0, "100", 1, 30), (15, "100", 1, 32), (30, "110", 2, None), (45, "110", 2, 34))]
+    d = bf.series_from(samples, FANS, 35, 30, NOW)
+    assert d["res"] == "hourly averages" and len(d["t"]) == 1
+    assert d["out"] == [32.0] and d["on"] == [1.5]
+    assert [f["data"] for f in d["fans"]] == [[1.0], [0.5], [0.0]]
+
+
+def test_series_with_no_samples_says_so():
+    d = bf.series_from([], FANS, None, 1, NOW)
+    assert d["t"] == [] and d["note"] and all(f["data"] == [] for f in d["fans"])
+
+
 def test_history_sample():
     assert bf.history_sample(_sum()) == {"on": 2, "total": 3, "fail": 1, "out": 51, "cut": False, "rs": "011"}

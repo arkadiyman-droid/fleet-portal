@@ -302,6 +302,77 @@ def history_sample(s: dict) -> dict:
             "rs": "".join("1" if f["on"] else "0" for g in s["groups"] for f in g["fans"])}
 
 
+# ── history for the chart ──────────────────────────────────────────────────────
+
+def _ms(t):
+    return int(t.replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
+
+
+def _short(name, i):
+    """'Exhaust Fan 10' -> '10' for the chart's row label."""
+    tail = str(name or "").rsplit(" ", 1)[-1]
+    return tail if tail.isdigit() else str(i + 1)
+
+
+def series_from(samples, fans, sp, days, now) -> dict:
+    """Chart data from [(ts, sample), ...] oldest first: outdoor temperature,
+    fans running, and one on/off row per fan. `fans` is the current fan list
+    ([{name}, ...]) in the order history_sample() writes its `rs` bits. Raw
+    samples up to 7 days; hourly averages beyond, where a fan's value becomes
+    the fraction of the hour it ran."""
+    start = now - _dt.timedelta(days=days)
+    n = len(fans)
+
+    def bits(d):
+        rs = str((d or {}).get("rs") or "")
+        return [(1 if rs[i] == "1" else 0) if i < len(rs) else None for i in range(n)]
+
+    out = {"range": [_ms(start), _ms(now)], "days": days, "sp": sp, "note": None,
+           "fans": [{"name": f["name"], "label": _short(f["name"], i), "data": []} for i, f in enumerate(fans)]}
+    if days > 7 and samples:
+        buckets = {}
+        for ts, d in samples:
+            buckets.setdefault(ts.replace(minute=0, second=0, microsecond=0), []).append(d or {})
+        hs = sorted(buckets)
+
+        def avg(vals, nd=1):
+            vals = [v for v in vals if v is not None]
+            return round(sum(vals) / len(vals), nd) if vals else None
+
+        out["res"] = "hourly averages"
+        out["t"] = [_ms(h) for h in hs]
+        out["out"] = [avg([d.get("out") for d in buckets[h]]) for h in hs]
+        out["on"] = [avg([d.get("on") for d in buckets[h]]) for h in hs]
+        out["fail"] = [avg([d.get("fail") for d in buckets[h]]) for h in hs]
+        per = [[bits(d) for d in buckets[h]] for h in hs]
+        for i in range(n):
+            out["fans"][i]["data"] = [avg([b[i] for b in hour], 2) for hour in per]
+    else:
+        out["res"] = "every read"
+        out["t"] = [_ms(ts) for ts, _ in samples]
+        out["out"] = [(d or {}).get("out") for _, d in samples]
+        out["on"] = [(d or {}).get("on") for _, d in samples]
+        out["fail"] = [(d or {}).get("fail") for _, d in samples]
+        per = [bits(d) for _, d in samples]
+        for i in range(n):
+            out["fans"][i]["data"] = [b[i] for b in per]
+    if not samples:
+        out["note"] = "No history in this range yet — it is recorded from the first poll after the fans page was installed."
+    return out
+
+
+def series(site, days, now=None) -> dict:
+    """series_from() for one BloomFanSite (app context assumed)."""
+    from app.models import BloomFanSample
+    now = now or _dt.datetime.utcnow()
+    rows = (BloomFanSample.query
+            .filter(BloomFanSample.site_id == site.id, BloomFanSample.ts >= now - _dt.timedelta(days=days))
+            .order_by(BloomFanSample.ts).all())
+    s = summary(site.data, now=now)
+    fans = [f for g in s["groups"] for f in g["fans"]]
+    return series_from([(r.ts, r.data) for r in rows], fans, s["cut"]["sp"] if s["cut"] else None, days, now)
+
+
 # ── poller hook (called from bloom.poll_account, app context assumed) ──────────
 
 def record(app, account, building_list, now) -> int:
