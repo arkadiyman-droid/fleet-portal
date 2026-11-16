@@ -67,7 +67,15 @@
   .fn-cs .want.off { color:#6b7280; }
   .fn-cs .ne { color:#b45309; font-weight:700; margin-left:3px; cursor:help; }
   .fn-cs b.held { text-decoration:underline dashed; text-underline-offset:3px; cursor:help; }
-  .fn-mini.na { background:repeating-linear-gradient(135deg, #e5e7eb 0 4px, #f3f4f6 4px 8px); }
+  .fn-two { display:grid; gap:2px; }
+  .fn-two .fn-mini { height:9px; border-radius:2px; }
+  .fn-two .fn-mini.set span.on { background:#5eead4; }
+  .fn-two .fn-mini.set.active span.on { background:#0d9488; }
+  .fn-key i.teal { background:#5eead4; }
+  .fn-odd { text-decoration:underline dotted #b45309; text-underline-offset:3px; cursor:help; }
+  .fn-prop .now { font-size:13px; padding:2px 10px; border-radius:12px; background:#fff; border:1px solid var(--border); }
+  .fn-prop .now b { font-weight:700; }
+  .fn-prop .now.off b.st { color:#6b7280; } .fn-prop .now.on b.st { color:#1d4ed8; }
   .fn-plan { background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:0 0 12px; }
   .fn-plan h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
   .fn-pl { display:grid; grid-template-columns:110px minmax(240px, 520px) minmax(180px, 1fr) auto; gap:4px 12px; align-items:center; font-size:13px; }
@@ -162,11 +170,12 @@
     <span class="bl">{{ b.label }}</span>
     <span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>
     <span class="card-sub">{% if b.hours_on == 24 %}on around the clock{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
-    <span class="cnt">{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }} now</span>
+    <span class="cnt">{% if summary.band_props.get(b.key) %}<b style="color:var(--text)">now: {{ summary.band_props[b.key]|join(', ') }}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
     {% endfor %}
   </div>
   {% if hyst %}<p class="card-sub" style="margin:8px 0 0">Hysteresis {{ "%g"|format(hyst) }}°: a building drops to the colder schedule as soon as it crosses a line, and moves back up only once it reads {{ "%g"|format(hyst) }}° above it ({{ "%g"|format(plan[1].lo + hyst) }}° and {{ "%g"|format(plan[2].lo + hyst) }}°), so a temperature sitting on a line does not flip the schedule back and forth.{% if summary.held %} {{ summary.held }} building{{ 's are' if summary.held != 1 else ' is' }} held on the colder schedule that way right now.{% endif %}</p>{% endif %}
-  {% if summary.gaps %}<p class="card-sub" style="margin:8px 0 0;color:#92400e">Bloom's own schedules would not carry this plan out at <a href="{{ link('gaps') }}" style="color:inherit;font-weight:600">{{ summary.gaps }} of {{ summary.buildings }} buildings</a> — marked <b>≠</b> below; open a building to see what differs.</p>{% endif %}
+  <p class="card-sub" style="margin:8px 0 0">Each property is placed by one outdoor temperature: the middle reading of its buildings' own sensors, so one sensor in the sun cannot put a building on a different schedule from its neighbours.</p>
+  {% if summary.gaps %}<p class="card-sub" style="margin:8px 0 0;color:#92400e">Bloom's own schedules would not carry this plan out at <a href="{{ link('gaps') }}" style="color:inherit;font-weight:600">{{ summary.gaps }} of {{ summary.buildings }} buildings</a> — on each row the top strip is the plan and the bottom strip is what Bloom is set to do today; open a building to see what differs.</p>{% endif %}
 </div>
 
 <div class="fn-ctl">
@@ -181,7 +190,7 @@
 </div>
 <div class="fn-key">
   <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
-  <span>·</span><span><i class="blue"></i>hours the plan runs the fans at that building's temperature</span><span><i class="grey"></i>hours it holds them off</span><span>outlined = this hour</span>
+  <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today</span><span><i class="grey"></i>off</span><span>outlined = this hour</span>
   <span>· Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min</span>
 </div>
 
@@ -193,13 +202,14 @@
   {% if grp.name %}
   <div class="fn-prop">
     <h2>{{ grp.name }}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
+    {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
     <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}</span>
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
   </div>
   {% endif %}
   <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span title="One square per fan, clustered by fan group">Fans</span><span class="fn-num">On</span>
-    <span class="fn-cs" title="The plan for the temperature at that building right now, and what it asks for this hour"><span>Plan</span><span class="fn-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span>now</span></span>
+    <span class="fn-cs" title="Top strip: the plan for this property's temperature. Bottom strip: what Bloom is set to do today. Then what the plan asks for this hour."><span>Plan / set</span><span class="fn-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span>now</span></span>
     <span class="fn-num" title="Longest run time today among the fans">Run today</span><span class="fn-num" title="When the fan points were last heard from">Heard</span></div>
   {% for r in grp.rows %}
   <details class="fn-row tone-{{ r.tone }}">
@@ -207,16 +217,16 @@
       <span class="fn-stripe"></span>
       <span class="fn-nm" title="{{ r.name }}">{{ r.name }}</span>
       <span class="fn-st" title="{{ r.flags|join(' · ') if r.flags else r.status }}">{{ r.status }}{% if r.flags|length > 1 %} <span class="card-sub">+{{ r.flags|length - 1 }}</span>{% endif %}</span>
-      <span class="fn-num" {% if r.outdoor_stale %}title="Last outdoor reading {{ t(r.outdoor_last) }}, not updated since"{% endif %}>{{ t(r.outdoor) }}</span>
+      <span class="fn-num" {% if r.outdoor_stale %}title="Last outdoor reading {{ t(r.outdoor_last) }}, not updated since"{% elif r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) %}title="This building's sensor reads {{ '%.0f'|format(r.out_dev|abs) }}° {{ 'above' if r.out_dev > 0 else 'below' }} the property's {{ t(r.plan_out) }} — the plan uses the property's"{% endif %}><span class="{{ 'fn-odd' if r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) }}">{{ t(r.outdoor) }}</span></span>
       <span class="fn-fans">{% for g in r.groups %}<span class="fn-g {{ 'stop' if g.cmd is sameas false }}" title="{{ g.name }}{% if g.cmd is not none %} — commanded {{ 'START' if g.cmd else 'STOP' }}{% endif %}">{% for f in g.fans %}<span class="fn-f fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}: {{ 'not reporting' if r.stale else ('running' if f.on else ('DOWN — off while commanded on' if f.fail else 'off')) }}">{{ f.num }}</span>{% endfor %}</span>{% endfor %}</span>
       <span class="fn-num">{{ "—" if r.stale else r.on }}/{{ r.total }}</span>
       {% if r.want %}{% set w = r.want %}
-      <span class="fn-cs" title="{{ t(r.outdoor) }} outside: the {{ w.band.label|lower }} plan — {{ w.band.ranges }}{% if w.held %}. Held on this colder schedule by hysteresis until it reads {{ t(w.release) }}{% endif %}{% if r.gaps %}. Bloom differs: {{ r.gaps|join(' ') }}{% endif %}">
+      <span class="fn-cs" title="PLAN (top): {{ t(r.plan_out) }} outside, the {{ w.band.label|lower }} schedule — {{ w.band.ranges }}{% if w.held %}; held on this colder schedule by hysteresis until it reads {{ t(w.release) }}{% endif %}.&#10;SET IN BLOOM (bottom): {{ r.bloom_now.why }}.">
         <b class="{{ 'held' if w.held }}">{{ w.band.short }}</b>
-        <span class="fn-mini">{{ pstrip(w.band, r.hour) }}</span>
-        <span><span class="want {{ 'off' if not w.on }}">{{ 'ON' if w.on else 'OFF' }}</span>{% if r.gaps %}<span class="ne">≠</span>{% endif %}</span>
+        <span class="fn-two"><span class="fn-mini">{{ pstrip(w.band, r.hour) }}</span><span class="fn-mini set {{ 'active' if r.bloom_now.active }}">{{ strip(r.bloom_now.bits, r.hour) }}</span></span>
+        <span><span class="want {{ 'off' if not w.on }}">{{ 'ON' if w.on else 'OFF' }}</span></span>
       </span>
-      {% else %}<span class="fn-cs" title="No live outdoor reading, so the building cannot be placed in the plan{% if r.gaps %}. Bloom differs: {{ r.gaps|join(' ') }}{% endif %}"><b>—</b><span class="card-sub">no outdoor reading</span><span>{% if r.gaps %}<span class="ne">≠</span>{% endif %}</span></span>{% endif %}
+      {% else %}<span class="fn-cs" title="No live outdoor reading on this property, so the building cannot be placed in the plan"><b>—</b><span class="card-sub">no outdoor reading</span><span></span></span>{% endif %}
       <span class="fn-num">{% if r.rt_max_h is not none %}{{ "%.1f"|format(r.rt_max_h) }} h{% elif r.rt_bad %}<span title="This building's run-time counters never reset">n/a</span>{% else %}—{% endif %}</span>
       <span class="fn-num">{{ r.heard }}</span>
     </summary>
@@ -248,9 +258,9 @@
       <div>
         <h3>The plan right now</h3>
         {% if r.stale %}<div class="fn-banner">Not reporting, so this building cannot be checked against the plan.</div>
-        {% elif not r.want %}<div class="fn-banner blind">No live outdoor reading, so this building cannot be placed in the plan.</div>
+        {% elif not r.want %}<div class="fn-banner blind">No live outdoor reading on this property, so this building cannot be placed in the plan.</div>
         {% else %}{% set w = r.want %}
-        <div class="fn-banner {{ 'over' if r.over else ('under' if r.under else 'fine') }}">{{ t(r.outdoor) }} outside — the {{ w.band.label|lower }} plan: fans should be <b>{{ 'ON' if w.on else 'OFF' }}</b>{% if w.until %} until {{ w.until }}{% endif %}. {% if r.over %}{{ r.over }} {{ 'is' if r.over == 1 else 'are' }} running.{% elif r.under %}{{ r.under }} {{ 'is' if r.under == 1 else 'are' }} held off by command.{% elif w.settling %}The plan just changed; giving the building ten minutes to follow.{% else %}That is what they are doing.{% endif %}{% if w.held %} It stays on this colder schedule until it reads {{ t(w.release) }} (hysteresis).{% endif %}</div>
+        <div class="fn-banner {{ 'over' if r.over else ('under' if r.under else 'fine') }}">{{ t(r.plan_out) }} outside{% if r.plan_shared %} (the property's reading{% if r.outdoor is not none and r.out_dev is not none and (r.out_dev >= 1 or r.out_dev <= -1) %}; this building's own sensor says {{ t(r.outdoor) }}{% elif r.outdoor is none %}; this building has no live sensor of its own{% endif %}){% endif %} — the {{ w.band.label|lower }} plan: fans should be <b>{{ 'ON' if w.on else 'OFF' }}</b>{% if w.until %} until {{ w.until }}{% endif %}. {% if r.over %}{{ r.over }} {{ 'is' if r.over == 1 else 'are' }} running.{% elif r.under %}{{ r.under }} {{ 'is' if r.under == 1 else 'are' }} held off by command.{% elif w.settling %}The plan just changed; giving the building ten minutes to follow.{% else %}That is what they are doing.{% endif %}{% if w.held %} It stays on this colder schedule until it reads {{ t(w.release) }} (hysteresis).{% endif %}</div>
         <div class="fn-pl" style="grid-template-columns:96px minmax(0, 1fr) auto;margin-bottom:14px">
           {% for b in plan %}
           <span class="bl {{ 'cur' if b.key == w.band.key }}" style="font-size:12px">{{ b.label }}</span>

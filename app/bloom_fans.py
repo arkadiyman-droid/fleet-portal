@@ -206,6 +206,39 @@ def step_band(pl, prev_key, outdoor, hyst=0.0):
     return pl[i]
 
 
+def shared_bands(items, pl, hyst=0.0) -> dict:
+    """One outdoor temperature and one plan band per property.
+
+    The buildings' own outdoor sensors disagree — a sensor in the sun read 71°
+    while its neighbours read 53° — so placing each building by its own reading
+    put next-door buildings on different schedules. Instead every building of a
+    property is placed by the MEDIAN of that property's live readings (the
+    median shrugs off one or two bad sensors), which also gives a temperature
+    to the buildings whose own sensor is dead.
+
+    items: [{"key", "group", "out", "prev"}] — out is the building's own live
+    reading or None, prev its remembered band; a building with no property is
+    its own group. Returns {key: {"band", "out", "n"}}: the group's band key
+    (None when no sensor in the group is live), the shared temperature, and how
+    many sensors it came from."""
+    groups = {}
+    for it in items:
+        groups.setdefault(it["group"], []).append(it)
+    out = {}
+    for members in groups.values():
+        temps = sorted(m["out"] for m in members if m["out"] is not None)
+        shared = None
+        if temps:
+            mid = len(temps) // 2
+            shared = temps[mid] if len(temps) % 2 else (temps[mid - 1] + temps[mid]) / 2.0
+        prevs = [m["prev"] for m in members if m["prev"]]
+        prev = max(set(prevs), key=prevs.count) if prevs else None      # the band most of them remember
+        band = step_band(pl, prev, shared, hyst)
+        for m in members:
+            out[m["key"]] = {"band": band["key"] if band else None, "out": shared, "n": len(temps)}
+    return out
+
+
 def expect(pl, outdoor, hour, minute=None, prev_key=None, hyst=0.0):
     """What the plan asks for right now: {band, on, until, settling, held,
     release}. `held` is true while hysteresis keeps the building on a colder
@@ -392,9 +425,14 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     # Against the plan: fans running in an hour it says off (heat going up the
     # shaft — the thing this page exists to catch), or held off in an hour it
     # says on. Judged only on a live outdoor reading, in a band the plan covers.
-    held_band = ((raw or {}).get("portal") or {}).get("band")        # kept by the poller: the hysteresis memory
-    want = (expect(pl, outdoor, hour, minute, prev_key=held_band, hyst=hyst)
-            if (pl and outdoor is not None and hour is not None) else None)
+    # The temperature the plan is read at: the property's shared reading when
+    # the poller has worked one out (shared_bands), else this building's own.
+    portal = (raw or {}).get("portal") or {}
+    held_band = portal.get("band")                                   # kept by the poller: the hysteresis memory
+    shared = _num(portal.get("out")) if "out" in portal else None
+    plan_out = shared if shared is not None else outdoor
+    want = (expect(pl, plan_out, hour, minute, prev_key=held_band, hyst=hyst)
+            if (pl and plan_out is not None and hour is not None) else None)
     over = under = 0
     if want and not want["settling"] and not stale:
         if want["on"] is False:
@@ -409,10 +447,10 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
         till = f" until {want['until']}" if want and want["until"] else ""
         if over:
             flags.append(("over", f"{over} fan{'s' if over != 1 else ''} running — plan says off{till} "
-                                  f"({outdoor:.0f}° outside)"))
+                                  f"({plan_out:.0f}° outside)"))
         if under:
             flags.append(("under", f"{under} fan{'s' if under != 1 else ''} held off — plan says on{till} "
-                                   f"({outdoor:.0f}° outside)"))
+                                   f"({plan_out:.0f}° outside)"))
         if cold and on and not pl:
             said = ""
             if cut_active and hour is not None:       # what the cold schedule itself says for this hour
@@ -457,7 +495,20 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
         banner = ("standby", f"{outdoor:.0f}° outside, above {cut['sp']:.0f}° — cold schedule on standby. "
                              f"Below {cut['sp']:.0f}° it runs the fans {cut['ranges']} ({cut['hours_on']} h a day).")
 
+    # What Bloom itself is set to do today, as one strip beside the plan's: its
+    # cold schedule's hours while that is active, otherwise every hour — above
+    # its setpoint (or with no outdoor reading of its own) Bloom has been seen
+    # running the fans around the clock.
+    bloom_now = {"bits": cut["bits"] if cut_active else [1] * 24, "active": cut_active,
+                 "why": (f"Bloom's schedule {cut['n']} is active (below {cut['sp']:.0f}°): {cut['ranges']}" if cut_active
+                         else "Bloom has no schedule in force at this temperature, so the fans run all day"
+                         if outdoor is not None or not cut
+                         else "Bloom has no outdoor reading here, so its schedule cannot engage and the fans run all day")}
+
     return {
+        "plan_out": plan_out, "plan_shared": shared is not None, "plan_n": portal.get("n"),
+        "out_dev": (outdoor - plan_out) if (shared is not None and outdoor is not None) else None,
+        "bloom_now": bloom_now,
         "want": want, "over": over, "under": under,
         "gaps": plan_gaps(pl, groups, scheds) if pl else [],
         "banner": banner[1], "banner_tone": banner[0], "sched_now": sched_now,
@@ -555,6 +606,11 @@ def page(rows, show="all", q="", sort="property") -> dict:
                 "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
 
     summary = totals(rows)
+    in_band = {}                                   # which properties sit in each plan band right now
+    for r in rows:
+        if r.get("plan_shared") and r.get("want") and r.get("prop"):
+            in_band.setdefault(r["want"]["band"]["key"], set()).add(r["prop"])
+    summary["band_props"] = {k: sorted(v, key=_natural) for k, v in in_band.items()}
     keep = {"cold": lambda r: r["tone"] == "cold", "blind": blind,
             "over": lambda r: not r["stale"] and r.get("over"), "under": lambda r: not r["stale"] and r.get("under"),
             "gaps": lambda r: bool(r.get("gaps")),
@@ -579,7 +635,13 @@ def page(rows, show="all", q="", sort="property") -> dict:
         groups = []
         for name in sorted(by, key=lambda n: (n == UNFILED, _natural(n))):
             rs = sorted(by[name], key=lambda r: _natural(r["name"]))
-            groups.append({"name": name, "client": rs[0].get("client"), "rows": rs, **totals(rs)})
+            # A property has one temperature and so one place in the plan; take
+            # it from any building that carries the shared reading.
+            lead = next((r for r in rs if r.get("plan_shared") and r.get("want")), None) if name != UNFILED else None
+            groups.append({"name": name, "client": rs[0].get("client"), "rows": rs, **totals(rs),
+                           "plan_out": lead["plan_out"] if lead else None,
+                           "plan_n": lead["plan_n"] if lead else None,
+                           "want": lead["want"] if lead else None})
     return {"groups": groups, "summary": summary, "show": show, "sort": sort, "shown": len(rows)}
 
 
@@ -742,7 +804,12 @@ def record(app, account, building_list, now) -> int:
     cfg = app.config
     pl = plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
-    touched = []
+    # Which property each building is filed under, for the shared temperature.
+    from sqlalchemy.orm import joinedload
+    from app.models import Building
+    index = building_index((bd.name, bd.property.name)
+                           for bd in Building.query.options(joinedload(Building.property)).all() if bd.property)
+    touched, items = [], []
     for b in building_list:
         if not has_fans(b):
             continue
@@ -753,18 +820,23 @@ def record(app, account, building_list, now) -> int:
         site = have.get(key) or BloomFanSite(account_id=account.id, asset_key=key)
         site.name = (b.get("name") or key)[:200]
         slice_ = trim(b)
-        # The plan band this building is in, carried from poll to poll so the
-        # hysteresis has something to hold on to. A building with no live
-        # outdoor reading has no band, and starts fresh when one returns.
         out_v, out_age = _outdoor(slice_["sensors"], now)
         live_out = out_v if (out_v is not None and out_age is not None and out_age <= STALE_MIN) else None
         prev = ((site.data or {}).get("portal") or {}).get("band") if site.data else None
-        band = step_band(pl, prev, live_out, hyst)
-        slice_["portal"] = {"band": band["key"] if band else None}
+        prop = place(index, site.name, key)
+        items.append({"key": key, "group": prop or ("site", key), "out": live_out, "prev": prev})
+        touched.append((site, slice_, prop))
+    # One temperature and one plan band per property, carried from poll to poll
+    # so the hysteresis has something to hold on to (shared_bands).
+    bands = shared_bands(items, pl, hyst)
+    sites = []
+    for site, slice_, prop in touched:
+        slice_["portal"] = {**bands[site.asset_key], "prop": prop}
         site.data = slice_
         site.polled_at = now
         db.session.add(site)
-        touched.append(site)
+        sites.append(site)
+    touched = sites
     db.session.commit()
 
     every = app.config.get("BLOOM_SAMPLE_MIN_SECONDS", 300)

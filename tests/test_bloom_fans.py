@@ -412,3 +412,71 @@ def test_raw_view_times_are_local_when_a_zone_is_given():
     tz = dt.timezone(dt.timedelta(hours=-5))
     v = bf.raw_view(bf.trim(_building()), now=NOW, tz=tz)
     assert v["fans"][1]["rs"]["at"] == "Nov 16, 11:49:00 AM"      # 16:49Z in New York winter time
+
+
+# ── one outdoor temperature per property ───────────────────────────────────────
+
+def test_shared_bands_use_the_middle_reading_of_the_property():
+    items = [{"key": "a", "group": "P", "out": 53, "prev": None}, {"key": "b", "group": "P", "out": 54, "prev": None},
+             {"key": "c", "group": "P", "out": 71, "prev": None},           # a sensor in the sun
+             {"key": "d", "group": "P", "out": None, "prev": None},         # a dead sensor still gets placed
+             {"key": "e", "group": "Q", "out": 30, "prev": None}, {"key": "f", "group": ("site", "f"), "out": None, "prev": None}]
+    got = bf.shared_bands(items, PLAN, 2)
+    assert {k: got[k]["out"] for k in "abcd"} == {"a": 54, "b": 54, "c": 54, "d": 54}
+    assert {got[k]["band"] for k in "abcd"} == {"mild"} and got["a"]["n"] == 3
+    assert got["e"] == {"band": "cold", "out": 30, "n": 1}
+    assert got["f"] == {"band": None, "out": None, "n": 0}                  # nobody on the property is reading
+    # an even count takes the mean of the middle two
+    two = bf.shared_bands([{"key": "a", "group": "P", "out": 50, "prev": None},
+                           {"key": "b", "group": "P", "out": 53, "prev": None}], PLAN, 2)
+    assert two["a"]["out"] == 51.5
+
+
+def test_shared_bands_carry_the_hysteresis_for_the_whole_property():
+    items = [{"key": "a", "group": "P", "out": 37, "prev": "cold"}, {"key": "b", "group": "P", "out": 37, "prev": "cold"},
+             {"key": "c", "group": "P", "out": 37, "prev": None}]          # a building new to the property
+    got = bf.shared_bands(items, PLAN, 2)
+    assert {v["band"] for v in got.values()} == {"cold"}                    # still held at 37, all of them
+    items = [dict(it, out=38) for it in items]
+    assert {v["band"] for v in bf.shared_bands(items, PLAN, 2).values()} == {"mild"}
+
+
+def test_a_building_is_judged_at_the_property_temperature():
+    raw = bf.trim(_building(outdoor=71, rs=(1, 1, 1)))                      # its own sensor says 71
+    raw["portal"] = {"band": "mild", "out": 54, "n": 9, "prop": "P"}        # the property says 54
+    s = bf.summary(raw, now=NOW, hour=14, minute=30, pl=PLAN, hyst=2)
+    assert s["plan_out"] == 54 and s["plan_shared"] and s["out_dev"] == 17 and s["outdoor"] == 71
+    assert s["want"]["band"]["key"] == "mild" and s["over"] == 3 and "(54° outside)" in s["status"]
+    dead = bf.trim(_building(outdoor=None, rs=(1, 1, 1)))                   # no sensor of its own: still placed
+    dead["sensors"] = [x for x in dead["sensors"] if x["type"] != "oat-act"]
+    dead["portal"] = {"band": "mild", "out": 54, "n": 9, "prop": "P"}
+    s = bf.summary(dead, now=NOW, hour=14, minute=30, pl=PLAN, hyst=2)
+    assert s["outdoor"] is None and s["want"]["band"]["key"] == "mild" and s["over"] == 3
+    # with no shared reading stored yet it falls back to its own
+    old = bf.trim(_building(outdoor=44, rs=(1, 1, 1)))
+    old["portal"] = {"band": "mild"}
+    s = bf.summary(old, now=NOW, hour=14, minute=30, pl=PLAN, hyst=2)
+    assert s["plan_out"] == 44 and not s["plan_shared"] and s["out_dev"] is None
+
+
+def test_bloom_now_is_what_bloom_itself_would_do_today():
+    warm = _plan(outdoor=54, rs=(1, 1, 1))                                  # above Bloom's 35: no schedule in force
+    assert warm["bloom_now"]["bits"] == [1] * 24 and not warm["bloom_now"]["active"]
+    cold = _plan(outdoor=20, rs=(1, 1, 1))                                  # Bloom's cold schedule: 8-10 and 6-8
+    assert cold["bloom_now"]["active"] and sum(cold["bloom_now"]["bits"]) == 4
+    assert "cannot engage" in _plan(outdoor=None, rs=(1, 1, 1))["bloom_now"]["why"]
+
+
+def test_page_gives_each_property_its_temperature_and_plan_line():
+    rows = []
+    for name, prop, out in (("1 A St", "Alpha", 54), ("2 A St", "Alpha", 54), ("3 B St", "Beta", 30)):
+        raw = bf.trim(_building(outdoor=out, rs=(1, 1, 1)))
+        raw["portal"] = {"band": None, "out": out, "n": 2, "prop": prop}
+        r = bf.summary(raw, now=NOW, hour=14, minute=30, pl=PLAN, hyst=2)
+        r.update(name=name, prop=prop, client=None)
+        rows.append(r)
+    pg = bf.page(rows)
+    alpha, beta = pg["groups"]
+    assert alpha["plan_out"] == 54 and alpha["want"]["band"]["key"] == "mild" and alpha["plan_n"] == 2
+    assert beta["want"]["band"]["key"] == "cold" and beta["want"]["until"] == "6pm"
+    assert pg["summary"]["band_props"] == {"mild": ["Alpha"], "cold": ["Beta"]}
