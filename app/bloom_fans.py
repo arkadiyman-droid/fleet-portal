@@ -37,6 +37,8 @@ around the clock. That is reported as seen (command + schedule), never used to
 predict or judge a fan.
 """
 import datetime as _dt
+import hashlib
+import json
 import logging
 import re
 
@@ -643,6 +645,120 @@ def page(rows, show="all", q="", sort="property") -> dict:
                            "plan_n": lead["plan_n"] if lead else None,
                            "want": lead["want"] if lead else None})
     return {"groups": groups, "summary": summary, "show": show, "sort": sort, "shown": len(rows)}
+
+
+# ── pushing the plan's schedules into Bloom ────────────────────────────────────
+#
+# Stage 1 of putting the plan into the boxes (the operator, 2026-11-16): load
+# the plan's three schedules into a building's Bloom schedule slots, after a
+# person has seen exactly what will change and confirmed it.
+#
+# Bloom gives a building five schedule slots; a fan group follows one slot. The
+# groups all sit on slot 1 today. The plan's schedules go into slots 3, 4 and 5
+# — cold hours, middle hours, all day — which no group follows, so loading them
+# changes nothing about how the fans run. Slots 1 and 2 and every group's
+# assignment are left exactly as they are; putting a group ON one of the new
+# slots is a later, separate step. A slot a group does follow is refused.
+#
+# Each slot is written as its 24 hourly points (gen-sched "S::H") and, if it is
+# on, its outdoor-setpoint switch (gen-sp-enabled "oatSp::S") is turned off so
+# the hours are not gated by Bloom's own outdoor reading.
+
+PLAN_SLOTS = {"cold": 3, "mild": 4, "free": 5}
+
+
+def plan_push(building: dict, pl) -> dict:
+    """What loading the plan into this building's slots would change, from the
+    LIVE building object out of /api/assets (the full one: its points carry the
+    ids Bloom needs). Pure. Returns:
+
+      slots   one per plan band: slot number, the hours there now and after,
+              which hours change, which groups follow it, and `blocked` (with
+              the reason) when the slot must not be written
+      points  the exact point objects to send — Bloom's own object with `pv`
+              new and `originalPv` old — empty when nothing needs changing or
+              any slot is blocked
+      digest  a fingerprint of `points`, so the confirmed change can be checked
+              against the previewed one
+    """
+    sensors = (building or {}).get("sensors") or []
+    by = {}
+    for s in sensors:
+        by.setdefault((s.get("type"), str(s.get("name"))), s)
+    assign = {}
+    for s in sensors:
+        if s.get("type") == "gen-sched-assign":
+            try:
+                assign.setdefault(int(s.get("pv")), []).append(str(s.get("name")))
+            except (TypeError, ValueError):
+                pass
+
+    slots, points = [], []
+    for band in pl:
+        n = PLAN_SLOTS[band["key"]]
+        hour_pts = [by.get(("gen-sched", f"{n}::{h}")) for h in range(24)]
+        missing = [h for h, p in enumerate(hour_pts) if p is None or not p.get("_id")]
+        now = [(1 if _on(p.get("pv")) else 0) if p else None for p in hour_pts]
+        enabled = by.get(("gen-sp-enabled", f"oatSp::{n}"))
+        used_by = sorted(assign.get(n, []), key=_natural)
+        why = None
+        if used_by:
+            why = f"fan group{'s' if len(used_by) != 1 else ''} {', '.join(used_by)} follow{'s' if len(used_by) == 1 else ''} this slot"
+        elif missing:
+            why = f"Bloom's feed has no point for {len(missing)} of this slot's 24 hours"
+        changes = [h for h in range(24) if now[h] is not None and now[h] != band["bits"][h]]
+        gate_off = bool(enabled and _on(enabled.get("pv")))
+        slot = {"n": n, "key": band["key"], "label": band["label"], "now": now, "new": band["bits"],
+                "now_ranges": ranges([b or 0 for b in now]), "new_ranges": band["ranges"],
+                "changes": changes, "gate_off": gate_off, "used_by": used_by, "blocked": why,
+                "sp_on": gate_off, "sp": _num((by.get(("oat-sp-gen", str(n))) or {}).get("pv"))}
+        slots.append(slot)
+        if why:
+            continue
+        for h in changes:
+            points.append({**hour_pts[h], "pv": band["bits"][h], "originalPv": hour_pts[h].get("pv")})
+        if gate_off:
+            points.append({**enabled, "pv": 0, "originalPv": enabled.get("pv")})
+
+    if any(s["blocked"] for s in slots):
+        points = []                                  # all or nothing: never load half a plan
+    digest = hashlib.sha256(json.dumps(
+        sorted((str(p.get("_id")), p["pv"]) for p in points)).encode()).hexdigest()[:16] if points else ""
+    return {"slots": slots, "points": points, "digest": digest,
+            "n_changes": len(points), "blocked": any(s["blocked"] for s in slots),
+            "log": [{"type": p.get("type"), "name": p.get("name"), "old": p.get("originalPv"), "new": p["pv"]}
+                    for p in points]}
+
+
+def reply_summary(data) -> tuple:
+    """(accepted, one line) from Bloom's reply to a write. The reply seen on the
+    first portal push (2026-11-16): {"success": true, "data": {"result": "The
+    change has been sent to the controller.", "requestId": ..., "results":
+    [{"pointId", "requestedValue", "status": "acknowledged", ...}, ...]}}."""
+    if not isinstance(data, dict):
+        return True, str(data or "")[:300]
+    inner = data.get("data") if isinstance(data.get("data"), dict) else data
+    text = str(inner.get("result") or data.get("result") or data.get("message") or "").strip()
+    results = inner.get("results") if isinstance(inner.get("results"), list) else []
+    if results:
+        acked = sum(1 for r in results if isinstance(r, dict) and r.get("status") == "acknowledged")
+        text = f"{text} {acked} of {len(results)} points acknowledged.".strip()
+    accepted = data.get("success") is not False
+    return accepted, (text or ("accepted" if accepted else "Bloom reported failure"))[:300]
+
+
+def tidy_detail(detail) -> str:
+    """A stored reply shown in the log: rows written before reply_summary()
+    hold Bloom's whole reply as text — show just its sentence."""
+    s = str(detail or "")
+    m = re.search(r"'result': '([^']*)'", s)
+    return m.group(1) if (s.startswith("{") and m) else s
+
+
+def push_landed(building: dict, pl) -> bool:
+    """True when the building's slots now hold the plan (nothing left to push)."""
+    p = plan_push(building, pl)
+    return not p["blocked"] and p["n_changes"] == 0
 
 
 # ── the audit view: Bloom's raw values beside what the page makes of them ──────

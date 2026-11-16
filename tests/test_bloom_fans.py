@@ -480,3 +480,149 @@ def test_page_gives_each_property_its_temperature_and_plan_line():
     assert alpha["plan_out"] == 54 and alpha["want"]["band"]["key"] == "mild" and alpha["plan_n"] == 2
     assert beta["want"]["band"]["key"] == "cold" and beta["want"]["until"] == "6pm"
     assert pg["summary"]["band_props"] == {"mild": ["Alpha"], "cold": ["Beta"]}
+
+
+# ── pushing the plan's schedules into Bloom ────────────────────────────────────
+
+def _live(slot_bits=None, assign=1, enabled=None, drop=None):
+    """A full building as /api/assets gives it: five schedule slots with ids."""
+    slot_bits = slot_bits or {}
+    enabled = enabled or {1: 1}
+    sensors = [{"_id": "a1", "type": "gen-sched-assign", "name": "fg-1", "pv": assign},
+               {"_id": "c1", "type": "fan-cmd", "pv": 1, "assoc": _eq("fg-1")}]
+    for n in range(1, 6):
+        bits = slot_bits.get(n, "0" * 24)
+        sensors.append({"_id": f"e{n}", "type": "gen-sp-enabled", "name": f"oatSp::{n}", "pv": enabled.get(n, 0)})
+        sensors.append({"_id": f"t{n}", "type": "oat-sp-gen", "name": str(n), "pv": 35 if n == 1 else 38})
+        for h in range(24):
+            if drop == (n, h):
+                continue
+            sensors.append({"_id": f"s{n}-{h}", "type": "gen-sched", "name": f"{n}::{h}", "pv": int(bits[h]),
+                            "pollTs": FRESH})
+    return {"name": "1 Test St", "locid": "1-Test-St", "sensors": sensors,
+            "equipment": [{"type": "fanGroup", "key": "fg-1", "name": "Exhaust Fan Group 1", "fans": []}]}
+
+
+COLD, MILD, FREE = ("".join(str(b) for b in band["bits"]) for band in PLAN)
+
+
+def test_plan_push_loads_the_three_schedules_into_slots_3_4_5():
+    p = bf.plan_push(_live(), PLAN)                       # slots empty, group on slot 1
+    assert [(s["n"], s["key"]) for s in p["slots"]] == [(3, "cold"), (4, "mild"), (5, "free")]
+    assert not p["blocked"] and p["n_changes"] == 4 + 9 + 24
+    assert [len(s["changes"]) for s in p["slots"]] == [4, 9, 24]
+    assert p["slots"][0]["changes"] == [8, 9, 18, 19] and p["slots"][0]["new_ranges"] == "8am–10am, 6pm–8pm"
+    # every point sent is Bloom's own object, with the new value and the old one
+    pt = next(x for x in p["points"] if x["name"] == "3::8")
+    assert pt == {"_id": "s3-8", "type": "gen-sched", "name": "3::8", "pv": 1, "originalPv": 0, "pollTs": FRESH}
+    assert all(x["name"].split("::")[0] in ("3", "4", "5") for x in p["points"])      # never slot 1 or 2
+    assert {"type": "gen-sched", "name": "3::8", "old": 0, "new": 1} in p["log"] and len(p["digest"]) == 16
+
+
+def test_plan_push_sends_only_what_differs_and_nothing_when_in_place():
+    part = bf.plan_push(_live({3: COLD, 4: MILD}), PLAN)
+    assert part["n_changes"] == 24 and all(x["name"].startswith("5::") for x in part["points"])
+    done = bf.plan_push(_live({3: COLD, 4: MILD, 5: FREE}), PLAN)
+    assert done["n_changes"] == 0 and done["points"] == [] and done["digest"] == "" and not done["blocked"]
+    assert bf.push_landed(_live({3: COLD, 4: MILD, 5: FREE}), PLAN) and not bf.push_landed(_live(), PLAN)
+    # an hour that must turn OFF is a change too
+    extra = bf.plan_push(_live({3: "1" + COLD[1:], 4: MILD, 5: FREE}), PLAN)
+    assert [(x["name"], x["pv"], x["originalPv"]) for x in extra["points"]] == [("3::0", 0, 1)]
+
+
+def test_plan_push_switches_off_an_outdoor_gate_on_a_target_slot():
+    p = bf.plan_push(_live({3: COLD, 4: MILD, 5: FREE}, enabled={1: 1, 4: 1}), PLAN)
+    assert [(x["type"], x["name"], x["pv"], x["originalPv"]) for x in p["points"]] == [("gen-sp-enabled", "oatSp::4", 0, 1)]
+    assert p["slots"][1]["gate_off"] and not p["slots"][0]["gate_off"]
+    assert not any(x["name"] == "oatSp::1" for x in p["points"])        # slot 1's gate is never touched
+
+
+def test_plan_push_refuses_a_slot_a_fan_group_follows():
+    p = bf.plan_push(_live(assign=4), PLAN)                 # the group is ON slot 4
+    assert p["blocked"] and p["points"] == [] and p["n_changes"] == 0 and p["digest"] == ""
+    assert p["slots"][1]["used_by"] == ["fg-1"] and "follows this slot" in p["slots"][1]["blocked"]
+    assert p["slots"][0]["blocked"] is None                 # ...and nothing is sent for the others either
+    assert not bf.push_landed(_live(assign=4), PLAN)
+
+
+def test_plan_push_refuses_a_slot_with_a_missing_hour():
+    p = bf.plan_push(_live(drop=(5, 7)), PLAN)
+    assert p["blocked"] and p["points"] == [] and "no point for 1 of this slot" in p["slots"][2]["blocked"]
+
+
+def test_plan_push_digest_follows_the_change():
+    a, b = bf.plan_push(_live(), PLAN), bf.plan_push(_live(), PLAN)
+    assert a["digest"] == b["digest"]
+    assert bf.plan_push(_live({3: COLD}), PLAN)["digest"] != a["digest"]     # Bloom moved: a different change
+
+
+# ── the write itself (bloom.put_points), against a fake session ────────────────
+
+class _Resp:
+    __test__ = False          # a helper, not a test class
+
+    def __init__(self, status, payload=None):
+        self.status_code, self._p, self.content, self.text = status, payload, b"x", str(payload)
+
+    def json(self):
+        return self._p
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class _Sess:
+    __test__ = False          # a helper, not a test class
+
+    def __init__(self, statuses):
+        self.statuses, self.puts, self.posts = list(statuses), [], []
+
+    def put(self, url, json=None, timeout=None, headers=None):
+        self.puts.append({"url": url, "json": json, "auth": headers["Authorization"]})
+        return _Resp(self.statuses.pop(0), {"result": "The change has been sent to the controller."})
+
+    def post(self, url, json=None, timeout=None):
+        self.posts.append(url)
+        return _Resp(200, {"token": "fresh"})
+
+
+class _Acct:
+    __test__ = False          # a helper, not a test class
+
+    base_url, username, password = "https://bloom.example/", "u", "p"
+
+
+def test_put_points_sends_what_blooms_own_editor_sends():
+    from app import bloom
+    pts = bf.plan_push(_live({3: COLD, 4: MILD}), PLAN)["points"]
+    s = _Sess([200])
+    data, tok = bloom.put_points(_Acct(), s, "tok", "1-Test-St", pts, "why")
+    assert len(s.puts) == 1 and s.puts[0]["url"] == "https://bloom.example/api/points/1-Test-St"
+    assert s.puts[0]["json"] == {"points": pts, "note": "why", "bacnet": True}
+    assert s.puts[0]["auth"] == "Bearer tok" and tok == "tok" and "sent to the controller" in data["result"]
+
+
+def test_put_points_logs_in_again_once_on_a_401_and_raises_on_refusal():
+    from app import bloom
+    s = _Sess([401, 200])
+    data, tok = bloom.put_points(_Acct(), s, "stale", "1-Test-St", [], "why")
+    assert len(s.puts) == 2 and s.posts and tok == "fresh" and s.puts[1]["auth"] == "Bearer fresh"
+    import pytest
+    with pytest.raises(RuntimeError):
+        bloom.put_points(_Acct(), _Sess([403]), "tok", "1-Test-St", [], "why")
+
+
+def test_reply_summary_reads_blooms_real_reply():
+    real = {"success": True, "data": {"result": "The change has been sent to the controller.", "requestId": "82f0",
+                                      "results": [{"pointId": "a", "requestedValue": 0, "status": "acknowledged"},
+                                                  {"pointId": "b", "requestedValue": 1, "status": "acknowledged"},
+                                                  {"pointId": "c", "requestedValue": 1, "status": "pending"}]}}
+    assert bf.reply_summary(real) == (True, "The change has been sent to the controller. 2 of 3 points acknowledged.")
+    assert bf.reply_summary({"success": False, "data": {"result": "Not permitted"}}) == (False, "Not permitted")
+    assert bf.reply_summary({"result": "ok"}) == (True, "ok")
+    assert bf.reply_summary(None) == (True, "") and bf.reply_summary({})[1] == "accepted"
+    # a row stored before this existed holds the whole reply as text
+    old = "{'success': True, 'data': {'result': 'The change has been sent to the controller.', 'requestId': '82f0', 'resul"
+    assert bf.tidy_detail(old) == "The change has been sent to the controller."
+    assert bf.tidy_detail("HTTP 403") == "HTTP 403" and bf.tidy_detail(None) == ""

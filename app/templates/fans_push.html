@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ site.name }} — push schedules — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .ps-top { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; margin:0 0 4px; }
+  .ps-top h1 { margin:0; }
+  .ps-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:1000px; }
+  .ps-card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
+  .ps-card h2 { font-size:14px; margin:0 0 8px; }
+  .ps-banner { border-radius:8px; padding:10px 14px; font-size:14px; margin:0 0 14px; border-left:4px solid #9ca3af; background:#f1f5f9; }
+  .ps-banner.ok { background:#f0fdf4; border-left-color:#16a34a; color:#14532d; }
+  .ps-banner.bad { background:#fef2f2; border-left-color:#dc2626; color:#7f1d1d; }
+  .ps-banner.warn { background:#fffbeb; border-left-color:#f59e0b; color:#92400e; }
+  .ps-safe { border-radius:8px; padding:10px 14px; font-size:13px; background:#eff6ff; border-left:4px solid #1d4ed8; color:#1e3a8a; margin:0 0 14px; }
+  .ps-slot { display:grid; grid-template-columns:150px 46px minmax(280px, 620px) minmax(160px, 1fr); gap:3px 12px; align-items:center; font-size:13px; padding:8px 0; border-top:1px solid #f1f5f9; }
+  .ps-slot:first-of-type { border-top:none; }
+  .ps-slot .nm { font-weight:700; grid-row:span 2; }
+  .ps-slot .nm small { display:block; font-weight:400; color:var(--muted); }
+  .ps-slot .lab { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  .ps-strip { display:grid; grid-template-columns:repeat(24, 1fr); gap:1px; height:18px; }
+  .ps-strip span { background:#e5e7eb; border-radius:2px; }
+  .ps-strip span.on { background:#3b82f6; }
+  .ps-strip.now span.on { background:#5eead4; }
+  .ps-strip span.chg { box-shadow:0 0 0 2px #f59e0b; position:relative; z-index:1; }
+  .ps-hrs { display:grid; grid-template-columns:repeat(8, 1fr); font-size:10px; color:var(--muted); }
+  .ps-blocked { color:#b91c1c; font-weight:600; }
+  .ps-form textarea { width:min(640px, 100%); min-height:54px; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; }
+  .ps-form .go { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:10px 18px; font:inherit; font-weight:700; cursor:pointer; }
+  .ps-form .go:hover { background:#1e40af; }
+  .ps-log table { border-collapse:collapse; font-size:13px; width:100%; }
+  .ps-log th { text-align:left; font-size:11px; padding:4px 10px 4px 0; border-bottom:1px solid var(--border); }
+  .ps-log td { padding:5px 10px 5px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  .ps-pill { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; background:#e5e7eb; color:#374151; white-space:nowrap; }
+  .ps-pill.ok { background:#dcfce7; color:#166534; } .ps-pill.bad { background:#fee2e2; color:#b91c1c; } .ps-pill.warn { background:#fef3c7; color:#92400e; }
+</style>
+{% endblock %}
+{% block content %}
+{% macro strip(bits, changes, cls='') %}<span class="ps-strip {{ cls }}">{% for b in bits %}<span class="{{ 'on' if b }} {{ 'chg' if loop.index0 in changes }}"></span>{% endfor %}</span>{% endmacro %}
+<div class="ps-top">
+  <a href="{{ url_for('admin.fans_page') }}">← Fans</a>
+  <h1>{{ site.name }}</h1>
+  <span class="card-sub">push the plan's schedules to Bloom</span>
+</div>
+
+{% if error %}
+  <div class="ps-banner bad">Could not read this building from Bloom just now, so nothing can be shown or sent: {{ error }}</div>
+{% else %}
+
+{% if result %}
+  {% if result.state == 'sent' and result.landed %}
+    <div class="ps-banner ok"><b>Sent, and confirmed.</b> Bloom accepted {{ result.n }} change{{ 's' if result.n != 1 }}{% if result.detail %} ("{{ result.detail }}"){% endif %}, and reading the building back from Bloom shows the plan's schedules in place.</div>
+  {% elif result.state == 'sent' %}
+    <div class="ps-banner warn"><b>Sent, not yet confirmed.</b> Bloom accepted {{ result.n }} change{{ 's' if result.n != 1 }}{% if result.detail %} ("{{ result.detail }}"){% endif %}, but reading the building back a few seconds later did not yet show all of them. Reload this page in a minute; whatever is still listed below has not landed.</div>
+  {% elif result.state == 'failed' %}
+    <div class="ps-banner bad"><b>Not sent.</b> Bloom refused the request, so nothing was changed: {{ result.detail }}</div>
+  {% elif result.state == 'changed' %}
+    <div class="ps-banner warn"><b>Nothing was sent.</b> The values in Bloom changed between the preview and your confirmation, so the change you approved is no longer the change that would be made. Check the fresh preview below and confirm again.</div>
+  {% elif result.state == 'note' %}
+    <div class="ps-banner warn"><b>Nothing was sent.</b> A reason is required — Bloom records it with the change.</div>
+  {% endif %}
+{% endif %}
+
+<p class="ps-note">
+  Read live from Bloom at <b>{{ read_at }}</b>. Bloom gives each building five schedule slots; a fan group follows one of them.
+  This loads the plan's three schedules into slots 3, 4 and 5.
+  <a href="{{ bloom_url }}" target="_blank" rel="noopener">Open this building's schedules in Bloom ↗</a> ·
+  <a href="{{ url_for('admin.fans_raw', site_id=site.id) }}">Raw Bloom values</a>
+</p>
+
+<div class="ps-safe">
+  <b>What this does not touch:</b> slots 1 and 2, and which slot each fan group follows.
+  {% if p.blocked %}One of the target slots is in use, so nothing can be sent (see below).{% else %}No fan group follows slots 3, 4 or 5 on this building, so loading them changes nothing about how the fans run right now. Moving a group onto one of them is a separate step.{% endif %}
+</div>
+
+<div class="ps-card">
+  <h2>What will change in Bloom</h2>
+  <div class="ps-slot" style="padding-bottom:0;border:none"><span></span><span></span><span class="ps-hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span></div>
+  {% for s in p.slots %}
+  <div class="ps-slot">
+    <span class="nm">Slot {{ s.n }}<small>plan: {{ s.label }}</small></span>
+    <span class="lab">Now</span>{{ strip(s.now, s.changes, 'now') }}<span class="card-sub">{{ s.now_ranges }}{% if s.sp_on %} · gated below {{ "%.0f"|format(s.sp) if s.sp is not none else '?' }}°{% endif %}</span>
+    <span class="lab">After</span>{{ strip(s.new, s.changes) }}
+    <span>{% if s.blocked %}<span class="ps-blocked">Not allowed: {{ s.blocked }}.</span>{% elif not s.changes and not s.gate_off %}<span class="card-sub">{{ s.new_ranges }} · already in place</span>{% else %}<b>{{ s.new_ranges }}</b> · {{ s.changes|length }} hour{{ 's' if s.changes|length != 1 }} change{{ 's' if s.changes|length == 1 }}{% if s.gate_off %} · outdoor gate switched off{% endif %}{% endif %}</span>
+  </div>
+  {% endfor %}
+  <p class="card-sub" style="margin:10px 0 0">Teal = hours the slot runs the fans now · blue = after the push · amber outline = an hour that changes.</p>
+</div>
+
+{% if p.blocked %}
+  <div class="ps-banner bad">Nothing can be sent to this building: a target slot is being followed by a fan group, and this step never changes a schedule that fans are running on.</div>
+{% elif not p.n_changes %}
+  <div class="ps-banner ok">Nothing to send — slots 3, 4 and 5 already hold the plan's schedules.</div>
+{% else %}
+<div class="ps-card ps-form">
+  <h2>Confirm</h2>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="digest" value="{{ p.digest }}">
+    <p style="margin:0 0 6px;font-size:13px">Reason (Bloom records it with the change):</p>
+    <textarea name="note" required>{{ note }}</textarea>
+    <p style="margin:10px 0 0"><button class="go" type="submit">Send {{ p.n_changes }} change{{ 's' if p.n_changes != 1 }} to Bloom for {{ site.name }}</button>
+      <a href="{{ url_for('admin.fans_page') }}" style="margin-left:14px">Cancel</a></p>
+    <p class="card-sub" style="margin:8px 0 0">Bloom passes the change on to the building's controller. It is logged below with your name.</p>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+
+<div class="ps-card ps-log">
+  <h2>Changes the portal has sent to this building</h2>
+  {% if not log %}<p class="card-sub" style="margin:0">None yet.</p>{% else %}
+  <table>
+    <tr><th>When</th><th>By</th><th>Result</th><th>Changes</th><th>Reason</th></tr>
+    {% for w in log %}
+    <tr><td style="white-space:nowrap">{{ w.when }}</td><td>{{ w.by or '—' }}</td>
+      <td>{% if not w.ok %}<span class="ps-pill bad">refused</span>{% elif w.landed %}<span class="ps-pill ok">sent · confirmed</span>{% else %}<span class="ps-pill warn">sent · unconfirmed</span>{% endif %}{% if w.detail %}<div class="card-sub">{{ w.detail }}</div>{% endif %}</td>
+      <td>{{ w.n }} point{{ 's' if w.n != 1 }}<div class="card-sub">{{ w.summary }}</div></td>
+      <td>{{ w.note }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

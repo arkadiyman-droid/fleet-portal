@@ -39,7 +39,8 @@
   poll of that point — <span class="age old">amber</span> means older than 2 hours, which the Fans page treats as not live.
   Grey columns are Bloom's values; green columns are the portal's reading of them.
   <a href="{{ bloom_url }}" target="_blank" rel="noopener">Open this building in Bloom ↗</a> ·
-  <a href="{{ url_for('admin.fans_raw', site_id=site.id, format='json') }}">Download the stored data (JSON)</a>
+  <a href="{{ url_for('admin.fans_raw', site_id=site.id, format='json') }}">Download the stored data (JSON)</a> ·
+  <a href="{{ url_for('admin.fans_push', site_id=site.id) }}">Push plan schedules…</a>
 </p>
 
 <div class="rw-card">

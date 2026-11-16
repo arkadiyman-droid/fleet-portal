@@ -1558,6 +1558,101 @@ def fans_page():
                            **pg)
 
 
+def _fans_live_building(site):
+    """This fan site's building object fresh from Bloom — the full one, whose
+    points carry the ids a write needs. Returns (building or None, session, token)."""
+    import requests
+    from app import bloom
+    acct = site.account
+    sess = requests.Session()
+    tok = acct.token or bloom.login(acct, sess)
+    data, tok2 = bloom.fetch_json(acct, sess, tok, "/api/assets",
+                                  current_app.config.get("BLOOM_POLL_TIMEOUT_SECONDS", 20))
+    if tok2 and tok2 != acct.token:
+        acct.token, acct.token_at = tok2, datetime.utcnow()
+        db.session.commit()
+    for b in bloom.buildings(data):
+        if str(bloom.asset_key(b)) == site.asset_key:
+            return b, sess, tok2
+    return None, sess, tok2
+
+
+@admin_bp.route("/fans/<int:site_id>/push", methods=["GET", "POST"])
+def fans_push(site_id):
+    """Load the plan's schedules into one building's Bloom schedule slots — the
+    one place the portal WRITES to Bloom. GET reads the building live and shows
+    exactly what would change; POST sends it only if the change is still the
+    one that was shown, and logs it (app/bloom_fans.plan_push, bloom.put_points)."""
+    if not is_superuser():
+        abort(403)
+    import time as _time
+    from app import bloom, bloom_fans, legacy
+    from app.models import BloomFanSite, BloomFanWrite
+    site = BloomFanSite.query.get_or_404(site_id)
+    cfg = current_app.config
+    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+
+    def local(ts):
+        return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
+
+    error = preview = result = None
+    note = (request.form.get("note") or "").strip()[:500] if request.method == "POST" else \
+        "Fleet portal: load the plan's schedules into slots 3-5 (no fan group follows them)"
+    try:
+        building, sess, tok = _fans_live_building(site)
+        if building is None:
+            error = "the building is not in Bloom's feed for this login"
+        else:
+            preview = bloom_fans.plan_push(building, pl)
+    except Exception as e:
+        db.session.rollback()
+        error = str(e)[:300]
+
+    if request.method == "POST" and preview is not None:
+        if not preview["points"]:
+            pass                                     # nothing to send: the page says so
+        elif request.form.get("digest", "") != preview["digest"]:
+            result = {"state": "changed"}
+        elif not note:
+            result = {"state": "note"}
+        else:
+            row = BloomFanWrite(site_id=site.id, by=_who(), note=note, changes=preview["log"], ok=False)
+            n = preview["n_changes"]
+            try:
+                data, tok = bloom.put_points(site.account, sess, tok, site.asset_key, preview["points"], note)
+                row.ok, row.detail = bloom_fans.reply_summary(data)      # Bloom's own verdict and sentence
+            except Exception as e:
+                row.detail = str(e)[:500]
+            if row.ok:
+                try:                                 # read it back: did the values land?
+                    _time.sleep(3)
+                    again, sess, tok = _fans_live_building(site)
+                    if again is not None:
+                        row.landed = bloom_fans.push_landed(again, pl)
+                        preview = bloom_fans.plan_push(again, pl)
+                except Exception as e:
+                    db.session.rollback()
+                    row.landed = None
+            db.session.add(row)
+            db.session.commit()
+            result = {"state": "sent" if row.ok else "failed", "landed": bool(row.landed), "n": n, "detail": row.detail}
+
+    log = []
+    for w in (BloomFanWrite.query.filter_by(site_id=site.id).order_by(BloomFanWrite.at.desc()).limit(15).all()):
+        ch = w.changes or []
+        hours = [c for c in ch if c.get("type") == "gen-sched"]
+        slots = sorted({str(c.get("name", "")).split("::")[0] for c in hours})
+        other = len(ch) - len(hours)
+        summary = (f"{len(hours)} hour{'s' if len(hours) != 1 else ''} in slot{'s' if len(slots) != 1 else ''} "
+                   f"{', '.join(slots)}" if hours else "") + (f"{' + ' if hours else ''}{other} other" if other else "")
+        log.append({"when": local(w.at), "by": w.by, "ok": w.ok, "landed": w.landed,
+                    "detail": bloom_fans.tidy_detail(w.detail),
+                    "n": len(ch), "summary": summary, "note": w.note})
+    return render_template("fans_push.html", title=f"{site.name} — push schedules", site=site, p=preview,
+                           error=error, result=result, note=note, log=log, read_at=local(datetime.utcnow()),
+                           bloom_url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
+
+
 @admin_bp.route("/fans/<int:site_id>/raw")
 def fans_raw(site_id):
     """The audit view for one building's fans: every stored Bloom point beside

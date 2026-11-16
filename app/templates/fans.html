@@ -253,7 +253,7 @@
         {% endfor %}
         </div>
         {% for m in r.flags %}<div class="card-sub" style="margin-top:6px">• {{ m }}</div>{% endfor %}
-        <div style="margin-top:8px"><a href="{{ r.url }}" target="_blank" rel="noopener">Open schedules in Bloom ↗</a> · <a href="{{ url_for('admin.fans_raw', site_id=r.id) }}" target="_blank" rel="noopener" title="Every value Bloom reported for this building, beside what this page shows">Raw Bloom values</a> <span class="card-sub">· {{ r.account }}{% if r.prop %} · {{ r.prop }}{% endif %}</span></div>
+        <div style="margin-top:8px"><a href="{{ r.url }}" target="_blank" rel="noopener">Open schedules in Bloom ↗</a> · <a href="{{ url_for('admin.fans_raw', site_id=r.id) }}" target="_blank" rel="noopener" title="Every value Bloom reported for this building, beside what this page shows">Raw Bloom values</a> · <a href="{{ url_for('admin.fans_push', site_id=r.id) }}" target="_blank" rel="noopener" title="Shows exactly what would change in Bloom and asks you to confirm before anything is sent">Push plan schedules…</a> <span class="card-sub">· {{ r.account }}{% if r.prop %} · {{ r.prop }}{% endif %}</span></div>
       </div>
       <div>
         <h3>The plan right now</h3>

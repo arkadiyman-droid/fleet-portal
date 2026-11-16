@@ -164,6 +164,34 @@ def fetch_json(account, session, token, path, timeout=20):
     return (r.json() if r.content else None), token
 
 
+def put_points(account, session, token, locid, points, note, timeout=20):
+    """WRITE to Bloom: change points on one building, the way Bloom's own edit
+    screens do — PUT /api/points/<locid> {points, note, bacnet: true}, where
+    each point is the raw point object from /api/assets with `pv` set to the
+    new value and `originalPv` to the old one. Bloom passes the change on to
+    the site controller. Re-logs in once on a 401. Returns (json, token).
+
+    This is the ONLY function in the portal that changes anything in Bloom.
+    Every caller must have shown a person exactly what will change and had
+    their confirmation first (app/bloom_fans.plan_push, routes.fans_push)."""
+    base = (account.base_url or DEFAULT_BASE).rstrip("/")
+    url = f"{base}/api/points/{locid}"
+    body = {"points": points, "note": note, "bacnet": True}
+
+    def send(tok):
+        return session.put(url, json=body, timeout=timeout, headers={"Authorization": f"Bearer {tok}"})
+    r = send(token)
+    if r.status_code == 401:
+        token = login(account, session)
+        r = send(token)
+    r.raise_for_status()
+    try:
+        data = r.json() if r.content else None
+    except ValueError:
+        data = {"result": r.text[:300]}
+    return data, token
+
+
 # ── The account payload: buildings, keys, alarms ─────────────────────────────
 
 def buildings(assets_payload):

@@ -858,6 +858,28 @@ class BloomFanSample(db.Model):
     data = db.Column(JSONB, nullable=False)
 
 
+class BloomFanWrite(db.Model):
+    """One change the portal sent to Bloom for a fan building — who confirmed
+    it, when, the reason they gave, every point changed with its old and new
+    value, and what came back. Rows are never edited: this is the record of
+    what the portal did to real equipment (app/bloom_fans.plan_push,
+    bloom.put_points)."""
+    __tablename__ = "bloom_fan_writes"
+    __table_args__ = (db.Index("ix_bloom_fan_writes_site_at", "site_id", "at"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    site_id = db.Column(db.Integer, db.ForeignKey("bloom_fan_sites.id", ondelete="CASCADE"), nullable=False)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    by = db.Column(db.String(120))
+    note = db.Column(db.Text)
+    changes = db.Column(JSONB, nullable=False)                      # [{type, name, old, new}]
+    ok = db.Column(db.Boolean, nullable=False, default=False)        # Bloom accepted the request
+    landed = db.Column(db.Boolean)                                   # re-read from Bloom and found in place
+    detail = db.Column(db.String(500))                               # Bloom's reply, or the error
+
+    site = db.relationship("BloomFanSite")
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are
