@@ -1533,7 +1533,8 @@ def fans_page():
     hour = local.hour
     cold_f = current_app.config.get("FAN_COLD_F", 35.0)
     cfg = current_app.config
-    pl = bloom_fans.plan(cfg.get("FAN_PLAN_COLD_F", 35.0), cfg.get("FAN_PLAN_MILD_F", 50.0), cfg.get("FAN_PLAN_FREE_F", 55.0))
+    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     # Each building's property comes from the portal's own hierarchy, by name
     # (bloom_fans.place) — these buildings are already filed there.
     index = bloom_fans.building_index(
@@ -1544,7 +1545,7 @@ def fans_page():
     for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
         if not site.account or not site.account.is_active:
             continue
-        s = bloom_fans.summary(site.data, now=now, cold_f=cold_f, hour=hour, minute=local.minute, pl=pl)
+        s = bloom_fans.summary(site.data, now=now, cold_f=cold_f, hour=hour, minute=local.minute, pl=pl, hyst=hyst)
         prop, client = bloom_fans.place(index, site.name, site.asset_key) or (None, None)
         s.update(id=site.id, name=site.name, account=site.account.label, prop=prop, client=client,
                  heard=bloom_fans.age_words(s["heard_age"]),
@@ -1552,7 +1553,7 @@ def fans_page():
         rows.append(s)
     pg = bloom_fans.page(rows, show=request.args.get("show", "all"), q=request.args.get("q", ""),
                          sort=request.args.get("sort", "property"))
-    return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl,
+    return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
 

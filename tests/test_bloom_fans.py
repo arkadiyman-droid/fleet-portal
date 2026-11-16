@@ -237,19 +237,41 @@ def test_page_filters_searches_and_sorts_by_status():
 
 # ── the plan: how the fans should run ──────────────────────────────────────────
 
-PLAN = bf.plan(35, 50, 55)
+PLAN = bf.plan(36, 56)
 
 
 def test_plan_bands_and_hours():
-    assert [b["key"] for b in PLAN] == ["cold", "mild", "gap", "free"]
-    cold, mild, gap, free = PLAN
-    assert cold["ranges"] == "8am–10am, 6pm–8pm" and cold["hours_on"] == 4
-    assert mild["ranges"] == "8am–12pm, 5pm–10pm" and mild["hours_on"] == 9
-    assert gap["bits"] is None and free["hours_on"] == 24
-    assert [bf.band_of(PLAN, v)["key"] for v in (20, 34.9, 35, 49.9, 50, 54.9, 55, 80)] == \
-        ["cold", "cold", "mild", "mild", "gap", "gap", "free", "free"]
-    # setting the two upper numbers equal closes the unspecified band
-    assert [b["key"] for b in bf.plan(35, 55, 55)] == ["cold", "mild", "free"]
+    assert [b["key"] for b in PLAN] == ["cold", "mild", "free"]
+    cold, mild, free = PLAN
+    assert cold["label"] == "35° and below" and cold["ranges"] == "8am–10am, 6pm–8pm" and cold["hours_on"] == 4
+    assert mild["label"] == "36° to 55°" and mild["ranges"] == "8am–12pm, 5pm–10pm" and mild["hours_on"] == 9
+    assert free["label"] == "56° and above" and free["hours_on"] == 24
+    # 35 is in the cold band, 36 is not; 55 is in the middle band, 56 is not
+    assert [bf.band_of(PLAN, v)["key"] for v in (20, 35, 35.9, 36, 55, 55.9, 56, 80)] == \
+        ["cold", "cold", "cold", "mild", "mild", "mild", "free", "free"]
+
+
+def test_hysteresis_drops_at_the_line_and_climbs_two_degrees_above_it():
+    def step(prev, temp):
+        return bf.step_band(PLAN, prev, temp, 2)["key"]
+    # coming up out of the cold schedule: held until 38
+    assert [step("cold", v) for v in (35, 36, 37, 37.9, 38, 40)] == ["cold", "cold", "cold", "cold", "mild", "mild"]
+    # going down into it: at once
+    assert [step("mild", v) for v in (37, 36, 35.9, 30)] == ["mild", "mild", "cold", "cold"]
+    # the upper line the same way: free only from 58, back to the middle below 56
+    assert [step("mild", v) for v in (55, 56, 57.9, 58)] == ["mild", "mild", "mild", "free"]
+    assert [step("free", v) for v in (57, 56, 55.9)] == ["free", "free", "mild"]
+    # a big jump is taken one line at a time, each with its margin
+    assert step("cold", 57) == "mild" and step("cold", 58) == "free" and step("free", 20) == "cold"
+    # no memory, or a band the plan no longer has: just the temperature
+    assert step(None, 37) == "mild" and step("gap", 37) == "mild"
+    assert bf.step_band(PLAN, "cold", None, 2) is None
+    # sitting on the line does not flip the schedule back and forth
+    band, seen = "mild", []
+    for v in (36.2, 35.8, 36.3, 35.9, 36.4, 37.5, 38.1, 37.0):
+        band = step(band, v)
+        seen.append(band)
+    assert seen == ["mild", "cold", "cold", "cold", "cold", "cold", "mild", "mild"]
 
 
 def test_expect_says_what_the_plan_asks_for_now():
@@ -257,17 +279,24 @@ def test_expect_says_what_the_plan_asks_for_now():
     assert e["band"]["key"] == "mild" and e["on"] is False and e["until"] == "5pm" and not e["settling"]
     assert bf.expect(PLAN, 44, 9, 30)["on"] is True and bf.expect(PLAN, 44, 9, 30)["until"] == "12pm"
     assert bf.expect(PLAN, 20, 9, 30)["until"] == "10am"
-    assert bf.expect(PLAN, 52, 3, 0)["on"] is None        # the unspecified band is never judged
+    assert bf.expect(PLAN, 52, 3, 0)["band"]["key"] == "mild"       # 50-55 is the middle schedule now
     free = bf.expect(PLAN, 70, 3, 0)
-    assert free["on"] is True and free["until"] is None
+    assert free["on"] is True and free["until"] is None and not free["held"]
     # the first ten minutes after the plan flips are grace
     assert bf.expect(PLAN, 44, 12, 5)["settling"] and not bf.expect(PLAN, 44, 12, 15)["settling"]
     assert not bf.expect(PLAN, 44, 13, 5)["settling"]     # no change at 1pm
+    # held on the colder schedule by hysteresis, and told when it lets go
+    h = bf.expect(PLAN, 37, 14, 30, prev_key="cold", hyst=2)
+    assert h["band"]["key"] == "cold" and h["held"] and h["release"] == 38 and h["until"] == "6pm"
+    assert not bf.expect(PLAN, 37, 14, 30, prev_key="mild", hyst=2)["held"]
 
 
 def _plan(**kw):
-    hour, minute = kw.pop("hour", 14), kw.pop("minute", 30)
-    return bf.summary(bf.trim(_building(**kw)), now=NOW, hour=hour, minute=minute, pl=PLAN)
+    hour, minute, band = kw.pop("hour", 14), kw.pop("minute", 30), kw.pop("band", None)
+    raw = bf.trim(_building(**kw))
+    if band:
+        raw["portal"] = {"band": band}                    # what the poller remembered
+    return bf.summary(raw, now=NOW, hour=hour, minute=minute, pl=PLAN, hyst=2)
 
 
 def test_fans_running_when_the_plan_says_off_is_the_headline():
@@ -276,6 +305,7 @@ def test_fans_running_when_the_plan_says_off_is_the_headline():
     assert "3 fans running — plan says off until 5pm (44° outside)" == s["status"]
     night = _plan(outdoor=20, rs=(1, 1, 0), hour=23)      # a cold night, two still on (the third is "down")
     assert night["over"] == 2 and night["tone"] == "over" and "until 8am" in night["status"]
+    assert _plan(outdoor=52, rs=(1, 1, 1), hour=3)["over"] == 3             # 50-55 is judged now
 
 
 def test_following_the_plan_is_not_flagged():
@@ -283,9 +313,21 @@ def test_following_the_plan_is_not_flagged():
     off = _plan(outdoor=44, rs=(0, 0, 0), cmd=0)                            # off in an off-hour
     assert off["over"] == 0 and off["under"] == 0 and off["tone"] == "off"
     assert _plan(outdoor=70, rs=(1, 1, 1), hour=3)["tone"] == "ok"          # warm: on around the clock
-    assert _plan(outdoor=52, rs=(1, 1, 1), hour=3)["over"] == 0             # unspecified band: not judged
     assert _plan(outdoor=44, rs=(1, 1, 1), hour=12, minute=5)["over"] == 0  # just flipped: grace
     assert _plan(outdoor=44, rs=(1, 1, 1), hour=12, minute=15)["over"] == 3
+
+
+def test_the_remembered_band_decides_near_a_line():
+    # 11am at 37°: the middle schedule says ON, the cold one says OFF.
+    fresh = _plan(outdoor=37, rs=(1, 1, 1), hour=11)                        # no memory: middle
+    assert fresh["want"]["band"]["key"] == "mild" and fresh["over"] == 0
+    held = _plan(outdoor=37, rs=(1, 1, 1), hour=11, band="cold")            # came up from the cold: still cold
+    assert held["want"]["band"]["key"] == "cold" and held["want"]["held"] and held["over"] == 3
+    out = _plan(outdoor=38, rs=(1, 1, 1), hour=11, band="cold")             # two degrees clear: released
+    assert out["want"]["band"]["key"] == "mild" and not out["want"]["held"] and out["over"] == 0
+    # 3am at 57° after a mild evening: still the middle schedule (off), not free-running
+    assert _plan(outdoor=57, rs=(1, 1, 1), hour=3, band="mild")["over"] == 3
+    assert _plan(outdoor=58, rs=(1, 1, 1), hour=3, band="mild")["over"] == 0
 
 
 def test_held_off_when_the_plan_says_on():
@@ -304,28 +346,30 @@ def test_no_outdoor_or_no_report_means_no_judgement():
 
 def test_plan_gaps_name_what_bloom_is_missing():
     g = _plan(outdoor=44, rs=(1, 1, 1))["gaps"]           # fixture: one schedule, below 35°, 8-10 + 6-8
-    assert g == ["No schedule in Bloom for 35° to 50° — the plan is 8am–12pm, 5pm–10pm."]
+    assert g == ["No schedule in Bloom for 36° to 55° — the plan is 8am–12pm, 5pm–10pm."]
     b = _building(rs=(1, 1, 1))
     for x in b["sensors"]:                                # stretch the cold schedule to 8-11
         if x["type"] == "gen-sched" and x["name"] == "1::10":
             x["pv"] = 1
     g = bf.summary(bf.trim(b), now=NOW, hour=14, pl=PLAN)["gaps"]
-    assert g[0] == "Below 35°: Bloom runs the fans 8am–11am, 6pm–8pm; the plan is 8am–10am, 6pm–8pm."
+    assert g[0] == "35° and below: Bloom runs the fans 8am–11am, 6pm–8pm; the plan is 8am–10am, 6pm–8pm."
     for x in b["sensors"]:                                # a setpoint the plan does not have
         if x["type"] == "oat-sp-gen" and x["name"] == "1":
-            x["pv"] = 38
+            x["pv"] = 40
     g = bf.summary(bf.trim(b), now=NOW, hour=14, pl=PLAN)["gaps"]
-    assert any("below 38°" in s and "not in the plan" in s for s in g) and any("below 35°" in s.lower() for s in g)
+    assert any("below 40°" in s and "not in the plan" in s for s in g)
+    assert any(s.startswith("No schedule in Bloom for 35° and below") for s in g)
 
 
 def test_page_counts_plan_deviations_and_bands():
-    rows = [_plan(outdoor=44, rs=(1, 1, 1)), _plan(outdoor=70, rs=(1, 1, 1)), _plan(outdoor=52, rs=(1, 1, 1))]
+    rows = [_plan(outdoor=44, rs=(1, 1, 1)), _plan(outdoor=70, rs=(1, 1, 1)),
+            _plan(outdoor=37, rs=(1, 1, 1), band="cold")]
     for i, r in enumerate(rows):
         r.update(name=f"{i} St", prop="P", client=None)
     pg = bf.page(rows)
-    assert pg["summary"]["over"] == 1 and pg["summary"]["over_fans"] == 3 and pg["summary"]["gaps"] == 3
-    assert pg["summary"]["bands"] == {"cold": 0, "mild": 1, "gap": 1, "free": 1}
-    assert [r["name"] for g in bf.page(rows, show="over")["groups"] for r in g["rows"]] == ["0 St"]
+    assert pg["summary"]["over"] == 2 and pg["summary"]["over_fans"] == 6 and pg["summary"]["gaps"] == 3
+    assert pg["summary"]["bands"] == {"cold": 1, "mild": 1, "free": 1} and pg["summary"]["held"] == 1
+    assert [r["name"] for g in bf.page(rows, show="over")["groups"] for r in g["rows"]] == ["0 St", "2 St"]
 
 
 # ── the audit view: raw Bloom values beside what the page shows ────────────────

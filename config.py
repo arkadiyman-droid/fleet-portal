@@ -90,13 +90,14 @@ class Config:
         # outdoor setpoint of the buildings' own cold schedules.
         self.FAN_COLD_F = float(os.environ.get("FAN_COLD_F", "35"))
         # The plan the Fans page measures every building against
-        # (bloom_fans.plan): below COLD the fans run 8-10am and 6-8pm only;
-        # from COLD up to MILD, 8am-12pm and 5-10pm; from FREE up, always. The
-        # operator gave 50 and 55, so 50-55 is unspecified and never judged —
-        # set MILD equal to FREE to close that gap.
-        self.FAN_PLAN_COLD_F = float(os.environ.get("FAN_PLAN_COLD_F", "35"))
-        self.FAN_PLAN_MILD_F = float(os.environ.get("FAN_PLAN_MILD_F", "50"))
-        self.FAN_PLAN_FREE_F = float(os.environ.get("FAN_PLAN_FREE_F", "55"))
+        # (bloom_fans.plan): 35 and below the fans run 8-10am and 6-8pm only;
+        # 36 to 55, 8am-12pm and 5-10pm; 56 and above, always. So the two lines
+        # are at 36 and 56. HYST is the hysteresis: a building drops to the
+        # colder schedule at the line and moves back up only once it reads
+        # HYST degrees above it (38 and 58 at the default 2).
+        self.FAN_PLAN_MILD_FROM_F = float(os.environ.get("FAN_PLAN_MILD_FROM_F", "36"))
+        self.FAN_PLAN_FREE_FROM_F = float(os.environ.get("FAN_PLAN_FREE_FROM_F", "56"))
+        self.FAN_PLAN_HYST_F = float(os.environ.get("FAN_PLAN_HYST_F", "2"))
 
         # Reliable Controls MACH-ProWeb DHW scrape (app/rc_dhw.py) — a headless
         # Chromium reads the DHW System A/B graphics. Credentials live per

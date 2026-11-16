@@ -140,17 +140,24 @@ def until(bits, hour):
 
 # ── the plan: how the fans SHOULD run ──────────────────────────────────────────
 #
-# The operator's rule (2026-11-16), by outdoor temperature:
-#   below 35°      off, except 8-10am and 6-8pm
-#   35° to 50°     on 8am-12pm and 5-10pm, off otherwise
-#   55° and above  on around the clock
-# He gave 50 as the top of the middle band and 55 as the start of the last one,
-# so 50-55° is unspecified: a building in that gap is shown as such and never
-# judged. The three numbers are config (FAN_PLAN_*); closing the gap is a matter
-# of setting two of them equal.
+# The operator's rule (2026-11-16, as he tightened it the same day), by outdoor
+# temperature in whole degrees:
+#   35° and below   off, except 8-10am and 6-8pm
+#   36° to 55°      on 8am-12pm and 5-10pm, off otherwise
+#   56° and above   on around the clock
+# So the lines are at 36 and 56 (FAN_PLAN_MILD_FROM_F / FAN_PLAN_FREE_FROM_F):
+# a reading of 35.9 is still "35 and below".
+#
+# Hysteresis (FAN_PLAN_HYST_F, 2°): he wants the schedule not to jump in and
+# out when the temperature sits on a line. A building drops to the colder
+# schedule the moment it crosses the line going down, and moves back up only
+# once it is HYST above it — 38° to leave the cold schedule, 58° to run free.
+# The lean is deliberate: the colder schedule is the one that saves heat, so it
+# is quick to start and slow to end. That needs memory, so the poller keeps
+# each building's band beside its raw slice (data["portal"]["band"], step_band).
 #
 # This is the yardstick the page measures against. It is NOT what Bloom is set
-# to do — on the day this was written no building had a 35-50° schedule at all —
+# to do — on the day this was written no building had a middle schedule at all —
 # so the page also says where Bloom's own schedules differ from it (plan_gaps).
 
 def _hours(*spans):
@@ -161,38 +168,59 @@ def _hours(*spans):
     return bits
 
 
-def plan(cold=35.0, mild=50.0, free=55.0) -> list:
-    """The bands, coldest first. A band's bits are None where the rule says nothing."""
+def plan(mild_from=36.0, free_from=56.0) -> list:
+    """The bands, coldest first. Bounds are lo <= outdoor < hi."""
     def band(key, lo, hi, bits, label, short):
         return {"key": key, "lo": lo, "hi": hi, "bits": bits, "label": label, "short": short,
-                "hours_on": sum(bits) if bits else None, "ranges": ranges(bits) if bits else "not specified"}
-    out = [band("cold", None, cold, _hours((8, 10), (18, 20)), f"Below {cold:.0f}°", f"<{cold:.0f}°"),
-           band("mild", cold, mild, _hours((8, 12), (17, 22)), f"{cold:.0f}° to {mild:.0f}°", f"{cold:.0f}–{mild:.0f}°")]
-    if free > mild:
-        out.append(band("gap", mild, free, None, f"{mild:.0f}° to {free:.0f}°", f"{mild:.0f}–{free:.0f}°"))
-    out.append(band("free", max(mild, free), None, [1] * 24, f"{max(mild, free):.0f}° and above", f"{max(mild, free):.0f}°+"))
-    return out
+                "hours_on": sum(bits), "ranges": ranges(bits)}
+    return [band("cold", None, mild_from, _hours((8, 10), (18, 20)),
+                 f"{mild_from - 1:.0f}° and below", f"≤{mild_from - 1:.0f}°"),
+            band("mild", mild_from, free_from, _hours((8, 12), (17, 22)),
+                 f"{mild_from:.0f}° to {free_from - 1:.0f}°", f"{mild_from:.0f}–{free_from - 1:.0f}°"),
+            band("free", free_from, None, [1] * 24, f"{free_from:.0f}° and above", f"{free_from:.0f}°+")]
 
 
 def band_of(pl, outdoor):
+    """The band the temperature falls in, with no memory."""
     for b in pl:
         if (b["lo"] is None or outdoor >= b["lo"]) and (b["hi"] is None or outdoor < b["hi"]):
             return b
     return None
 
 
-def expect(pl, outdoor, hour, minute=None):
-    """What the plan asks for right now: {band, on, until, settling}. `on` is
-    None in an unspecified band. `settling` covers the first ten minutes after
-    the plan changes state, when a building has not had time to follow yet."""
-    b = band_of(pl, outdoor)
+def step_band(pl, prev_key, outdoor, hyst=0.0):
+    """The band a building is in now, given the band it was in (its key, or
+    None) — the hysteresis. Going colder happens at the line; going warmer
+    needs `hyst` degrees above it. Returns the band, or None with no reading."""
+    if outdoor is None:
+        return None
+    nominal = band_of(pl, outdoor)
+    keys = [b["key"] for b in pl]
+    if nominal is None or prev_key not in keys:
+        return nominal
+    i, n = keys.index(prev_key), keys.index(nominal["key"])
+    if n <= i:
+        return nominal                                   # same or colder: follow the temperature
+    while i < n and outdoor >= pl[i + 1]["lo"] + hyst:   # warmer: one line at a time, each with its margin
+        i += 1
+    return pl[i]
+
+
+def expect(pl, outdoor, hour, minute=None, prev_key=None, hyst=0.0):
+    """What the plan asks for right now: {band, on, until, settling, held,
+    release}. `held` is true while hysteresis keeps the building on a colder
+    schedule than the bare temperature would give; `release` is the reading at
+    which it moves up. `settling` covers the first ten minutes after the plan
+    changes state, when a building has not had time to follow yet."""
+    b = step_band(pl, prev_key, outdoor, hyst)
     if b is None:
         return None
-    if b["bits"] is None:
-        return {"band": b, "on": None, "until": None, "settling": False}
+    nominal = band_of(pl, outdoor)
+    held = nominal is not None and nominal["key"] != b["key"]
     on_now, nxt = until(b["bits"], hour)
     changed = bool(b["bits"][(hour - 1) % 24]) != on_now
-    return {"band": b, "on": on_now, "until": nxt,
+    return {"band": b, "on": on_now, "until": nxt, "held": held,
+            "release": (b["hi"] + hyst) if held else None,
             "settling": bool(changed and minute is not None and minute < 10)}
 
 
@@ -204,9 +232,12 @@ def plan_gaps(pl, groups, scheds) -> list:
     armed = [scheds[n] for n in sorted(used) if scheds[n]["sp_on"] and scheds[n]["sp"] is not None]
     out, matched = [], set()
     for b in pl:
-        if b["bits"] is None or b["hi"] is None:
+        if b["hi"] is None:
             continue
-        hit = next((s for s in armed if abs(s["sp"] - b["hi"]) < 0.5), None)
+        # Bloom words a setpoint as "active when outdoor falls below N"; the
+        # plan's "35 and below" is a line at 36. Either number is the same
+        # schedule for this purpose, so match within a degree.
+        hit = next((s for s in armed if abs(s["sp"] - b["hi"]) <= 1.0), None)
         if hit is None:
             out.append(f"No schedule in Bloom for {b['label'].lower()} — the plan is {b['ranges']}.")
             continue
@@ -267,11 +298,12 @@ def _outdoor(sensors, now):
 TONE_ORDER = {"over": 0, "cold": 0, "blind": 1, "fault": 2, "under": 3, "dark": 4, "off": 5, "ok": 6}
 
 
-def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None) -> dict:
+def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, hyst=0.0) -> dict:
     """Everything the Fans page shows for one building, derived at read time
     from the stored slice. `now` is naive UTC; `hour` / `minute` are local time
     (they mark the current column of each schedule and place the building in
-    the plan); `pl` is plan() — without it nothing is judged against a plan."""
+    the plan); `pl` is plan() — without it nothing is judged against a plan —
+    and `hyst` its hysteresis in degrees."""
     now = now or _dt.datetime.utcnow()
     sensors = (raw or {}).get("sensors") or []
     equipment = (raw or {}).get("equipment") or []
@@ -360,9 +392,11 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None) -
     # Against the plan: fans running in an hour it says off (heat going up the
     # shaft — the thing this page exists to catch), or held off in an hour it
     # says on. Judged only on a live outdoor reading, in a band the plan covers.
-    want = expect(pl, outdoor, hour, minute) if (pl and outdoor is not None and hour is not None) else None
+    held_band = ((raw or {}).get("portal") or {}).get("band")        # kept by the poller: the hysteresis memory
+    want = (expect(pl, outdoor, hour, minute, prev_key=held_band, hyst=hyst)
+            if (pl and outdoor is not None and hour is not None) else None)
     over = under = 0
-    if want and want["on"] is not None and not want["settling"] and not stale:
+    if want and not want["settling"] and not stale:
         if want["on"] is False:
             over = on
         else:
@@ -515,7 +549,8 @@ def page(rows, show="all", q="", sort="property") -> dict:
                 "under": sum(1 for r in live if r.get("under")), "under_fans": sum(r.get("under") or 0 for r in live),
                 "gaps": sum(1 for r in rs if r.get("gaps")),
                 "bands": {k: sum(1 for r in live if r.get("want") and r["want"]["band"]["key"] == k)
-                          for k in ("cold", "mild", "gap", "free")},
+                          for k in ("cold", "mild", "free")},
+                "held": sum(1 for r in live if r.get("want") and r["want"]["held"]),
                 "fault": sum(1 for r in live if r["fail"]), "dark": sum(r["stale"] for r in rs),
                 "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
 
@@ -704,6 +739,9 @@ def record(app, account, building_list, now) -> int:
     from app import bloom
 
     have = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
+    cfg = app.config
+    pl = plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     touched = []
     for b in building_list:
         if not has_fans(b):
@@ -714,7 +752,16 @@ def record(app, account, building_list, now) -> int:
         key = str(key)
         site = have.get(key) or BloomFanSite(account_id=account.id, asset_key=key)
         site.name = (b.get("name") or key)[:200]
-        site.data = trim(b)
+        slice_ = trim(b)
+        # The plan band this building is in, carried from poll to poll so the
+        # hysteresis has something to hold on to. A building with no live
+        # outdoor reading has no band, and starts fresh when one returns.
+        out_v, out_age = _outdoor(slice_["sensors"], now)
+        live_out = out_v if (out_v is not None and out_age is not None and out_age <= STALE_MIN) else None
+        prev = ((site.data or {}).get("portal") or {}).get("band") if site.data else None
+        band = step_band(pl, prev, live_out, hyst)
+        slice_["portal"] = {"band": band["key"] if band else None}
+        site.data = slice_
         site.polled_at = now
         db.session.add(site)
         touched.append(site)
@@ -733,6 +780,7 @@ def record(app, account, building_list, now) -> int:
             summ = summary(site.data, now=now)
             if summ["stale"]:
                 continue                      # nothing new was heard; don't record a flat line
+            # (history_sample keeps on/total/fail/out/rs; the band is not charted yet)
             db.session.add(BloomFanSample(site_id=site.id, ts=now, data=history_sample(summ)))
             added += 1
         if added:
