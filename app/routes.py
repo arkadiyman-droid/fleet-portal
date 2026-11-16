@@ -1557,6 +1557,28 @@ def fans_page():
                            **pg)
 
 
+@admin_bp.route("/fans/<int:site_id>/raw")
+def fans_raw(site_id):
+    """The audit view for one building's fans: every stored Bloom point beside
+    what the Fans page shows for it (bloom_fans.raw_view). ?format=json returns
+    the stored slice itself."""
+    if not is_superuser():
+        abort(403)
+    from app import bloom_fans, legacy
+    from app.models import BloomFanSite
+    site = BloomFanSite.query.get_or_404(site_id)
+    if request.args.get("format") == "json":
+        return jsonify({"name": site.name, "asset_key": site.asset_key,
+                        "pulled_at_utc": site.polled_at.isoformat() + "Z", "data": site.data})
+    now = datetime.utcnow()
+    view = bloom_fans.raw_view(site.data, now=now, tz=legacy.LOCAL)
+    pulled = site.polled_at.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
+    return render_template("fans_raw.html", title=f"{site.name} — raw fan values", site=site, v=view,
+                           pulled=pulled.strftime("%b %d, %I:%M:%S %p").replace(" 0", " "),
+                           pulled_age=bloom_fans.age_words((now - site.polled_at).total_seconds() / 60),
+                           bloom_url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}")
+
+
 @admin_bp.route("/fans/<int:site_id>/series.json")
 def fans_series(site_id):
     """History for one building's fans — outdoor, fans running, and an on/off

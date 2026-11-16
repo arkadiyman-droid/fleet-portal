@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}{{ site.name }} — raw fan values — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .rw-top { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; margin:0 0 4px; }
+  .rw-top h1 { margin:0; }
+  .rw-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:1000px; }
+  .rw-card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px 14px; margin:0 0 14px; overflow-x:auto; }
+  .rw-card h2 { font-size:14px; margin:0 0 2px; }
+  .rw-card .sub { font-size:12px; color:var(--muted); margin:0 0 8px; }
+  .rw-card table { border-collapse:collapse; font-size:13px; width:100%; }
+  .rw-card th { text-align:left; font-size:11px; padding:4px 10px 4px 0; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .rw-card td { padding:4px 10px 4px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; white-space:nowrap; }
+  .rw-card tr:last-child td { border-bottom:none; }
+  .rw-card th.raw, .rw-card td.raw { background:#f8fafc; }
+  .rw-card th.ours, .rw-card td.ours { background:#f0fdf4; }
+  .pv { font-family:ui-monospace, Consolas, monospace; font-weight:700; }
+  .age { color:var(--muted); font-size:12px; }
+  .age.old { color:#b45309; font-weight:600; }
+  code.t { font-size:11px; color:#6b7280; background:#f3f4f6; padding:0 4px; border-radius:3px; }
+  .bits { font-family:ui-monospace, Consolas, monospace; letter-spacing:1px; }
+  .st { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; }
+  .st.ON { background:#dcfce7; color:#166534; } .st.DOWN { background:#fee2e2; color:#b91c1c; }
+  .st.OFF { background:#e5e7eb; color:#374151; } .st.NO { background:#f3f4f6; color:#6b7280; }
+</style>
+{% endblock %}
+{% block content %}
+{# one raw reading: the value Bloom gave, and how old Bloom's own poll of it is #}
+{% macro cell(x) %}{% if x %}<span class="pv">{{ x.pv if x.pv is not none else 'null' }}</span> <span class="age {{ 'old' if x.stale }}" title="Bloom polled this point {{ x.at }}">{{ x.age }}</span>{% else %}<span class="age">not in feed</span>{% endif %}{% endmacro %}
+<div class="rw-top">
+  <a href="{{ url_for('admin.fans_page') }}">← Fans</a>
+  <h1>{{ site.name }}</h1>
+  <span class="card-sub">raw fan values from Bloom</span>
+</div>
+<p class="rw-note">
+  This is everything the portal holds for this building's fans, exactly as Bloom reported it, next to what the Fans page shows.
+  The portal last pulled it from Bloom on <b>{{ pulled }}</b> ({{ pulled_age }} ago). Each value carries the age of Bloom's own
+  poll of that point — <span class="age old">amber</span> means older than 2 hours, which the Fans page treats as not live.
+  Grey columns are Bloom's values; green columns are the portal's reading of them.
+  <a href="{{ bloom_url }}" target="_blank" rel="noopener">Open this building in Bloom ↗</a> ·
+  <a href="{{ url_for('admin.fans_raw', site_id=site.id, format='json') }}">Download the stored data (JSON)</a>
+</p>
+
+<div class="rw-card">
+  <h2>Fans</h2>
+  <p class="sub"><code class="t">fan-rs</code> 1 = running · <code class="t">fan-run-fail</code> 1 = Bloom's own fail flag · <code class="t">fan-run-manual</code> 1 = in manual · <code class="t">fan-rt-day</code> = run time today in seconds. The page shows a fan as DOWN when it is off while its group is commanded on.</p>
+  <table>
+    <tr><th>Fan</th><th>Bloom key</th><th>Group</th><th class="raw">fan-rs</th><th class="raw">fan-run-fail</th><th class="raw">fan-run-manual</th><th class="raw">fan-rt-day (s)</th><th class="ours">Page shows</th><th class="ours">Run today</th></tr>
+    {% for f in v.fans %}
+    <tr><td>{{ f.name }}</td><td><code class="t">{{ f.key }}</code></td><td>{{ f.group }}</td>
+      <td class="raw">{{ cell(f.rs) }}</td><td class="raw">{{ cell(f.fail) }}</td><td class="raw">{{ cell(f.manual) }}</td><td class="raw">{{ cell(f.rt) }}</td>
+      <td class="ours"><span class="st {{ f.shown.split(' ')[0] }}">{{ f.shown }}</span></td>
+      <td class="ours">{% if f.shown_rt is not none %}{{ f.shown_rt }} h{% elif f.rt_bad %}n/a — over 24 h, counter not resetting{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="rw-card">
+  <h2>Fan groups</h2>
+  <p class="sub"><code class="t">fan-cmd</code> 1 = START, 0 = STOP · <code class="t">gen-sched-assign</code> = the schedule number the group follows.</p>
+  <table>
+    <tr><th>Group</th><th>Bloom key</th><th>Fans in it</th><th class="raw">fan-cmd</th><th class="raw">gen-sched-assign</th><th class="ours">Page shows</th></tr>
+    {% for g in v.groups %}
+    <tr><td>{{ g.name }}</td><td><code class="t">{{ g.key }}</code></td><td>{{ g.members|join(', ') }}</td>
+      <td class="raw">{{ cell(g.cmd) }}</td><td class="raw">{{ cell(g.assign) }}</td>
+      <td class="ours">{{ g.shown }}{% if g.assign and g.assign.pv is not none %} · follows schedule {{ g.assign.pv }}{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="rw-card">
+  <h2>Schedules</h2>
+  <p class="sub">The 24 digits are Bloom's hourly points <code class="t">gen-sched</code> "S::0" to "S::23", midnight first: 1 = the schedule runs the fans that hour. <code class="t">oat-sp-gen</code> = the outdoor setpoint · <code class="t">gen-sp-enabled</code> 1 = the schedule only applies below that setpoint.</p>
+  <table>
+    <tr><th>Schedule</th><th class="raw">Hours 0–23</th><th class="raw">oat-sp-gen</th><th class="raw">gen-sp-enabled</th><th class="ours">Page shows</th><th class="ours">Followed by</th></tr>
+    {% for s in v.schedules %}
+    <tr><td>S{{ s.n }}</td><td class="raw"><span class="bits">{{ s.bits[:6] }} {{ s.bits[6:12] }} {{ s.bits[12:18] }} {{ s.bits[18:] }}</span></td>
+      <td class="raw">{{ cell(s.sp) }}</td><td class="raw">{{ cell(s.enabled) }}</td>
+      <td class="ours">{{ s.ranges }} · {{ s.hours_on }} h</td><td class="ours">{{ s.used_by|join(', ') or 'no group' }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="rw-card">
+  <h2>Outdoor temperature</h2>
+  <p class="sub">A building can carry several outdoor points, some long dead. The page uses the freshest <code class="t">oat-act</code>, and only if Bloom polled it within the last 2 hours.</p>
+  <table>
+    <tr><th>Point</th><th class="raw">Value</th><th class="raw">Bloom polled it</th><th class="ours">Used by the page</th></tr>
+    {% for o in v.outdoor %}
+    <tr><td><code class="t">{{ o.type }}</code>{% if o.name %} {{ o.name }}{% endif %}</td>
+      <td class="raw"><span class="pv">{{ o.pv if o.pv is not none else 'null' }}</span></td>
+      <td class="raw"><span class="age {{ 'old' if o.stale }}">{{ o.at }} · {{ o.age }} ago</span></td>
+      <td class="ours">{% if o.used %}<b>yes</b> — this is the outdoor temperature shown{% elif o.freshest %}no — freshest, but too old to trust{% elif o.type == 'oat-act' %}no — an older reading{% else %}no — a setpoint, not a reading{% endif %}</td></tr>
+    {% else %}
+    <tr><td colspan="4" class="age">No outdoor points in the feed for this building.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if v.other %}
+<div class="rw-card">
+  <h2>Other stored points</h2>
+  <p class="sub">Fan- and schedule-related points in the feed that the page does not use.</p>
+  <table>
+    <tr><th>Type</th><th>Name</th><th>On</th><th class="raw">Value</th><th class="raw">Bloom polled it</th></tr>
+    {% for o in v.other %}
+    <tr><td><code class="t">{{ o.type }}</code></td><td>{{ o.name or '' }}</td><td>{{ o.on or '' }}</td>
+      <td class="raw"><span class="pv">{{ o.pv if o.pv is not none else 'null' }}</span></td>
+      <td class="raw"><span class="age {{ 'old' if o.stale }}">{{ o.at }} · {{ o.age }} ago</span></td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+<p class="rw-note">{{ v.n_sensors }} points stored for this building · {{ v.equipment|length }} pieces of equipment (fans and fan groups).</p>
+{% endblock %}

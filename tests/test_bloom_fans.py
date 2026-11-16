@@ -326,3 +326,45 @@ def test_page_counts_plan_deviations_and_bands():
     assert pg["summary"]["over"] == 1 and pg["summary"]["over_fans"] == 3 and pg["summary"]["gaps"] == 3
     assert pg["summary"]["bands"] == {"cold": 0, "mild": 1, "gap": 1, "free": 1}
     assert [r["name"] for g in bf.page(rows, show="over")["groups"] for r in g["rows"]] == ["0 St"]
+
+
+# ── the audit view: raw Bloom values beside what the page shows ────────────────
+
+def test_raw_view_lays_out_every_point_untouched():
+    b = _building()                                       # fan 1 off, 2 and 3 on; group commanded on
+    v = bf.raw_view(bf.trim(b), now=NOW)
+    f1, f2 = v["fans"][0], v["fans"][1]
+    assert (f1["key"], f1["rs"]["pv"], f1["fail"]["pv"], f1["rt"]["pv"], f1["shown"]) == ("exhaust-1", 0, 1, 0, "DOWN")
+    assert (f2["rs"]["pv"], f2["rt"]["pv"], f2["shown"], f2["shown_rt"]) == (1, 42000, "ON", 11.67)
+    assert f1["manual"] is None                           # the fixture has no fan-run-manual: "not in feed"
+    assert f2["rs"]["age"] == "1 min" and not f2["rs"]["stale"]
+    g = v["groups"][0]
+    assert (g["key"], g["cmd"]["pv"], g["assign"]["pv"], g["shown"], g["members"]) == \
+        ("fg-1", 1, 1, "START", ["exhaust-1", "exhaust-2", "exhaust-3"])
+    s1, s2 = v["schedules"]
+    assert s1["bits"] == "000000001100000000110000" and s1["sp"]["pv"] == 35 and s1["enabled"]["pv"] == 1
+    assert s1["used_by"] == ["G1"] and s2["bits"] == "0" * 24 and s2["enabled"]["pv"] == 0
+    assert v["other"] == []                               # every stored point landed in a table
+    assert v["n_sensors"] == len(bf.trim(b)["sensors"])
+
+
+def test_raw_view_marks_which_outdoor_reading_is_used():
+    v = bf.raw_view(bf.trim(_building(outdoor=51)), now=NOW)
+    live = next(o for o in v["outdoor"] if o["pv"] == 51)
+    dead = next(o for o in v["outdoor"] if o["pv"] == 44.6)
+    assert live["used"] and live["freshest"] and not dead["used"] and dead["stale"]
+    assert "2024" in dead["at"]                           # an old reading names its year
+    # only the 2024 reading left: it is the freshest, but too old to use
+    v = bf.raw_view(bf.trim(_building(outdoor=None)), now=NOW)
+    assert [(o["freshest"], o["used"]) for o in v["outdoor"]] == [(True, False)]
+
+
+def test_raw_view_of_a_silent_building_shows_no_data():
+    v = bf.raw_view(bf.trim(_building(fan_ts="2026-09-12T10:00:00.000Z", rs=(1, 1, 1))), now=NOW)
+    assert all(f["shown"] == "NO DATA" and f["rs"]["stale"] and f["rs"]["pv"] == 1 for f in v["fans"])
+
+
+def test_raw_view_times_are_local_when_a_zone_is_given():
+    tz = dt.timezone(dt.timedelta(hours=-5))
+    v = bf.raw_view(bf.trim(_building()), now=NOW, tz=tz)
+    assert v["fans"][1]["rs"]["at"] == "Nov 16, 11:49:00 AM"      # 16:49Z in New York winter time

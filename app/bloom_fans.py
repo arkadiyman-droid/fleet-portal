@@ -548,6 +548,86 @@ def page(rows, show="all", q="", sort="property") -> dict:
     return {"groups": groups, "summary": summary, "show": show, "sort": sort, "shown": len(rows)}
 
 
+# ── the audit view: Bloom's raw values beside what the page makes of them ──────
+
+def raw_view(raw: dict, now=None, tz=None) -> dict:
+    """Every stored Bloom point for one building, laid out so a person can check
+    the Fans page against it: each fan's raw readings next to the state the page
+    shows, each group's command and schedule number, every schedule's 24 bits,
+    setpoints and enable flags, and every outdoor reading with the one in use
+    marked. Values are Bloom's own, untouched; only the layout is ours."""
+    now = now or _dt.datetime.utcnow()
+    sensors = (raw or {}).get("sensors") or []
+    s = summary(raw, now=now)
+
+    def when(v):
+        ts = _ts(v)
+        if ts is None:
+            return {"at": "—", "age": "never", "stale": True}
+        local = ts.replace(tzinfo=_dt.timezone.utc).astimezone(tz) if tz else ts
+        age = _age_min(ts, now)
+        fmt = "%b %d, %I:%M:%S %p" if ts.year == now.year else "%b %d %Y, %I:%M:%S %p"   # name the year when it is not this one
+        return {"at": local.strftime(fmt).replace(" 0", " "), "age": age_words(age),
+                "stale": age is None or age > STALE_MIN}
+
+    used = set()                                     # ids of the sensor dicts placed in a table
+
+    def pick(type_, key=None, name=None):
+        for x in sensors:
+            if x.get("type") != type_ or id(x) in used:
+                continue
+            a = x.get("assoc") or {}
+            if key is not None and not (a.get("type") == "equipment" and a.get("key") == key):
+                continue
+            if name is not None and str(x.get("name")) != name:
+                continue
+            used.add(id(x))
+            return {"pv": x.get("pv"), **when(x.get("pollTs"))}
+        return None
+
+    fans, groups = [], []
+    for g in s["groups"]:
+        if g["key"]:
+            groups.append({"key": g["key"], "name": g["name"], "members": [f["key"] for f in g["fans"]],
+                           "cmd": pick("fan-cmd", key=g["key"]), "assign": pick("gen-sched-assign", name=g["key"]),
+                           "shown": "—" if g["cmd"] is None else ("START" if g["cmd"] else "STOP")})
+        for f in g["fans"]:
+            fans.append({"key": f["key"], "name": f["name"], "group": g["name"],
+                         "rs": pick("fan-rs", key=f["key"]), "fail": pick("fan-run-fail", key=f["key"]),
+                         "manual": pick("fan-run-manual", key=f["key"]), "rt": pick("fan-rt-day", key=f["key"]),
+                         "shown": "NO DATA" if s["stale"] else ("ON" if f["on"] else ("DOWN" if f["fail"] else "OFF")),
+                         "shown_rt": None if f["rt_h"] is None else round(f["rt_h"], 2), "rt_bad": f["rt_bad"]})
+
+    scheds = []
+    for sc in s["schedules"]:
+        n = str(sc["n"])
+        for x in sensors:                            # the 24 hourly points are shown as one row of bits
+            if x.get("type") == "gen-sched" and str(x.get("name") or "").startswith(n + "::"):
+                used.add(id(x))
+        scheds.append({"n": sc["n"], "bits": "".join(str(b) for b in sc["bits"]), "ranges": sc["ranges"],
+                       "hours_on": sc["hours_on"], "used_by": sc["used_by"],
+                       "sp": pick("oat-sp-gen", name=n), "enabled": pick("gen-sp-enabled", name=f"oatSp::{n}")})
+
+    best = None                                      # the outdoor reading the page uses: the freshest
+    for x in sensors:
+        if x.get("type") == "oat-act" and _num(x.get("pv")) is not None:
+            if best is None or (_ts(x.get("pollTs")) or _dt.datetime.min) > (_ts(best.get("pollTs")) or _dt.datetime.min):
+                best = x
+    outdoor = []
+    for x in sensors:
+        if str(x.get("type") or "").startswith("oat-") and id(x) not in used:
+            used.add(id(x))
+            w = when(x.get("pollTs"))
+            outdoor.append({"type": x.get("type"), "name": x.get("name"), "pv": x.get("pv"), **w,
+                            "used": x is best and not w["stale"], "freshest": x is best})
+
+    other = [{"type": x.get("type"), "name": x.get("name"),
+              "on": (x.get("assoc") or {}).get("key"), "pv": x.get("pv"), **when(x.get("pollTs"))}
+             for x in sensors if id(x) not in used]
+    return {"summary": s, "fans": fans, "groups": groups, "schedules": scheds, "outdoor": outdoor,
+            "other": other, "n_sensors": len(sensors), "equipment": (raw or {}).get("equipment") or []}
+
+
 # ── history for the chart ──────────────────────────────────────────────────────
 
 def _ms(t):
