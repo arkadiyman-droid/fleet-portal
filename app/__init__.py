@@ -117,9 +117,15 @@ def create_app():
     @app.cli.command("bloom-dump")
     @click.argument("label")
     @click.option("--n", default=1, help="how many assets to show")
-    def bloom_dump(label, n):
+    @click.option("--match", default=None, help="only buildings whose name contains this (any account tag)")
+    @click.option("--has-type", "has_type", default=None,
+                  help="only buildings with a sensor whose type starts with this (e.g. fan-)")
+    @click.option("--out", default=None, help="write the matched buildings' full JSON to this file")
+    def bloom_dump(label, n, match, has_type, out):
         """Print the real /api/assets field names for one account — use this to
-        finalise FIELD/_points() in app/bloom.py against live data."""
+        finalise FIELD/_points() in app/bloom.py against live data. With --match
+        (and --out) it dumps every building whose name contains the text, whole
+        and untruncated — how a new kind of site (exhaust fans) gets mapped."""
         import json
         import requests
         from app import bloom
@@ -132,6 +138,24 @@ def create_app():
         tok = acct.token or bloom.login(acct, s)
         data, _ = bloom.fetch_json(acct, s, tok, "/api/assets")
         blds = bloom.buildings(data)
+        if match or has_type:
+            hits = blds
+            if match:
+                hits = [b for b in hits if match.lower() in (b.get("name") or "").lower()]
+            if has_type:      # e.g. --has-type fan- : every building carrying exhaust-fan points
+                hits = [b for b in hits if any(str(s.get("type") or "").startswith(has_type)
+                                               for s in (b.get("sensors") or []))]
+            click.echo(f"{len(blds)} buildings total, {len(hits)} matching "
+                       f"{match or ''}{' type ' + has_type if has_type else ''}: "
+                       + ", ".join(b.get("name") or "?" for b in hits))
+            if out:
+                with open(out, "w", encoding="utf-8") as fh:
+                    json.dump(hits, fh, indent=1, default=str)
+                click.echo(f"wrote {out}")
+            else:
+                for b in hits[:n]:
+                    click.echo(json.dumps(b, indent=2, default=str)[:3000])
+            return
         sky = [b for b in blds if bloom.is_skyline(b)]
         click.echo(f"{len(blds)} buildings total, {len(sky)} skyline-terrace.")
         for b in sky[:n]:

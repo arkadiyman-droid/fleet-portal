@@ -821,6 +821,43 @@ class BloomSample(db.Model):
         return f"<BloomSample asset_id={self.asset_id} ts={self.ts}>"
 
 
+class BloomFanSite(db.Model):
+    """One Bloom building that has roof exhaust fans (app/bloom_fans.py).
+    Discovered by the poller itself — every building in an active account's
+    feed that carries fan points gets a row, no import step — and independent
+    of BloomAsset, so a building's fans are watched whether or not its heating
+    plant has been brought into the portal. `data` is the fan-related slice of
+    the raw building object (bloom_fans.trim); the page is derived at read time."""
+    __tablename__ = "bloom_fan_sites"
+    __table_args__ = (db.UniqueConstraint("account_id", "asset_key", name="uq_bloom_fan_site"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("bloom_accounts.id", ondelete="CASCADE"), nullable=False)
+    asset_key = db.Column(db.String(200), nullable=False)           # Bloom locid
+    name = db.Column(db.String(200), nullable=False)
+    data = db.Column(JSONB, nullable=False)
+    polled_at = db.Column(db.DateTime, nullable=False)
+
+    account = db.relationship("BloomAccount")
+
+    def __repr__(self):
+        return f"<BloomFanSite {self.id} {self.name!r}>"
+
+
+class BloomFanSample(db.Model):
+    """A throttled snapshot of one fan site (fans on / total / faulted, outdoor,
+    cold schedule active, per-fan run bits), appended by the poller and pruned
+    with the other Bloom samples — the only record of what the fans did, since
+    Bloom keeps none."""
+    __tablename__ = "bloom_fan_samples"
+    __table_args__ = (db.Index("ix_bloom_fan_samples_site_ts", "site_id", "ts"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    site_id = db.Column(db.Integer, db.ForeignKey("bloom_fan_sites.id", ondelete="CASCADE"), nullable=False)
+    ts = db.Column(db.DateTime, nullable=False)
+    data = db.Column(JSONB, nullable=False)
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are

@@ -1518,6 +1518,57 @@ def skyline_page():
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1)
 
 
+@admin_bp.route("/fans")
+def fans_page():
+    """Roof exhaust fans on every Bloom building that has them: running or not,
+    the cold-weather schedule, and whether that schedule can engage. Read
+    view-only (app/bloom_fans.py)."""
+    if not is_superuser():
+        abort(403)
+    from sqlalchemy.orm import joinedload
+    from app import bloom_fans, legacy
+    from app.models import BloomFanSite
+    now = datetime.utcnow()
+    hour = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).hour
+    cold_f = current_app.config.get("FAN_COLD_F", 35.0)
+    rows = []
+    for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
+        if not site.account or not site.account.is_active:
+            continue
+        s = bloom_fans.summary(site.data, now=now, cold_f=cold_f, hour=hour)
+        s.update(id=site.id, name=site.name, account=site.account.label,
+                 heard=bloom_fans.age_words(s["heard_age"]),
+                 url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
+        rows.append(s)
+    live = [r for r in rows if not r["stale"]]
+    outs = [r["outdoor"] for r in live if r["outdoor"] is not None]
+    summary = {"total": len(rows), "fans": sum(r["total"] for r in live), "on": sum(r["on"] for r in live),
+               "cold": sum(r["tone"] == "cold" for r in rows),
+               "blind": sum(1 for r in rows if any("cannot engage" in f for f in r["flags"])),
+               "fault": sum(1 for r in live if r["fail"]), "down": sum(r["fail"] for r in live),
+               "dark": sum(r["stale"] for r in rows), "off": sum(r["tone"] == "off" for r in rows),
+               "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
+    show, q = request.args.get("show", "all"), (request.args.get("q") or "").strip().lower()
+    if show == "cold":
+        rows = [r for r in rows if r["tone"] == "cold"]
+    elif show == "blind":
+        rows = [r for r in rows if any("cannot engage" in f for f in r["flags"])]
+    elif show == "fault":
+        rows = [r for r in rows if not r["stale"] and r["fail"]]
+    elif show == "dark":
+        rows = [r for r in rows if r["stale"]]
+    elif show == "running":
+        rows = [r for r in rows if not r["stale"] and r["on"]]
+    else:
+        show = "all"
+    if q:
+        rows = [r for r in rows if q in r["name"].lower()]
+    rows.sort(key=lambda r: (bloom_fans.TONE_ORDER.get(r["tone"], 9), r["name"].lower()))
+    return render_template("fans.html", title="Fans", rows=rows, summary=summary, show=show,
+                           q=request.args.get("q", ""), cold_f=cold_f, hour=hour,
+                           poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1)
+
+
 @admin_bp.route("/skyline/<int:asset_id>")
 def skyline_building(asset_id):
     """Everything Bloom has for one Skyline building, with a Back button

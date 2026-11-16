@@ -701,6 +701,7 @@ class BloomPoller:
         days = app.config.get("BLOOM_RAW_DAYS", 30)
         cut = _dt.datetime.utcnow() - _dt.timedelta(days=days)
         db.session.execute(text("DELETE FROM bloom_samples WHERE ts < :cut"), {"cut": cut})
+        db.session.execute(text("DELETE FROM bloom_fan_samples WHERE ts < :cut"), {"cut": cut})
         db.session.commit()
 
 
@@ -763,7 +764,17 @@ def poll_account(app, account):
     except Exception as e:
         db.session.rollback()
         log.warning("Bloom sample write failed for %s: %s", account.label, e)
-    log.info("Bloom poll %s: %d buildings seen, %d rows updated", account.label, len(by_key), len(rows))
+    # Roof exhaust fans: every building in the feed that has them, whether or
+    # not it is one of this account's asset rows (app/bloom_fans.py).
+    n_fans = 0
+    try:
+        from app import bloom_fans
+        n_fans = bloom_fans.record(app, account, buildings(assets_json), now)
+    except Exception as e:
+        db.session.rollback()
+        log.warning("Bloom fan write failed for %s: %s", account.label, e)
+    log.info("Bloom poll %s: %d buildings seen, %d rows updated, %d fan sites",
+             account.label, len(by_key), len(rows), n_fans)
 
 
 def _record_samples(app, rows, by_key, by_name, now):

@@ -85,6 +85,10 @@ class Config:
         # BLOOM_SAMPLE_MIN_SECONDS, kept BLOOM_RAW_DAYS. See app/bloom.py.
         self.BLOOM_SAMPLE_MIN_SECONDS = int(os.environ.get("BLOOM_SAMPLE_MIN_SECONDS", "300"))
         self.BLOOM_RAW_DAYS = int(os.environ.get("BLOOM_RAW_DAYS", "30"))
+        # The Fans page (app/bloom_fans.py) flags a building whose exhaust fans
+        # are running while it is this cold or colder outside. 35 matches the
+        # outdoor setpoint of the buildings' own cold schedules.
+        self.FAN_COLD_F = float(os.environ.get("FAN_COLD_F", "35"))
 
         # Reliable Controls MACH-ProWeb DHW scrape (app/rc_dhw.py) — a headless
         # Chromium reads the DHW System A/B graphics. Credentials live per
