@@ -89,6 +89,14 @@ class Config:
         # are running while it is this cold or colder outside. 35 matches the
         # outdoor setpoint of the buildings' own cold schedules.
         self.FAN_COLD_F = float(os.environ.get("FAN_COLD_F", "35"))
+        # The plan the Fans page measures every building against
+        # (bloom_fans.plan): below COLD the fans run 8-10am and 6-8pm only;
+        # from COLD up to MILD, 8am-12pm and 5-10pm; from FREE up, always. The
+        # operator gave 50 and 55, so 50-55 is unspecified and never judged —
+        # set MILD equal to FREE to close that gap.
+        self.FAN_PLAN_COLD_F = float(os.environ.get("FAN_PLAN_COLD_F", "35"))
+        self.FAN_PLAN_MILD_F = float(os.environ.get("FAN_PLAN_MILD_F", "50"))
+        self.FAN_PLAN_FREE_F = float(os.environ.get("FAN_PLAN_FREE_F", "55"))
 
         # Reliable Controls MACH-ProWeb DHW scrape (app/rc_dhw.py) — a headless
         # Chromium reads the DHW System A/B graphics. Credentials live per

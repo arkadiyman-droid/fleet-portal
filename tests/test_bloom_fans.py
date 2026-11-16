@@ -165,3 +165,164 @@ def test_series_with_no_samples_says_so():
 
 def test_history_sample():
     assert bf.history_sample(_sum()) == {"on": 2, "total": 3, "fail": 1, "out": 51, "cut": False, "rs": "011"}
+
+
+# ── property grouping and the page ─────────────────────────────────────────────
+
+INDEX = bf.building_index([("590-600 Gates Ave", "Betty"), ("735 Gates", "Betty"), ("392 Marion St.", "DCA"),
+                           ("372 Franklyn Ave", "DCA"), ("Wil-1 325 Roebling N", "Williams")])
+
+
+def test_place_by_name_key_and_address_range():
+    assert bf.place(INDEX, "392 Marion St.") == "DCA"
+    assert bf.place(INDEX, "392 marion st") == "DCA"                       # punctuation and case do not matter
+    assert bf.place(INDEX, "372 Franklin Ave", "372-Franklyn-Ave") == "DCA"   # Bloom's name differs, its key matches
+    assert bf.place(INDEX, "Wil-1 325 Roebling N", "Wil-1-325-Roebling-N") == "Williams"
+    # a fan-only entry lands on the building whose address range holds its number
+    assert bf.place(INDEX, "590 Gates Ave Exhaust Fans", "590-gates-exhaust") == "Betty"
+    assert bf.place(INDEX, "600 Gates Ave Exhaust Fans") == "Betty"
+    assert bf.place(INDEX, "610 Gates Ave Exhaust Fans") is None           # outside every range
+    assert bf.place(INDEX, "590 Other St Exhaust Fans") is None            # right number, wrong street
+    assert bf.place(INDEX, "1 Nowhere Rd") is None
+
+
+def test_until_names_the_next_change():
+    bits = [1 if h in (8, 9, 18, 19) else 0 for h in range(24)]
+    assert bf.until(bits, 11) == (False, "6pm")
+    assert bf.until(bits, 8) == (True, "10am")
+    assert bf.until(bits, 22) == (False, "8am")                            # wraps past midnight
+    assert bf.until([0] * 24, 5) == (False, None)
+
+
+def test_banner_says_where_the_cold_schedule_stands():
+    assert "on standby" in _sum()["banner"] and _sum()["banner_tone"] == "standby"
+    cold = _sum(outdoor=20, rs=(1, 1, 1), hour=11)
+    assert cold["banner_tone"] == "active" and "fans scheduled OFF until 6pm" in cold["banner"]
+    assert _sum(outdoor=None, rs=(1, 1, 1))["banner_tone"] == "blind"
+    s = _sum()
+    assert s["schedules"][0]["used_by"] == ["G1"] and s["schedules"][1]["used_by"] == []
+    assert [f["state"] for f in s["groups"][0]["fans"]] == ["down", "on", "on"]
+    assert [f["num"] for f in s["groups"][0]["fans"]] == ["1", "2", "3"]
+
+
+def _row(name, prop, **kw):
+    r = _sum(**kw)
+    r.update(name=name, prop=prop, client=None)
+    return r
+
+
+def test_page_groups_by_property_with_totals():
+    rows = [_row("10 B St", "Zeta"), _row("2 A St", "Zeta", rs=(1, 1, 1)), _row("9 C St", "Alpha", rs=(1, 1, 1)),
+            _row("5 D St", None, fan_ts="2026-09-12T10:00:00.000Z")]
+    pg = bf.page(rows)
+    assert [g["name"] for g in pg["groups"]] == ["Alpha", "Zeta", bf.UNFILED]      # unfiled last
+    zeta = pg["groups"][1]
+    assert [r["name"] for r in zeta["rows"]] == ["2 A St", "10 B St"]                # natural order: 2 before 10
+    assert (zeta["on"], zeta["fans"], zeta["down"], zeta["off"]) == (5, 6, 1, 0)
+    assert pg["groups"][2]["dark"] == 1 and pg["groups"][2]["dark_fans"] == 3 and pg["groups"][2]["fans"] == 0
+    assert pg["summary"]["buildings"] == 4 and pg["summary"]["on"] == 8 and pg["summary"]["all_fans"] == 12
+
+
+def test_page_filters_searches_and_sorts_by_status():
+    rows = [_row("10 B St", "Zeta"), _row("2 A St", "Zeta", rs=(1, 1, 1)), _row("9 C St", "Alpha", rs=(1, 1, 1))]
+    fault = bf.page(rows, show="fault")
+    assert fault["show"] == "fault" and [r["name"] for g in fault["groups"] for r in g["rows"]] == ["10 B St"]
+    assert fault["summary"]["buildings"] == 3                       # the tiles keep the whole-fleet totals
+    assert bf.page(rows, show="nonsense")["show"] == "all"
+    assert [g["name"] for g in bf.page(rows, q="alpha")["groups"]] == ["Alpha"]      # search matches the property too
+    st = bf.page(rows, sort="status")
+    assert len(st["groups"]) == 1 and st["groups"][0]["name"] is None
+    assert st["groups"][0]["rows"][0]["name"] == "10 B St"          # the faulted building first
+
+
+# ── the plan: how the fans should run ──────────────────────────────────────────
+
+PLAN = bf.plan(35, 50, 55)
+
+
+def test_plan_bands_and_hours():
+    assert [b["key"] for b in PLAN] == ["cold", "mild", "gap", "free"]
+    cold, mild, gap, free = PLAN
+    assert cold["ranges"] == "8am–10am, 6pm–8pm" and cold["hours_on"] == 4
+    assert mild["ranges"] == "8am–12pm, 5pm–10pm" and mild["hours_on"] == 9
+    assert gap["bits"] is None and free["hours_on"] == 24
+    assert [bf.band_of(PLAN, v)["key"] for v in (20, 34.9, 35, 49.9, 50, 54.9, 55, 80)] == \
+        ["cold", "cold", "mild", "mild", "gap", "gap", "free", "free"]
+    # setting the two upper numbers equal closes the unspecified band
+    assert [b["key"] for b in bf.plan(35, 55, 55)] == ["cold", "mild", "free"]
+
+
+def test_expect_says_what_the_plan_asks_for_now():
+    e = bf.expect(PLAN, 44, 14, 30)                       # 2:30pm at 44°
+    assert e["band"]["key"] == "mild" and e["on"] is False and e["until"] == "5pm" and not e["settling"]
+    assert bf.expect(PLAN, 44, 9, 30)["on"] is True and bf.expect(PLAN, 44, 9, 30)["until"] == "12pm"
+    assert bf.expect(PLAN, 20, 9, 30)["until"] == "10am"
+    assert bf.expect(PLAN, 52, 3, 0)["on"] is None        # the unspecified band is never judged
+    free = bf.expect(PLAN, 70, 3, 0)
+    assert free["on"] is True and free["until"] is None
+    # the first ten minutes after the plan flips are grace
+    assert bf.expect(PLAN, 44, 12, 5)["settling"] and not bf.expect(PLAN, 44, 12, 15)["settling"]
+    assert not bf.expect(PLAN, 44, 13, 5)["settling"]     # no change at 1pm
+
+
+def _plan(**kw):
+    hour, minute = kw.pop("hour", 14), kw.pop("minute", 30)
+    return bf.summary(bf.trim(_building(**kw)), now=NOW, hour=hour, minute=minute, pl=PLAN)
+
+
+def test_fans_running_when_the_plan_says_off_is_the_headline():
+    s = _plan(outdoor=44, rs=(1, 1, 1))                   # 2:30pm, 44°: off until 5pm
+    assert s["over"] == 3 and s["under"] == 0 and s["tone"] == "over"
+    assert "3 fans running — plan says off until 5pm (44° outside)" == s["status"]
+    night = _plan(outdoor=20, rs=(1, 1, 0), hour=23)      # a cold night, two still on (the third is "down")
+    assert night["over"] == 2 and night["tone"] == "over" and "until 8am" in night["status"]
+
+
+def test_following_the_plan_is_not_flagged():
+    assert _plan(outdoor=44, rs=(1, 1, 1), hour=9)["tone"] == "ok"          # on in an on-hour
+    off = _plan(outdoor=44, rs=(0, 0, 0), cmd=0)                            # off in an off-hour
+    assert off["over"] == 0 and off["under"] == 0 and off["tone"] == "off"
+    assert _plan(outdoor=70, rs=(1, 1, 1), hour=3)["tone"] == "ok"          # warm: on around the clock
+    assert _plan(outdoor=52, rs=(1, 1, 1), hour=3)["over"] == 0             # unspecified band: not judged
+    assert _plan(outdoor=44, rs=(1, 1, 1), hour=12, minute=5)["over"] == 0  # just flipped: grace
+    assert _plan(outdoor=44, rs=(1, 1, 1), hour=12, minute=15)["over"] == 3
+
+
+def test_held_off_when_the_plan_says_on():
+    s = _plan(outdoor=70, rs=(0, 0, 0), cmd=0, hour=3)
+    assert s["under"] == 3 and s["tone"] == "under" and "held off — plan says on" in s["status"]
+    # a fan that is simply down in a group commanded on is a fault, not "held off"
+    down = _plan(outdoor=70, rs=(0, 1, 1), hour=3)
+    assert down["under"] == 0 and down["fail"] == 1 and down["tone"] == "fault"
+
+
+def test_no_outdoor_or_no_report_means_no_judgement():
+    assert _plan(outdoor=None, rs=(1, 1, 1))["want"] is None
+    stale = _plan(outdoor=20, rs=(1, 1, 1), fan_ts="2026-09-12T10:00:00.000Z")
+    assert stale["over"] == 0 and stale["tone"] == "dark"
+
+
+def test_plan_gaps_name_what_bloom_is_missing():
+    g = _plan(outdoor=44, rs=(1, 1, 1))["gaps"]           # fixture: one schedule, below 35°, 8-10 + 6-8
+    assert g == ["No schedule in Bloom for 35° to 50° — the plan is 8am–12pm, 5pm–10pm."]
+    b = _building(rs=(1, 1, 1))
+    for x in b["sensors"]:                                # stretch the cold schedule to 8-11
+        if x["type"] == "gen-sched" and x["name"] == "1::10":
+            x["pv"] = 1
+    g = bf.summary(bf.trim(b), now=NOW, hour=14, pl=PLAN)["gaps"]
+    assert g[0] == "Below 35°: Bloom runs the fans 8am–11am, 6pm–8pm; the plan is 8am–10am, 6pm–8pm."
+    for x in b["sensors"]:                                # a setpoint the plan does not have
+        if x["type"] == "oat-sp-gen" and x["name"] == "1":
+            x["pv"] = 38
+    g = bf.summary(bf.trim(b), now=NOW, hour=14, pl=PLAN)["gaps"]
+    assert any("below 38°" in s and "not in the plan" in s for s in g) and any("below 35°" in s.lower() for s in g)
+
+
+def test_page_counts_plan_deviations_and_bands():
+    rows = [_plan(outdoor=44, rs=(1, 1, 1)), _plan(outdoor=70, rs=(1, 1, 1)), _plan(outdoor=52, rs=(1, 1, 1))]
+    for i, r in enumerate(rows):
+        r.update(name=f"{i} St", prop="P", client=None)
+    pg = bf.page(rows)
+    assert pg["summary"]["over"] == 1 and pg["summary"]["over_fans"] == 3 and pg["summary"]["gaps"] == 3
+    assert pg["summary"]["bands"] == {"cold": 0, "mild": 1, "gap": 1, "free": 1}
+    assert [r["name"] for g in bf.page(rows, show="over")["groups"] for r in g["rows"]] == ["0 St"]

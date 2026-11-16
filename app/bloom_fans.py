@@ -38,6 +38,7 @@ predict or judge a fan.
 """
 import datetime as _dt
 import logging
+import re
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +129,102 @@ def ranges(bits) -> str:
     return ", ".join(out)
 
 
+def until(bits, hour):
+    """(on this hour, clock time of the schedule's next change — None if it never changes)."""
+    on_now = bool(bits[hour % 24])
+    for k in range(1, 25):
+        if bool(bits[(hour + k) % 24]) != on_now:
+            return on_now, _clock(hour + k)
+    return on_now, None
+
+
+# ── the plan: how the fans SHOULD run ──────────────────────────────────────────
+#
+# The operator's rule (2026-11-16), by outdoor temperature:
+#   below 35°      off, except 8-10am and 6-8pm
+#   35° to 50°     on 8am-12pm and 5-10pm, off otherwise
+#   55° and above  on around the clock
+# He gave 50 as the top of the middle band and 55 as the start of the last one,
+# so 50-55° is unspecified: a building in that gap is shown as such and never
+# judged. The three numbers are config (FAN_PLAN_*); closing the gap is a matter
+# of setting two of them equal.
+#
+# This is the yardstick the page measures against. It is NOT what Bloom is set
+# to do — on the day this was written no building had a 35-50° schedule at all —
+# so the page also says where Bloom's own schedules differ from it (plan_gaps).
+
+def _hours(*spans):
+    bits = [0] * 24
+    for a, b in spans:
+        for h in range(a, b):
+            bits[h % 24] = 1
+    return bits
+
+
+def plan(cold=35.0, mild=50.0, free=55.0) -> list:
+    """The bands, coldest first. A band's bits are None where the rule says nothing."""
+    def band(key, lo, hi, bits, label, short):
+        return {"key": key, "lo": lo, "hi": hi, "bits": bits, "label": label, "short": short,
+                "hours_on": sum(bits) if bits else None, "ranges": ranges(bits) if bits else "not specified"}
+    out = [band("cold", None, cold, _hours((8, 10), (18, 20)), f"Below {cold:.0f}°", f"<{cold:.0f}°"),
+           band("mild", cold, mild, _hours((8, 12), (17, 22)), f"{cold:.0f}° to {mild:.0f}°", f"{cold:.0f}–{mild:.0f}°")]
+    if free > mild:
+        out.append(band("gap", mild, free, None, f"{mild:.0f}° to {free:.0f}°", f"{mild:.0f}–{free:.0f}°"))
+    out.append(band("free", max(mild, free), None, [1] * 24, f"{max(mild, free):.0f}° and above", f"{max(mild, free):.0f}°+"))
+    return out
+
+
+def band_of(pl, outdoor):
+    for b in pl:
+        if (b["lo"] is None or outdoor >= b["lo"]) and (b["hi"] is None or outdoor < b["hi"]):
+            return b
+    return None
+
+
+def expect(pl, outdoor, hour, minute=None):
+    """What the plan asks for right now: {band, on, until, settling}. `on` is
+    None in an unspecified band. `settling` covers the first ten minutes after
+    the plan changes state, when a building has not had time to follow yet."""
+    b = band_of(pl, outdoor)
+    if b is None:
+        return None
+    if b["bits"] is None:
+        return {"band": b, "on": None, "until": None, "settling": False}
+    on_now, nxt = until(b["bits"], hour)
+    changed = bool(b["bits"][(hour - 1) % 24]) != on_now
+    return {"band": b, "on": on_now, "until": nxt,
+            "settling": bool(changed and minute is not None and minute < 10)}
+
+
+def plan_gaps(pl, groups, scheds) -> list:
+    """Where Bloom's own schedules would not carry out the plan, as sentences.
+    A band is covered when a schedule the groups follow is armed at the band's
+    upper temperature with the same hours."""
+    used = {g["sched"] for g in groups if g["sched"] in scheds}
+    armed = [scheds[n] for n in sorted(used) if scheds[n]["sp_on"] and scheds[n]["sp"] is not None]
+    out, matched = [], set()
+    for b in pl:
+        if b["bits"] is None or b["hi"] is None:
+            continue
+        hit = next((s for s in armed if abs(s["sp"] - b["hi"]) < 0.5), None)
+        if hit is None:
+            out.append(f"No schedule in Bloom for {b['label'].lower()} — the plan is {b['ranges']}.")
+            continue
+        matched.add(hit["n"])
+        if hit["bits"] != b["bits"]:
+            out.append(f"{b['label']}: Bloom runs the fans {hit['ranges']}; the plan is {b['ranges']}.")
+    for s in armed:
+        if s["n"] not in matched:
+            out.append(f"Bloom has a schedule below {s['sp']:.0f}° ({s['ranges']}) that is not in the plan.")
+    return out
+
+
+def _short(name, i):
+    """'Exhaust Fan 10' -> '10': the number a fan or group is known by."""
+    tail = str(name or "").rsplit(" ", 1)[-1]
+    return tail if tail.isdigit() else str(i + 1)
+
+
 def _schedules(sensors) -> dict:
     """{n: {bits[24], hours_on, ranges, sp, sp_on}} for every schedule present."""
     bits, sp, sp_on = {}, {}, {}
@@ -167,13 +264,14 @@ def _outdoor(sensors, now):
 
 # ── the picture of one building ────────────────────────────────────────────────
 
-TONE_ORDER = {"cold": 0, "blind": 1, "fault": 2, "dark": 3, "off": 4, "ok": 5}
+TONE_ORDER = {"over": 0, "cold": 0, "blind": 1, "fault": 2, "under": 3, "dark": 4, "off": 5, "ok": 6}
 
 
-def summary(raw: dict, now=None, cold_f=35.0, hour=None) -> dict:
+def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None) -> dict:
     """Everything the Fans page shows for one building, derived at read time
-    from the stored slice. `now` is naive UTC; `hour` is the local hour (0-23)
-    used only to mark the current column of each schedule."""
+    from the stored slice. `now` is naive UTC; `hour` / `minute` are local time
+    (they mark the current column of each schedule and place the building in
+    the plan); `pl` is plan() — without it nothing is judged against a plan."""
     now = now or _dt.datetime.utcnow()
     sensors = (raw or {}).get("sensors") or []
     equipment = (raw or {}).get("equipment") or []
@@ -212,8 +310,11 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None) -> dict:
         # set. A fan whose group is commanded off is simply off. The flag also
         # sits latched on a handful of fans that are running; those are shown
         # as "flagged", not counted as down.
+        fail = (not on) and (cmd is True or (cmd is None and flag))
         return {"key": key, "name": names.get(key) or key, "on": on,
-                "fail": (not on) and (cmd is True or (cmd is None and flag)), "flagged": on and flag,
+                "num": _short(names.get(key) or str(key).replace("-", " "), 0),
+                "state": "on" if on else ("down" if fail else "off"),
+                "fail": fail, "flagged": on and flag,
                 "manual": _on(v.get("fan-run-manual")),
                 "rt_h": None if (rt is None or rt_bad) else rt / 3600.0, "rt_bad": rt_bad}
 
@@ -226,11 +327,12 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None) -> dict:
         members = [k for k in (e.get("fans") or []) if k in fan_keys]
         seen.update(members)
         groups.append({"key": e.get("key"), "name": e.get("name") or e.get("key"), "cmd": cmd,
+                       "short": "G" + _short(e.get("name") or str(e.get("key")).replace("-", " "), len(groups)),
                        "sched": assign.get(str(e.get("key"))),
                        "fans": [fan(k, cmd) for k in members]})
     loose = [k for k in fan_keys if k not in seen]
     if loose:
-        groups.append({"key": None, "name": "Not in a group", "cmd": None, "sched": None,
+        groups.append({"key": None, "name": "Not in a group", "short": "—", "cmd": None, "sched": None,
                        "fans": [fan(k, None) for k in loose]})
 
     fans = [f for g in groups for f in g["fans"]]
@@ -255,11 +357,29 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None) -> dict:
     all_off = bool(groups) and all(g["cmd"] is False for g in groups if g["key"])
     cold = outdoor is not None and outdoor <= cold_f
 
+    # Against the plan: fans running in an hour it says off (heat going up the
+    # shaft — the thing this page exists to catch), or held off in an hour it
+    # says on. Judged only on a live outdoor reading, in a band the plan covers.
+    want = expect(pl, outdoor, hour, minute) if (pl and outdoor is not None and hour is not None) else None
+    over = under = 0
+    if want and want["on"] is not None and not want["settling"] and not stale:
+        if want["on"] is False:
+            over = on
+        else:
+            under = sum(len(g["fans"]) for g in groups if g["cmd"] is False)
+
     flags = []
     if stale:
         tone, status = "dark", f"Not reporting — last heard {age_words(heard_age)} ago"
     else:
-        if cold and on:
+        till = f" until {want['until']}" if want and want["until"] else ""
+        if over:
+            flags.append(("over", f"{over} fan{'s' if over != 1 else ''} running — plan says off{till} "
+                                  f"({outdoor:.0f}° outside)"))
+        if under:
+            flags.append(("under", f"{under} fan{'s' if under != 1 else ''} held off — plan says on{till} "
+                                   f"({outdoor:.0f}° outside)"))
+        if cold and on and not pl:
             said = ""
             if cut_active and hour is not None:       # what the cold schedule itself says for this hour
                 said = " — scheduled on this hour" if cut["bits"][hour % 24] else " — schedule says off"
@@ -282,8 +402,31 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None) -> dict:
     if hour is not None:
         for s in scheds.values():
             s["now_on"] = bool(s["bits"][hour % 24])
+    for s in scheds.values():                       # which groups follow each schedule
+        s["used_by"] = [g["short"] for g in groups if g["sched"] == s["n"]]
+
+    # One plain sentence on where the cold schedule stands right now.
+    sched_now = None
+    if cut and hour is not None:
+        on_now, nxt = until(cut["bits"], hour)
+        sched_now = {"on": on_now, "until": nxt}
+    if not cut:
+        banner = ("none", "No cold schedule is assigned to these fans.")
+    elif outdoor is None:
+        banner = ("blind", f"No live outdoor reading, so the cold schedule (below {cut['sp']:.0f}°) cannot engage.")
+    elif cut_active:
+        what = "ON" if sched_now and sched_now["on"] else "OFF"
+        till = f" until {sched_now['until']}" if sched_now and sched_now["until"] else ""
+        banner = ("active", f"{outdoor:.0f}° outside, below {cut['sp']:.0f}° — cold schedule ACTIVE: "
+                            f"fans scheduled {what}{till}.")
+    else:
+        banner = ("standby", f"{outdoor:.0f}° outside, above {cut['sp']:.0f}° — cold schedule on standby. "
+                             f"Below {cut['sp']:.0f}° it runs the fans {cut['ranges']} ({cut['hours_on']} h a day).")
 
     return {
+        "want": want, "over": over, "under": under,
+        "gaps": plan_gaps(pl, groups, scheds) if pl else [],
+        "banner": banner[1], "banner_tone": banner[0], "sched_now": sched_now,
         "name": (raw or {}).get("name"), "locid": (raw or {}).get("locid"),
         "tone": tone, "status": status, "flags": [m for _, m in flags],
         "total": total, "on": on, "fail": fail, "manual": sum(f["manual"] for f in fans),
@@ -302,16 +445,113 @@ def history_sample(s: dict) -> dict:
             "rs": "".join("1" if f["on"] else "0" for g in s["groups"] for f in g["fans"])}
 
 
+# ── which property a fan building belongs to ───────────────────────────────────
+#
+# The portal already files these buildings under Client -> Property -> Building
+# (they are 2010 boxes too), under the same names Bloom uses. So a fan site is
+# placed by name at read time — no link column to keep in step. The five
+# fan-only Bloom entries ("590 Gates Ave Exhaust Fans") have no building of
+# their own; they land on the building whose address range holds their number
+# ("590-600 Gates Ave").
+
+def norm(s) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).split())
+
+
+def building_index(pairs) -> dict:
+    """pairs = [(building name, value)] -> a lookup for place()."""
+    exact, spans = {}, []
+    for name, value in pairs:
+        n = norm(name)
+        exact.setdefault(n, value)
+        m = re.match(r"^(\d+) (\d+) (.+)$", n)                 # "590-600 Gates Ave"
+        if m and int(m.group(1)) <= int(m.group(2)):
+            spans.append((int(m.group(1)), int(m.group(2)), m.group(3), value))
+    return {"exact": exact, "spans": spans}
+
+
+def place(index, name, key=None):
+    """The value filed for this fan site's building, or None."""
+    for cand in (name, key):
+        if cand and norm(cand) in index["exact"]:
+            return index["exact"][norm(cand)]
+    n = re.sub(r"\s*exhaust fans?$", "", norm(name))
+    if n in index["exact"]:
+        return index["exact"][n]
+    m = re.match(r"^(\d+) (.+)$", n)
+    if m:
+        num, street = int(m.group(1)), m.group(2)
+        for lo, hi, st, value in index["spans"]:
+            if st == street and lo <= num <= hi:
+                return value
+    return None
+
+
+def _natural(s):
+    return [int(p) if p.isdigit() else p for p in re.split(r"(\d+)", str(s or "").lower())]
+
+
+UNFILED = "Not filed under a property"
+
+
+def page(rows, show="all", q="", sort="property") -> dict:
+    """Filter, group and total the Fans page. `rows` are summary() dicts that
+    also carry `prop` / `client` (None when unfiled). Returns {groups, summary,
+    show, sort}; a group is one property (or the whole list when sorting by
+    status or name) with its own running / down / off / not-reporting totals."""
+    def blind(r):
+        return any("cannot engage" in f for f in r["flags"])
+
+    def totals(rs):
+        live = [r for r in rs if not r["stale"]]
+        on, down = sum(r["on"] for r in live), sum(r["fail"] for r in live)
+        fans = sum(r["total"] for r in live)
+        outs = [r["outdoor"] for r in live if r["outdoor"] is not None]
+        return {"buildings": len(rs), "fans": fans, "on": on, "down": down, "off": fans - on - down,
+                "dark_fans": sum(r["total"] for r in rs if r["stale"]),
+                "all_fans": sum(r["total"] for r in rs),
+                "cold": sum(r["tone"] == "cold" for r in rs), "blind": sum(blind(r) for r in rs),
+                "over": sum(1 for r in live if r.get("over")), "over_fans": sum(r.get("over") or 0 for r in live),
+                "under": sum(1 for r in live if r.get("under")), "under_fans": sum(r.get("under") or 0 for r in live),
+                "gaps": sum(1 for r in rs if r.get("gaps")),
+                "bands": {k: sum(1 for r in live if r.get("want") and r["want"]["band"]["key"] == k)
+                          for k in ("cold", "mild", "gap", "free")},
+                "fault": sum(1 for r in live if r["fail"]), "dark": sum(r["stale"] for r in rs),
+                "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
+
+    summary = totals(rows)
+    keep = {"cold": lambda r: r["tone"] == "cold", "blind": blind,
+            "over": lambda r: not r["stale"] and r.get("over"), "under": lambda r: not r["stale"] and r.get("under"),
+            "gaps": lambda r: bool(r.get("gaps")),
+            "fault": lambda r: not r["stale"] and r["fail"], "dark": lambda r: r["stale"],
+            "running": lambda r: not r["stale"] and r["on"]}.get(show)
+    if keep is None:
+        show = "all"
+    else:
+        rows = [r for r in rows if keep(r)]
+    q = (q or "").strip().lower()
+    if q:
+        rows = [r for r in rows if q in r["name"].lower() or q in (r.get("prop") or "").lower()]
+
+    if sort == "status":
+        rows = sorted(rows, key=lambda r: (TONE_ORDER.get(r["tone"], 9), _natural(r["name"])))
+        groups = [{"name": None, "client": None, "rows": rows, **totals(rows)}] if rows else []
+    else:
+        sort = "property"
+        by = {}
+        for r in rows:
+            by.setdefault(r.get("prop") or UNFILED, []).append(r)
+        groups = []
+        for name in sorted(by, key=lambda n: (n == UNFILED, _natural(n))):
+            rs = sorted(by[name], key=lambda r: _natural(r["name"]))
+            groups.append({"name": name, "client": rs[0].get("client"), "rows": rs, **totals(rs)})
+    return {"groups": groups, "summary": summary, "show": show, "sort": sort, "shown": len(rows)}
+
+
 # ── history for the chart ──────────────────────────────────────────────────────
 
 def _ms(t):
     return int(t.replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
-
-
-def _short(name, i):
-    """'Exhaust Fan 10' -> '10' for the chart's row label."""
-    tail = str(name or "").rsplit(" ", 1)[-1]
-    return tail if tail.isdigit() else str(i + 1)
 
 
 def series_from(samples, fans, sp, days, now) -> dict:

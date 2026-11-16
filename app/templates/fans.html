@@ -3,15 +3,42 @@
 {% block main_class %}full{% endblock %}
 {% block head %}
 <style>
-  .fn-bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 10px; }
-  .fn-bar a.f { padding:4px 10px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); font-size:13px; background:#fff; }
-  .fn-bar a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
-  .fn-bar a.f.hot { border-color:#1d4ed8; color:#1d4ed8; font-weight:600; }
-  .fn-bar .grow { flex:1; }
+  /* state colours, used by every fan mark on the page */
+  .fn-on { background:#16a34a; color:#fff; }
+  .fn-down { background:#fff; color:#b91c1c; box-shadow:inset 0 0 0 2px #dc2626; }
+  .fn-off { background:#d1d5db; color:#4b5563; }
+  .fn-dark { background:repeating-linear-gradient(135deg, #e5e7eb 0 4px, #f3f4f6 4px 8px); color:#6b7280; }
+
+  .fn-tiles { display:grid; grid-template-columns:minmax(240px, 2fr) repeat(6, minmax(112px, 1fr)); gap:10px; margin:0 0 12px; }
+  .fn-tile { display:block; background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 12px; text-decoration:none; color:var(--text); }
+  a.fn-tile:hover { border-color:#c7ccd4; }
+  .fn-tile.sel { outline:2px solid var(--text); outline-offset:-1px; }
+  .fn-tile .n { font-size:24px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .fn-tile .n small { font-size:14px; font-weight:500; color:var(--muted); }
+  .fn-tile .l { color:var(--muted); font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  .fn-tile.zero .n { color:#c3c8d0; }
+  .fn-tile.cold .n, .fn-tile.over .n { color:#1d4ed8; } .fn-tile.under .n { color:#7c3aed; } .fn-tile.blind .n { color:#b45309; } .fn-tile.down .n { color:#dc2626; }
+  .fn-bar2 { display:flex; height:10px; border-radius:5px; overflow:hidden; background:#f3f4f6; margin-top:6px; }
+  .fn-bar2 > span { display:block; height:100%; }
+  .fn-bar2 .fn-down { box-shadow:none; background:#dc2626; }
+
+  .fn-ctl { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 8px; font-size:13px; }
+  .fn-ctl a.f { padding:3px 10px; border:1px solid var(--border); border-radius:14px; text-decoration:none; color:var(--muted); background:#fff; }
+  .fn-ctl a.f.on { background:var(--text); color:#fff; border-color:var(--text); }
+  .fn-ctl .grow { flex:1; }
+  .fn-key { display:flex; flex-wrap:wrap; gap:4px 14px; align-items:center; font-size:12px; color:var(--muted); margin:0 0 10px; }
+  .fn-key i { display:inline-block; width:13px; height:13px; border-radius:3px; vertical-align:-2px; margin-right:4px; }
+  .fn-key i.blue { background:#3b82f6; } .fn-key i.grey { background:#e5e7eb; }
   .fn-note { font-size:12px; color:var(--muted); margin:0 0 12px; }
-  .fn-list { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; }
-  .fn-cols, .fn-row > summary { display:grid; grid-template-columns: 6px minmax(170px, 1.5fr) minmax(200px, 2fr) 64px 150px 60px minmax(190px, 1.6fr) 72px 84px; gap:10px; align-items:center; padding:7px 12px 7px 0; }
+
+  .fn-list { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; margin:0 0 14px; }
+  .fn-cols, .fn-row > summary { display:grid; grid-template-columns: 6px minmax(150px, 1.25fr) minmax(170px, 1.5fr) 56px minmax(200px, 1.5fr) 52px 262px 64px 62px; gap:10px; align-items:center; padding:6px 12px 6px 0; }
   .fn-cols { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); border-bottom:1px solid var(--border); background:#fafafa; }
+  .fn-prop { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:9px 14px; background:#eef2f7; border-bottom:1px solid var(--border); }
+  .fn-prop h2 { margin:0; font-size:15px; }
+  .fn-prop .fn-bar2 { width:220px; margin:0; }
+  .fn-prop .cnt { font-size:12px; color:var(--muted); }
+  .fn-prop .cnt b { color:var(--text); }
   .fn-row { border-bottom:1px solid #f1f5f9; }
   .fn-row:last-child { border-bottom:none; }
   .fn-row > summary { cursor:pointer; list-style:none; font-size:13px; }
@@ -19,118 +46,229 @@
   .fn-row > summary:hover { background:#f8fafc; }
   .fn-row[open] > summary { background:#f1f5f9; }
   .fn-stripe { align-self:stretch; border-radius:0 3px 3px 0; background:#22c55e; }
-  .tone-cold .fn-stripe { background:#1d4ed8; } .tone-blind .fn-stripe { background:#f59e0b; }
+  .tone-cold .fn-stripe, .tone-over .fn-stripe { background:#1d4ed8; } .tone-under .fn-stripe { background:#7c3aed; } .tone-blind .fn-stripe { background:#f59e0b; }
   .tone-fault .fn-stripe { background:#dc2626; } .tone-dark .fn-stripe, .tone-off .fn-stripe { background:#9ca3af; }
-  .fn-row.tone-dark > summary { color:var(--muted); }
   .fn-nm { font-weight:600; color:#1e3a8a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .fn-row.tone-dark .fn-nm { color:var(--muted); }
+  .fn-row.tone-dark .fn-nm, .fn-row.tone-dark > summary { color:var(--muted); }
   .fn-st { font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .tone-cold .fn-st { color:#1d4ed8; font-weight:600; } .tone-blind .fn-st { color:#b45309; font-weight:600; }
+  .tone-cold .fn-st, .tone-over .fn-st { color:#1d4ed8; font-weight:600; } .tone-under .fn-st { color:#7c3aed; font-weight:600; } .tone-blind .fn-st { color:#b45309; font-weight:600; }
   .tone-fault .fn-st { color:#b91c1c; }
   .fn-num { font-variant-numeric:tabular-nums; text-align:right; }
-  .fn-dots { display:flex; flex-wrap:wrap; gap:3px; align-items:center; }
-  .fn-dot { width:9px; height:9px; border-radius:50%; background:#e5e7eb; }
-  .fn-dot.on { background:#16a34a; } .fn-dot.fail { background:#fff; box-shadow:inset 0 0 0 2px #dc2626; }
-  .fn-cut { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .fn-cut b { color:var(--text); font-weight:600; }
-  .fn-cut.active b { color:#1d4ed8; }
-  .fn-body { padding:10px 16px 14px 28px; background:#fbfcfe; border-top:1px solid #eef2f7; display:grid; grid-template-columns:minmax(260px, 1fr) minmax(360px, 1.3fr); gap:20px; }
-  .fn-body h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
-  .fn-grp { margin:0 0 8px; font-size:13px; }
-  .fn-grp .gh { font-weight:600; display:flex; gap:8px; align-items:center; }
-  .fn-fan { display:flex; gap:8px; align-items:center; padding:1px 0 1px 12px; font-size:12px; }
-  .fn-fan .nm { flex:1; }
+
+  /* fans as numbered squares, one cluster per fan group */
+  .fn-fans { display:flex; flex-wrap:wrap; gap:3px 7px; align-items:center; }
+  .fn-g { display:inline-flex; gap:2px; padding:2px; border-radius:5px; background:#f1f5f9; }
+  .fn-g.stop { background:#e5e7eb; outline:1px dashed #9ca3af; }
+  .fn-f { width:16px; height:16px; border-radius:3px; font-size:9px; font-weight:700; line-height:16px; text-align:center; font-variant-numeric:tabular-nums; }
+
+  /* the cold schedule as a 24-hour strip */
+  .fn-cs { display:grid; grid-template-columns:52px 144px 1fr; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+  .fn-cs .want { font-weight:700; color:var(--text); white-space:nowrap; }
+  .fn-cs .want.off { color:#6b7280; }
+  .fn-cs .ne { color:#b45309; font-weight:700; margin-left:3px; cursor:help; }
+  .fn-mini.na { background:repeating-linear-gradient(135deg, #e5e7eb 0 4px, #f3f4f6 4px 8px); }
+  .fn-plan { background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:0 0 12px; }
+  .fn-plan h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
+  .fn-pl { display:grid; grid-template-columns:110px minmax(240px, 520px) minmax(180px, 1fr) auto; gap:4px 12px; align-items:center; font-size:13px; }
+  .fn-pl .strip { display:grid; grid-template-columns:repeat(24, 1fr); gap:1px; height:16px; }
+  .fn-pl .strip span { background:#e5e7eb; border-radius:2px; }
+  .fn-pl .strip span.on { background:#3b82f6; }
+  .fn-pl .strip span.now { box-shadow:0 0 0 2px #111827; position:relative; z-index:1; }
+  .fn-pl .strip.na span { background:repeating-linear-gradient(135deg, #e5e7eb 0 4px, #f3f4f6 4px 8px); }
+  .fn-pl .hrs { display:grid; grid-template-columns:repeat(8, 1fr); font-size:10px; color:var(--muted); }
+  .fn-pl .bl { font-weight:600; }
+  .fn-pl .cur { outline:2px solid #1d4ed8; outline-offset:2px; border-radius:3px; }
+  .fn-pl .cnt { font-size:12px; color:var(--muted); white-space:nowrap; text-align:right; }
+  .fn-gaps { margin:8px 0 0; padding:0 0 0 16px; font-size:12px; color:#92400e; }
+  .fn-cs b { color:var(--text); font-weight:600; white-space:nowrap; }
+  .fn-cs.active b { color:#1d4ed8; }
+  .fn-mini { display:grid; grid-template-columns:repeat(24, 1fr); height:14px; border-radius:3px; overflow:hidden; background:#e5e7eb; }
+  .fn-cs.active .fn-mini { outline:2px solid #1d4ed8; outline-offset:1px; }
+  .fn-mini span.on { background:#93c5fd; }
+  .fn-cs.active .fn-mini span.on { background:#2563eb; }
+  .fn-mini span.now { box-shadow:inset 0 0 0 1.5px #111827; }
+  .fn-axis { display:grid; grid-template-columns:repeat(4, 1fr); font-size:9px; font-weight:600; letter-spacing:0; text-transform:none; }
+
+  .fn-body { padding:12px 16px 14px 28px; background:#fbfcfe; border-top:1px solid #eef2f7; display:grid; grid-template-columns:minmax(300px, 1fr) minmax(460px, 1.35fr); gap:22px; }
+  .fn-body h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 8px; }
+  .fn-gcards { display:flex; flex-wrap:wrap; gap:8px; align-items:flex-start; }
+  .fn-gcard { border:1px solid var(--border); border-radius:8px; background:#fff; padding:8px 10px; }
+  .fn-gcard.stop { background:#f9fafb; border-style:dashed; }
+  .fn-gcard .gh { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:600; margin-bottom:6px; }
   .fn-pill { font-size:10px; font-weight:700; border-radius:8px; padding:1px 7px; background:#e5e7eb; color:#374151; }
-  .fn-pill.on { background:#dcfce7; color:#166534; } .fn-pill.fail { background:#fee2e2; color:#b91c1c; }
   .fn-pill.cmd { background:#dbeafe; color:#1e40af; } .fn-pill.warn { background:#fef3c7; color:#92400e; }
-  .fn-sch { display:grid; grid-template-columns: 30px repeat(24, 1fr) minmax(150px, auto); gap:1px; align-items:center; font-size:11px; margin-bottom:2px; }
-  .fn-sch .c { height:13px; background:#e5e7eb; }
-  .fn-sch .c.on { background:#3b82f6; }
-  .fn-sch .c.now { outline:2px solid #111827; outline-offset:-1px; }
-  .fn-sch .h { text-align:center; color:var(--muted); font-size:9px; }
-  .fn-sch .lbl { padding-left:8px; color:var(--muted); white-space:nowrap; }
-  .fn-sch.used .n { font-weight:700; color:#1e3a8a; }
+  .fn-big { display:flex; flex-wrap:wrap; gap:6px; }
+  .fn-b { width:74px; border-radius:7px; padding:5px 4px 4px; text-align:center; line-height:1.2; }
+  .fn-b .no { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .fn-b .st { font-size:10px; font-weight:700; letter-spacing:.04em; }
+  .fn-b .rt { font-size:10px; opacity:.85; font-variant-numeric:tabular-nums; }
+  .fn-banner { border-radius:8px; padding:8px 12px; font-size:13px; margin:0 0 10px; background:#f1f5f9; border-left:4px solid #9ca3af; }
+  .fn-banner.active { background:#eff6ff; border-left-color:#1d4ed8; color:#1e3a8a; font-weight:600; }
+  .fn-banner.blind { background:#fffbeb; border-left-color:#f59e0b; color:#92400e; font-weight:600; }
+  .fn-banner.over { background:#eff6ff; border-left-color:#1d4ed8; color:#1e3a8a; font-weight:600; }
+  .fn-banner.under { background:#f5f3ff; border-left-color:#7c3aed; color:#5b21b6; font-weight:600; }
+  .fn-banner.fine { background:#f0fdf4; border-left-color:#16a34a; color:#14532d; }
+  .fn-tl { display:grid; grid-template-columns:34px minmax(0, 1fr) minmax(170px, 330px); gap:3px 8px; align-items:center; font-size:12px; }
+  .fn-tl .hrs { display:grid; grid-template-columns:repeat(8, 1fr); font-size:10px; color:var(--muted); }
+  .fn-tl .strip { display:grid; grid-template-columns:repeat(24, 1fr); gap:1px; height:22px; }
+  .fn-tl .strip span { background:#e5e7eb; border-radius:2px; }
+  .fn-tl .strip span.on { background:#3b82f6; }
+  .fn-tl .strip span.now { box-shadow:0 0 0 2px #111827; position:relative; z-index:1; }
+  .fn-tl .sn { font-weight:700; color:#1e3a8a; }
+  .fn-tl .idle { opacity:.45; }
+  .fn-tl .idle .sn { color:var(--muted); font-weight:600; }
+  .fn-tl .lbl { color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .fn-tl .lbl b { color:var(--text); }
+  .fn-use { display:inline-block; font-size:10px; font-weight:700; padding:0 6px; border-radius:8px; background:#dbeafe; color:#1e40af; margin-left:4px; }
+
   .fn-hist { grid-column:1 / -1; border-top:1px solid #eef2f7; padding-top:10px; min-width:0; }
   .fn-hh { display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:4px; }
   .fn-hh button.r { padding:2px 10px; border:1px solid var(--border); border-radius:14px; background:#fff; cursor:pointer; font:inherit; font-size:12px; color:var(--muted); }
   .fn-hh button.r.on { background:var(--text); color:#fff; border-color:var(--text); }
-  @media (max-width: 1100px) { .fn-body { grid-template-columns:1fr; } }
+  @media (max-width: 1250px) { .fn-body { grid-template-columns:1fr; } .fn-tiles { grid-template-columns:repeat(3, 1fr); } }
 </style>
 {% endblock %}
 {% block content %}
 {% macro t(v) %}{% if v is not none %}{{ "%.0f"|format(v) }}°{% else %}—{% endif %}{% endmacro %}
-{% macro flt(key, label, n, hot=false) %}<a class="f {{ 'on' if show==key }} {{ 'hot' if hot and n and show!=key }}" href="{{ url_for('admin.fans_page', show=key) if key != 'all' else url_for('admin.fans_page') }}">{{ label }} {{ n }}</a>{% endmacro %}
+{% macro link(show_=none, sort_=none) %}{{ url_for('admin.fans_page', show=(show_ if show_ is not none else show) if (show_ if show_ is not none else show) != 'all' else none, sort=(sort_ or sort) if (sort_ or sort) != 'property' else none, q=q or none) }}{% endmacro %}
+{# a running / down / off / not-reporting bar for any set of totals #}
+{% macro bar(x) %}{% set n = x.all_fans or 1 %}<div class="fn-bar2" title="{{ x.on }} running · {{ x.down }} down · {{ x.off }} off{% if x.dark_fans %} · {{ x.dark_fans }} not reporting{% endif %}"><span class="fn-on" style="width:{{ 100 * x.on / n }}%"></span><span class="fn-down" style="width:{{ 100 * x.down / n }}%"></span><span class="fn-off" style="width:{{ 100 * x.off / n }}%"></span><span class="fn-dark" style="width:{{ 100 * x.dark_fans / n }}%"></span></div>{% endmacro %}
+{# one plan band as a strip: hatched where the plan says nothing #}
+{% macro pstrip(b, hour) %}{% if b.bits %}{% for x in b.bits %}<span class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}"></span>{% endfor %}{% else %}{% for x in range(24) %}<span class="{{ 'now' if x == hour }}"></span>{% endfor %}{% endif %}{% endmacro %}
+{% macro strip(bits, hour) %}{% for b in bits %}<span class="{{ 'on' if b }} {{ 'now' if loop.index0 == hour }}"></span>{% endfor %}{% endmacro %}
+
 <h1>Exhaust fans</h1>
-<div class="fn-bar">
-  {{ flt('all', 'All', summary.total) }}
-  {{ flt('cold', 'Running in the cold', summary.cold, true) }}
-  {{ flt('blind', 'Cold schedule cannot engage', summary.blind) }}
-  {{ flt('fault', 'Fans down', summary.fault) }}
-  {{ flt('dark', 'Not reporting', summary.dark) }}
+
+<div class="fn-tiles">
+  <a class="fn-tile {{ 'sel' if show == 'all' }}" href="{{ link('all') }}">
+    <div class="l">Fans running</div>
+    <div class="n">{{ summary.on }} <small>of {{ summary.fans }} reporting</small></div>
+    {{ bar(summary) }}
+  </a>
+  <a class="fn-tile down {{ 'zero' if not summary.down }} {{ 'sel' if show == 'fault' }}" href="{{ link('fault') }}"><div class="l">Fans down</div><div class="n">{{ summary.down }} <small>in {{ summary.fault }} bldg{{ 's' if summary.fault != 1 }}</small></div></a>
+  <a class="fn-tile over {{ 'zero' if not summary.over }} {{ 'sel' if show == 'over' }}" href="{{ link('over') }}" title="Fans running in an hour the plan says off — heat going up the shaft"><div class="l">Running, plan says off</div><div class="n">{{ summary.over_fans }} <small>in {{ summary.over }} bldg{{ 's' if summary.over != 1 }}</small></div></a>
+  <a class="fn-tile under {{ 'zero' if not summary.under }} {{ 'sel' if show == 'under' }}" href="{{ link('under') }}" title="Fan groups commanded off in an hour the plan says on"><div class="l">Held off, plan says on</div><div class="n">{{ summary.under_fans }} <small>in {{ summary.under }} bldg{{ 's' if summary.under != 1 }}</small></div></a>
+  <a class="fn-tile blind {{ 'zero' if not summary.blind }} {{ 'sel' if show == 'blind' }}" href="{{ link('blind') }}"><div class="l">No outdoor reading</div><div class="n">{{ summary.blind }} <small>bldg{{ 's' if summary.blind != 1 }}</small></div></a>
+  <a class="fn-tile {{ 'zero' if not summary.dark }} {{ 'sel' if show == 'dark' }}" href="{{ link('dark') }}"><div class="l">Not reporting</div><div class="n">{{ summary.dark }} <small>bldg{{ 's' if summary.dark != 1 }}</small></div></a>
+  <div class="fn-tile"><div class="l">Outdoor now</div><div class="n">{% if summary.out_min is not none %}{{ t(summary.out_min) }}{% if summary.out_max != summary.out_min %}<small> to </small>{{ t(summary.out_max) }}{% endif %}{% else %}—{% endif %}</div></div>
+</div>
+
+<div class="fn-plan">
+  <h3>The plan · how the fans should run, by outdoor temperature</h3>
+  <div class="fn-pl">
+    <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
+    {% for b in plan %}
+    <span class="bl">{{ b.label }}</span>
+    <span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>
+    <span class="card-sub">{% if not b.bits %}not specified — buildings here are not judged{% elif b.hours_on == 24 %}on around the clock{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
+    <span class="cnt">{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }} now</span>
+    {% endfor %}
+  </div>
+  {% if summary.gaps %}<p class="card-sub" style="margin:8px 0 0;color:#92400e">Bloom's own schedules would not carry this plan out at <a href="{{ link('gaps') }}" style="color:inherit;font-weight:600">{{ summary.gaps }} of {{ summary.buildings }} buildings</a> — marked <b>≠</b> below; open a building to see what differs.</p>{% endif %}
+</div>
+
+<div class="fn-ctl">
+  <span class="card-sub">Arrange by</span>
+  <a class="f {{ 'on' if sort == 'property' }}" href="{{ link(sort_='property') }}">Property</a>
+  <a class="f {{ 'on' if sort == 'status' }}" href="{{ link(sort_='status') }}">Problems first</a>
+  {% if show != 'all' %}<a class="f" href="{{ link('all') }}">Clear filter ✕</a>{% endif %}
   <span class="grow"></span>
-  <form method="get" style="margin:0;"><input type="hidden" name="show" value="{{ show }}">
-    <input type="search" name="q" value="{{ q }}" placeholder="search building" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;">
+  <form method="get" style="margin:0;">{% if show != 'all' %}<input type="hidden" name="show" value="{{ show }}">{% endif %}{% if sort != 'property' %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+    <input type="search" name="q" value="{{ q }}" placeholder="search building or property" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;width:220px;">
   </form>
 </div>
-<p class="fn-note">
-  <b style="color:var(--text)">{{ summary.on }} of {{ summary.fans }}</b> fans running{% if summary.down %} · {{ summary.down }} down{% endif %}
-  · outdoor {% if summary.out_min is not none %}{{ t(summary.out_min) }}{% if summary.out_max != summary.out_min %}–{{ t(summary.out_max) }}{% endif %}{% else %}—{% endif %}
-  · "cold" is {{ "%.0f"|format(cold_f) }}° or below
-  · Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min. To change a schedule or stop a fan, open the building in Bloom.
-</p>
+<div class="fn-key">
+  <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
+  <span>·</span><span><i class="blue"></i>hours the plan runs the fans at that building's temperature</span><span><i class="grey"></i>hours it holds them off</span><span>outlined = this hour</span>
+  <span>· Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min</span>
+</div>
 
-{% if not rows %}
+{% if not groups %}
   <p class="fn-note">No buildings with exhaust fans{% if show != 'all' or q %} match this filter{% else %} yet — they appear after the next Bloom poll{% endif %}.</p>
 {% else %}
+{% for grp in groups %}
 <div class="fn-list">
-  <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span>Fans</span><span class="fn-num">Running</span><span title="The schedule the fan groups follow once it is colder than the setpoint">Cold schedule</span><span class="fn-num" title="Longest run time today among the fans">Run today</span><span class="fn-num" title="When the fan points were last heard from">Heard</span></div>
-  {% for r in rows %}
+  {% if grp.name %}
+  <div class="fn-prop">
+    <h2>{{ grp.name }}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
+    {{ bar(grp) }}
+    <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}</span>
+    <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
+  </div>
+  {% endif %}
+  <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span title="One square per fan, clustered by fan group">Fans</span><span class="fn-num">On</span>
+    <span class="fn-cs" title="The plan for the temperature at that building right now, and what it asks for this hour"><span>Plan</span><span class="fn-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span>now</span></span>
+    <span class="fn-num" title="Longest run time today among the fans">Run today</span><span class="fn-num" title="When the fan points were last heard from">Heard</span></div>
+  {% for r in grp.rows %}
   <details class="fn-row tone-{{ r.tone }}">
     <summary>
       <span class="fn-stripe"></span>
       <span class="fn-nm" title="{{ r.name }}">{{ r.name }}</span>
       <span class="fn-st" title="{{ r.flags|join(' · ') if r.flags else r.status }}">{{ r.status }}{% if r.flags|length > 1 %} <span class="card-sub">+{{ r.flags|length - 1 }}</span>{% endif %}</span>
       <span class="fn-num" {% if r.outdoor_stale %}title="Last outdoor reading {{ t(r.outdoor_last) }}, not updated since"{% endif %}>{{ t(r.outdoor) }}</span>
-      <span class="fn-dots">{% for g in r.groups %}{% for f in g.fans %}<span class="fn-dot {{ 'on' if f.on }} {{ 'fail' if f.fail }}" title="{{ f.name }}: {{ 'running' if f.on else ('DOWN' if f.fail else 'off') }}"></span>{% endfor %}{% endfor %}</span>
-      <span class="fn-num">{{ r.on }}/{{ r.total }}</span>
-      <span class="fn-cut {{ 'active' if r.cut_active }}">{% if r.cut %}<b>below {{ t(r.cut.sp) }}</b> {{ r.cut.ranges }} · {{ r.cut.hours_on }} h/day{% if r.cut_active %} · <b>ACTIVE</b>{% endif %}{% else %}none set{% endif %}</span>
+      <span class="fn-fans">{% for g in r.groups %}<span class="fn-g {{ 'stop' if g.cmd is sameas false }}" title="{{ g.name }}{% if g.cmd is not none %} — commanded {{ 'START' if g.cmd else 'STOP' }}{% endif %}">{% for f in g.fans %}<span class="fn-f fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}: {{ 'not reporting' if r.stale else ('running' if f.on else ('DOWN — off while commanded on' if f.fail else 'off')) }}">{{ f.num }}</span>{% endfor %}</span>{% endfor %}</span>
+      <span class="fn-num">{{ "—" if r.stale else r.on }}/{{ r.total }}</span>
+      {% if r.want %}{% set w = r.want %}
+      <span class="fn-cs" title="{{ t(r.outdoor) }} outside: the {{ w.band.label|lower }} plan — {{ w.band.ranges if w.band.bits else 'not specified' }}{% if r.gaps %}. Bloom differs: {{ r.gaps|join(' ') }}{% endif %}">
+        <b>{{ w.band.short }}</b>
+        <span class="fn-mini {{ 'na' if not w.band.bits }}">{{ pstrip(w.band, r.hour) }}</span>
+        <span>{% if w.on is none %}—{% else %}<span class="want {{ 'off' if not w.on }}">{{ 'ON' if w.on else 'OFF' }}</span>{% endif %}{% if r.gaps %}<span class="ne">≠</span>{% endif %}</span>
+      </span>
+      {% else %}<span class="fn-cs" title="No live outdoor reading, so the building cannot be placed in the plan{% if r.gaps %}. Bloom differs: {{ r.gaps|join(' ') }}{% endif %}"><b>—</b><span class="card-sub">no outdoor reading</span><span>{% if r.gaps %}<span class="ne">≠</span>{% endif %}</span></span>{% endif %}
       <span class="fn-num">{% if r.rt_max_h is not none %}{{ "%.1f"|format(r.rt_max_h) }} h{% elif r.rt_bad %}<span title="This building's run-time counters never reset">n/a</span>{% else %}—{% endif %}</span>
       <span class="fn-num">{{ r.heard }}</span>
     </summary>
     <div class="fn-body">
       <div>
-        <h3>Fans</h3>
+        <h3>Fans by group</h3>
+        <div class="fn-gcards">
         {% for g in r.groups %}
-        <div class="fn-grp">
+        <div class="fn-gcard {{ 'stop' if g.cmd is sameas false }}">
           <div class="gh">{{ g.name }}
             {% if g.cmd is not none %}<span class="fn-pill {{ 'cmd' if g.cmd }}">{{ 'START' if g.cmd else 'STOP' }}</span>{% endif %}
-            {% if g.sched %}<span class="card-sub">schedule {{ g.sched }}</span>{% endif %}
+            {% if g.sched %}<span class="card-sub" style="font-weight:400">follows schedule {{ g.sched }}</span>{% endif %}
           </div>
-          {% for f in g.fans %}
-          <div class="fn-fan"><span class="nm">{{ f.name }}</span>
-            {% if f.manual %}<span class="fn-pill warn" title="In hand / manual">MANUAL</span>{% endif %}
-            {% if f.flagged %}<span class="fn-pill warn" title="Bloom's run-fail flag is set although the fan is running">FLAGGED</span>{% endif %}
-            <span class="fn-pill {{ 'on' if f.on else ('fail' if f.fail) }}">{{ 'ON' if f.on else ('DOWN' if f.fail else 'OFF') }}</span>
-            <span class="fn-num card-sub" style="width:54px">{% if f.rt_h is not none %}{{ "%.1f"|format(f.rt_h) }} h{% elif f.rt_bad %}n/a{% else %}—{% endif %}</span>
+          <div class="fn-big">
+            {% for f in g.fans %}
+            <div class="fn-b fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}{% if f.manual %} · in manual{% endif %}{% if f.flagged %} · Bloom's run-fail flag is set although it is running{% endif %}">
+              <div class="no">{{ f.num }}</div>
+              <div class="st">{{ 'NO DATA' if r.stale else ('ON' if f.on else ('DOWN' if f.fail else 'OFF')) }}{% if f.manual %} · MAN{% endif %}{% if f.flagged %} ⚑{% endif %}</div>
+              <div class="rt">{% if f.rt_h is not none %}{{ "%.1f"|format(f.rt_h) }} h today{% elif f.rt_bad %}run time n/a{% else %}&nbsp;{% endif %}</div>
+            </div>
+            {% endfor %}
           </div>
-          {% endfor %}
         </div>
         {% endfor %}
-        {% for m in r.flags %}<div class="card-sub" style="margin-top:2px">• {{ m }}</div>{% endfor %}
-        <div style="margin-top:8px"><a href="{{ r.url }}" target="_blank" rel="noopener">Open schedules in Bloom ↗</a> <span class="card-sub">· {{ r.account }}</span></div>
+        </div>
+        {% for m in r.flags %}<div class="card-sub" style="margin-top:6px">• {{ m }}</div>{% endfor %}
+        <div style="margin-top:8px"><a href="{{ r.url }}" target="_blank" rel="noopener">Open schedules in Bloom ↗</a> <span class="card-sub">· {{ r.account }}{% if r.prop %} · {{ r.prop }}{% endif %}</span></div>
       </div>
       <div>
-        <h3>Schedules · blue = fans on, outlined = this hour</h3>
-        <div class="fn-sch"><span></span>{% for h in range(24) %}<span class="h">{{ h if h % 3 == 0 else '' }}</span>{% endfor %}<span></span></div>
-        {% set used = r.groups|map(attribute='sched')|list %}
-        {% for s in r.schedules %}
-        <div class="fn-sch {{ 'used' if s.n in used }}">
-          <span class="n" title="{{ 'In use by a fan group' if s.n in used else 'Not assigned to any group' }}">S{{ s.n }}{{ '•' if s.n in used }}</span>
-          {% for b in s.bits %}<span class="c {{ 'on' if b }} {{ 'now' if loop.index0 == r.hour }}"></span>{% endfor %}
-          <span class="lbl">{% if s.sp_on %}below {{ t(s.sp) }}{% else %}always{% endif %} · {{ s.hours_on }} h</span>
+        <h3>The plan right now</h3>
+        {% if r.stale %}<div class="fn-banner">Not reporting, so this building cannot be checked against the plan.</div>
+        {% elif not r.want %}<div class="fn-banner blind">No live outdoor reading, so this building cannot be placed in the plan.</div>
+        {% else %}{% set w = r.want %}
+        <div class="fn-banner {{ 'over' if r.over else ('under' if r.under else ('fine' if w.on is not none else '')) }}">{{ t(r.outdoor) }} outside — the {{ w.band.label|lower }} plan{% if w.on is none %} says nothing here, so nothing is judged.{% else %}: fans should be <b>{{ 'ON' if w.on else 'OFF' }}</b>{% if w.until %} until {{ w.until }}{% endif %}. {% if r.over %}{{ r.over }} {{ 'is' if r.over == 1 else 'are' }} running.{% elif r.under %}{{ r.under }} {{ 'is' if r.under == 1 else 'are' }} held off by command.{% elif w.settling %}The plan just changed; giving the building ten minutes to follow.{% else %}That is what they are doing.{% endif %}{% endif %}</div>
+        <div class="fn-pl" style="grid-template-columns:96px minmax(0, 1fr) auto;margin-bottom:14px">
+          {% for b in plan %}
+          <span class="bl {{ 'cur' if b.key == w.band.key }}" style="font-size:12px">{{ b.label }}</span>
+          <span class="strip {{ 'na' if not b.bits }}" style="{{ '' if b.key == w.band.key else 'opacity:.4' }}">{{ pstrip(b, r.hour) }}</span>
+          <span class="card-sub" style="{{ '' if b.key == w.band.key else 'opacity:.55' }}">{% if not b.bits %}not specified{% elif b.hours_on == 24 %}always on{% else %}{{ b.hours_on }} h a day{% endif %}</span>
+          {% endfor %}
         </div>
-        {% endfor %}
-        <p class="card-sub" style="margin:6px 0 0">A schedule marked "below N°" only applies once it is colder than N° outside; above that the fans have been seen running around the clock.</p>
+        {% endif %}
+        <h3>What Bloom is set to do</h3>
+        <div class="fn-banner {{ r.banner_tone }}">{{ 'Not reporting — this is the last schedule Bloom had. ' if r.stale }}{{ r.banner }}</div>
+        <div class="fn-tl">
+          <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span>
+          {% for s in r.schedules %}
+          <span class="sn {{ 'idle' if not s.used_by }}">S{{ s.n }}</span>
+          <span class="strip {{ 'idle' if not s.used_by }}">{{ strip(s.bits, r.hour) }}</span>
+          <span class="lbl {{ 'idle' if not s.used_by }}" title="{{ 'below ' ~ t(s.sp) if s.sp_on else 'always' }} · {{ s.ranges }} · {{ s.hours_on }} h a day">{% if s.sp_on %}<b>below {{ t(s.sp) }}</b>{% else %}always{% endif %} · {{ s.ranges }} · {{ s.hours_on }} h{% if s.used_by|length > 1 and s.used_by|length == r.groups|length %}<span class="fn-use">all groups</span>{% else %}{% for u in s.used_by %}<span class="fn-use">{{ u }}</span>{% endfor %}{% endif %}</span>
+          {% endfor %}
+        </div>
+        {% if r.gaps %}<ul class="fn-gaps">{% for x in r.gaps %}<li>{{ x }}</li>{% endfor %}</ul>{% endif %}
+        <p class="card-sub" style="margin:8px 0 0">Blue = hours that schedule runs the fans; the outlined hour is now. A tag like <span class="fn-use" style="margin:0">G1</span> marks the fan groups following a schedule; faded schedules are not in use. A "below N°" schedule only applies once it is colder than N° outside.</p>
       </div>
       <div class="fn-hist" data-site="{{ r.id }}">
         <div class="fn-hh"><h3 style="margin:0">History</h3>
@@ -146,6 +284,7 @@
   </details>
   {% endfor %}
 </div>
+{% endfor %}
 {# ?v= gives the edited charts.js (EchoCharts.strips) its own cache entry. #}
 <script src="{{ url_for('static', filename='js/charts.js') }}?v=strips1"></script>
 <script>
