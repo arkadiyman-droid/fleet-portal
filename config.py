@@ -98,6 +98,11 @@ class Config:
         self.FAN_PLAN_MILD_FROM_F = float(os.environ.get("FAN_PLAN_MILD_FROM_F", "36"))
         self.FAN_PLAN_FREE_FROM_F = float(os.environ.get("FAN_PLAN_FREE_FROM_F", "56"))
         self.FAN_PLAN_HYST_F = float(os.environ.get("FAN_PLAN_HYST_F", "2"))
+        # Master switch for the portal re-pointing fan groups between Bloom
+        # schedule slots by itself (bloom_fans.auto_switch). Even when true it
+        # acts only on a property a person has turned on at /fans/property;
+        # FAN_AUTO_ENABLED=0 stops every automatic write without touching those.
+        self.FAN_AUTO_ENABLED = os.environ.get("FAN_AUTO_ENABLED", "1").strip().lower() not in ("0", "false", "no", "off")
 
         # Reliable Controls MACH-ProWeb DHW scrape (app/rc_dhw.py) — a headless
         # Chromium reads the DHW System A/B graphics. Credentials live per

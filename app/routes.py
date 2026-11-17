@@ -1553,7 +1553,10 @@ def fans_page():
         rows.append(s)
     pg = bloom_fans.page(rows, show=request.args.get("show", "all"), q=request.args.get("q", ""),
                          sort=request.args.get("sort", "property"))
+    from app.models import BloomFanAuto
+    auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
+                           auto_props=auto_props, unfiled=bloom_fans.UNFILED,
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
 
@@ -1575,6 +1578,176 @@ def _fans_live_building(site):
         if str(bloom.asset_key(b)) == site.asset_key:
             return b, sess, tok2
     return None, sess, tok2
+
+
+def _fans_property_sites(name):
+    """The fan sites filed under one property — by the same name matching the
+    Fans page and the poller use (bloom_fans.place) — in street order."""
+    from sqlalchemy.orm import joinedload
+    from app import bloom_fans
+    from app.models import BloomFanSite
+    index = bloom_fans.building_index(
+        (b.name, b.property.name) for b in Building.query.options(joinedload(Building.property)).all() if b.property)
+    sites = [s for s in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all()
+             if s.account and s.account.is_active and bloom_fans.place(index, s.name, s.asset_key) == name]
+    return sorted(sites, key=lambda s: bloom_fans._natural(s.name))
+
+
+def _fans_live_accounts(sites):
+    """One fresh /api/assets read per Bloom login these sites use:
+    {account id: {"by": {locid: full building object}, "sess", "tok"}}."""
+    import requests
+    from app import bloom
+    out = {}
+    for acct in {s.account.id: s.account for s in sites}.values():
+        sess = requests.Session()
+        tok = acct.token or bloom.login(acct, sess)
+        data, tok2 = bloom.fetch_json(acct, sess, tok, "/api/assets",
+                                      current_app.config.get("BLOOM_POLL_TIMEOUT_SECONDS", 20))
+        if tok2 and tok2 != acct.token:
+            acct.token, acct.token_at = tok2, datetime.utcnow()
+            db.session.commit()
+        out[acct.id] = {"by": {str(bloom.asset_key(b)): b for b in bloom.buildings(data)}, "sess": sess, "tok": tok2}
+    return out
+
+
+@admin_bp.route("/fans/property", methods=["GET", "POST"])
+def fans_property():
+    """Fan schedules for a whole property, in the order they are done: load the
+    plan's three schedules into every building's slots 3-5, point the fan
+    groups at the slot for the property's temperature, and switch on the
+    portal doing that second step by itself. Plus the way back (every group to
+    Schedule 1). Every step that writes shows what will change first, is sent
+    only if that is still the change, and is logged per building."""
+    if not is_superuser():
+        abort(403)
+    import time as _time
+    from app import bloom, bloom_fans, legacy
+    from app.models import BloomFanAuto, BloomFanWrite
+    name = (request.values.get("name") or "").strip()
+    sites = _fans_property_sites(name) if name else []
+    if not sites:
+        abort(404)
+    cfg = current_app.config
+    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+
+    def local(ts):
+        return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
+
+    # The property's place in the plan is the poller's — one shared temperature,
+    # hysteresis carried from poll to poll — so this page and the automatic
+    # switching can never disagree about which slot is the target.
+    portal = next((p for p in ((s.data or {}).get("portal") or {} for s in sites) if p.get("band")), {})
+    band = next((b for b in pl if b["key"] == portal.get("band")), None)
+    target = bloom_fans.PLAN_SLOTS[band["key"]] if band else None
+    STEP = {"load": "push", "switch": "switch", "restore": "restore"}
+
+    def build(accts):
+        now = datetime.utcnow()
+        rows = []
+        for s in sites:
+            b = accts[s.account.id]["by"].get(s.asset_key)
+            if b is None:
+                rows.append({"site": s, "live": False, "stale": True, "push": None, "switch": None, "restore": None})
+                continue
+            sm = bloom_fans.summary(bloom_fans.trim(b), now=now)
+            rows.append({"site": s, "live": True, "stale": sm["stale"], "on": sm["on"], "total": sm["total"],
+                         "hand": sm.get("hand") or 0,
+                         "push": bloom_fans.plan_push(b, pl),
+                         "switch": bloom_fans.plan_assign(b, pl, target_key=band["key"]) if band else None,
+                         "restore": bloom_fans.plan_assign(b, pl, slot=1)})
+        act = {}
+        for k, part in STEP.items():
+            todo = [r for r in rows if r["live"] and not r["stale"] and r[part] and r[part]["points"]]
+            act[k] = {"todo": todo, "n": len(todo), "changes": sum(r[part]["n_changes"] for r in todo),
+                      "digest": bloom_fans.combined_digest(f"{r['site'].id}:{r[part]['digest']}" for r in todo)}
+        return rows, act
+
+    error = result = None
+    rows, act = [], {k: {"todo": [], "n": 0, "changes": 0, "digest": ""} for k in STEP}
+    accts = {}
+    try:
+        accts = _fans_live_accounts(sites)
+        rows, act = build(accts)
+    except Exception as e:
+        db.session.rollback()
+        error = str(e)[:300]
+
+    action = request.form.get("action", "") if request.method == "POST" else ""
+    note = (request.form.get("note") or "").strip()[:500]
+
+    def set_auto(on):
+        row = db.session.get(BloomFanAuto, name) or BloomFanAuto(prop=name)
+        row.enabled, row.by, row.at = on, _who(), datetime.utcnow()
+        db.session.add(row)
+        db.session.commit()
+
+    if action in ("auto_on", "auto_off"):
+        set_auto(action == "auto_on")
+        result = {"state": "auto", "on": action == "auto_on"}
+    elif action in STEP and not error:
+        a, part = act[action], STEP[action]
+        if not a["n"]:
+            result = {"state": "nothing"}
+        elif request.form.get("digest", "") != a["digest"]:
+            result = {"state": "changed"}
+        elif not note:
+            result = {"state": "note"}
+        else:
+            if action == "restore":
+                set_auto(False)          # or the portal would switch them straight back
+            written, failed = [], []
+            for r in a["todo"]:
+                site, acct = r["site"], accts[r["site"].account.id]
+                w = BloomFanWrite(site_id=site.id, by=_who(), note=note, changes=r[part]["log"], ok=False)
+                try:
+                    data, acct["tok"] = bloom.put_points(site.account, acct["sess"], acct["tok"], site.asset_key,
+                                                         r[part]["points"], note)
+                    w.ok, w.detail = bloom_fans.reply_summary(data)
+                except Exception as e:
+                    db.session.rollback()
+                    w.detail = str(e)[:500]
+                if not w.ok:
+                    failed.append((site.name, bloom_fans.tidy_detail(w.detail) or "no reply"))
+                db.session.add(w)
+                db.session.commit()
+                written.append(w)
+            landed = 0
+            try:                                     # read everything back: did the values land?
+                _time.sleep(3)
+                accts = _fans_live_accounts(sites)
+                rows, act = build(accts)
+                after = {r["site"].id: r for r in rows}
+                for w in written:
+                    r = after.get(w.site_id)
+                    if not w.ok or r is None or not r["live"]:
+                        continue
+                    w.landed = (not r[part]["blocked"]) and r[part]["n_changes"] == 0
+                    landed += bool(w.landed)
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+            result = {"state": "sent", "action": action, "n": len(written), "landed": landed,
+                      "ok": sum(1 for w in written if w.ok), "failed": failed}
+
+    auto = db.session.get(BloomFanAuto, name)
+    out = portal.get("out")
+    notes = {"load": f"Fleet portal: load the plan's schedules into slots 3-5 at {name}",
+             "switch": (f"Fleet portal: {name} at {out:.0f}° — fan groups to the '{band['label']}' schedule (slot {target})"
+                        if band and out is not None else ""),
+             "restore": f"Fleet portal: {name} fan groups back to Schedule 1"}
+    by_id = {s.id: s.name for s in sites}
+    log = [{"when": local(w.at), "site": by_id.get(w.site_id, "?"), "by": w.by, "ok": w.ok, "landed": w.landed,
+            "detail": bloom_fans.tidy_detail(w.detail), "summary": bloom_fans.write_summary(w.changes), "note": w.note}
+           for w in (BloomFanWrite.query.filter(BloomFanWrite.site_id.in_(list(by_id)))
+                     .order_by(BloomFanWrite.at.desc()).limit(60).all())]
+    return render_template("fans_property.html", title=f"{name} — fan schedules", name=name, rows=rows, act=act,
+                           error=error, result=result, band=band, target=target, out=out,
+                           n_sensors=portal.get("n") or 0, notes=notes, log=log,
+                           auto_on=bool(auto and auto.enabled), auto_by=auto.by if auto else None,
+                           auto_at=local(auto.at) if auto else None,
+                           auto_master=bool(cfg.get("FAN_AUTO_ENABLED", True)),
+                           read_at=local(datetime.utcnow()))
 
 
 @admin_bp.route("/fans/<int:site_id>/push", methods=["GET", "POST"])
@@ -1640,11 +1813,7 @@ def fans_push(site_id):
     log = []
     for w in (BloomFanWrite.query.filter_by(site_id=site.id).order_by(BloomFanWrite.at.desc()).limit(15).all()):
         ch = w.changes or []
-        hours = [c for c in ch if c.get("type") == "gen-sched"]
-        slots = sorted({str(c.get("name", "")).split("::")[0] for c in hours})
-        other = len(ch) - len(hours)
-        summary = (f"{len(hours)} hour{'s' if len(hours) != 1 else ''} in slot{'s' if len(slots) != 1 else ''} "
-                   f"{', '.join(slots)}" if hours else "") + (f"{' + ' if hours else ''}{other} other" if other else "")
+        summary = bloom_fans.write_summary(ch)
         log.append({"when": local(w.at), "by": w.by, "ok": w.ok, "landed": w.landed,
                     "detail": bloom_fans.tidy_detail(w.detail),
                     "n": len(ch), "summary": summary, "note": w.note})

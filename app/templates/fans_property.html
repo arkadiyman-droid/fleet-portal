@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — fan schedules — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .pp-top { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; margin:0 0 4px; }
+  .pp-top h1 { margin:0; }
+  .pp-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:1050px; }
+  .pp-now { border-radius:8px; padding:10px 14px; font-size:15px; margin:0 0 14px; background:#eff6ff; border-left:4px solid #1d4ed8; color:#1e3a8a; }
+  .pp-banner { border-radius:8px; padding:10px 14px; font-size:14px; margin:0 0 14px; border-left:4px solid #9ca3af; background:#f1f5f9; }
+  .pp-banner.ok { background:#f0fdf4; border-left-color:#16a34a; color:#14532d; }
+  .pp-banner.bad { background:#fef2f2; border-left-color:#dc2626; color:#7f1d1d; }
+  .pp-banner.warn { background:#fffbeb; border-left-color:#f59e0b; color:#92400e; }
+  .pp-card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
+  .pp-card h2 { font-size:15px; margin:0 0 4px; }
+  .pp-card .sub { font-size:13px; color:var(--muted); margin:0 0 10px; max-width:1000px; }
+  .pp-card table { border-collapse:collapse; font-size:13px; width:100%; margin:0 0 10px; }
+  .pp-card th { text-align:left; font-size:11px; padding:4px 12px 4px 0; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .pp-card td { padding:5px 12px 5px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  .pp-pill { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; background:#e5e7eb; color:#374151; white-space:nowrap; }
+  .pp-pill.ok { background:#dcfce7; color:#166534; } .pp-pill.bad { background:#fee2e2; color:#b91c1c; }
+  .pp-pill.warn { background:#fef3c7; color:#92400e; } .pp-pill.blue { background:#dbeafe; color:#1e40af; }
+  .pp-form textarea { width:min(640px, 100%); min-height:44px; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; display:block; margin:0 0 8px; }
+  .pp-go { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:9px 16px; font:inherit; font-weight:700; cursor:pointer; }
+  .pp-go:hover { background:#1e40af; }
+  .pp-go.plain { background:#fff; color:var(--text); border:1px solid var(--border); font-weight:600; }
+  .pp-go.red { background:#b91c1c; } .pp-go.red:hover { background:#991b1b; }
+  .pp-go.green { background:#15803d; } .pp-go.green:hover { background:#166534; }
+  .arrow { color:var(--muted); }
+  .chg { font-weight:700; color:#1d4ed8; }
+</style>
+{% endblock %}
+{% block content %}
+{% macro t(v) %}{% if v is not none %}{{ "%.0f"|format(v) }}°{% else %}—{% endif %}{% endmacro %}
+{% macro sendform(action, digest, note, label, cls='') %}
+<form method="post" class="pp-form">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="name" value="{{ name }}">
+  <input type="hidden" name="action" value="{{ action }}">
+  <input type="hidden" name="digest" value="{{ digest }}">
+  <textarea name="note" required aria-label="Reason">{{ note }}</textarea>
+  <button class="pp-go {{ cls }}" type="submit">{{ label }}</button>
+</form>
+{% endmacro %}
+<div class="pp-top">
+  <a href="{{ url_for('admin.fans_page') }}">← Fans</a>
+  <h1>{{ name }}</h1>
+  <span class="card-sub">fan schedules and switching · {{ rows|length }} building{{ 's' if rows|length != 1 }}</span>
+</div>
+
+{% if error %}
+  <div class="pp-banner bad">Could not read this property from Bloom just now, so nothing can be shown or sent: {{ error }}</div>
+{% else %}
+
+{% if result %}
+  {% if result.state == 'sent' %}
+    <div class="pp-banner {{ 'ok' if result.ok == result.n and result.landed == result.n else 'warn' }}">
+      <b>{{ {'load': 'Schedules sent', 'switch': 'Fan groups switched', 'restore': 'Fan groups put back on Schedule 1'}[result.action] }}.</b>
+      Bloom accepted the change at {{ result.ok }} of {{ result.n }} building{{ 's' if result.n != 1 }};
+      reading them back shows it in place at {{ result.landed }}.
+      {% if result.failed %}Not accepted: {% for nm, why in result.failed %}{{ nm }} ({{ why }}){{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+      {% if result.ok and result.landed < result.ok %}Anything still listed below has not landed yet — reload in a minute.{% endif %}
+    </div>
+  {% elif result.state == 'changed' %}
+    <div class="pp-banner warn"><b>Nothing was sent.</b> Bloom's values changed between the preview and your confirmation. Check the fresh numbers below and confirm again.</div>
+  {% elif result.state == 'note' %}
+    <div class="pp-banner warn"><b>Nothing was sent.</b> A reason is required — Bloom records it with the change.</div>
+  {% elif result.state == 'nothing' %}
+    <div class="pp-banner">Nothing to send for that step — it is already in place.</div>
+  {% elif result.state == 'auto' %}
+    <div class="pp-banner {{ 'ok' if result.on else '' }}"><b>Automatic switching is now {{ 'ON' if result.on else 'OFF' }} for {{ name }}.</b> {% if result.on %}From the next reading (within a minute) the portal will keep this property's fan groups on the slot that matches its temperature.{% else %}The portal will only watch; fan groups stay on the slot they are on now.{% endif %}</div>
+  {% endif %}
+{% endif %}
+
+<div class="pp-now">
+  {% if band %}<b>{{ t(out) }}</b> outside (middle reading of {{ n_sensors }} sensor{{ 's' if n_sensors != 1 }}) → the <b>{{ band.label }}</b> schedule, which is <b>slot {{ target }}</b>: {{ band.ranges }}.
+  {% else %}No live outdoor reading on this property, so the portal cannot say which schedule applies and will not switch anything.{% endif %}
+  Read live from Bloom at {{ read_at }}.
+</div>
+
+<div class="pp-card">
+  <h2>Step 1 · Load the plan's three schedules</h2>
+  <p class="sub">Puts the plan's hours into slots 3 (35° and below), 4 (36–55°) and 5 (56° and above) at every building. It does not move any fan group, so on its own it changes nothing about how fans run.</p>
+  <table>
+    <tr><th>Building</th><th>Slots 3 · 4 · 5</th><th>To send</th></tr>
+    {% for r in rows %}
+    <tr><td>{{ r.site.name }}</td>
+      {% if not r.live %}<td colspan="2"><span class="pp-pill bad">not in Bloom's feed</span></td>
+      {% else %}
+      <td>{% for s in r.push.slots %}<span class="pp-pill {{ 'ok' if s.holds else ('bad' if s.blocked else 'warn') }}" title="{{ s.now_ranges }}">slot {{ s.n }} {{ 'ready' if s.holds else ('blocked' if s.blocked else 'needs loading') }}</span> {% endfor %}</td>
+      <td>{% if r.stale %}<span class="pp-pill">not reporting</span> <span class="card-sub">skipped until its controller reports again</span>{% elif r.push.blocked %}<span class="pp-pill bad">skipped</span> <span class="card-sub">{% for s in r.push.slots if s.blocked %}slot {{ s.n }}: {{ s.blocked }}{{ '; ' if not loop.last }}{% endfor %}</span>{% elif r.push.n_changes %}{{ r.push.n_changes }} change{{ 's' if r.push.n_changes != 1 }}{% else %}<span class="card-sub">nothing — already loaded</span>{% endif %}</td>
+      {% endif %}</tr>
+    {% endfor %}
+  </table>
+  {% if act.load.n %}
+    {{ sendform('load', act.load.digest, notes.load, 'Send ' ~ act.load.changes ~ ' changes to Bloom for ' ~ act.load.n ~ ' building' ~ ('s' if act.load.n != 1 else '')) }}
+  {% else %}<p class="card-sub" style="margin:0">Nothing to send — every building that can be loaded already holds the plan.</p>{% endif %}
+</div>
+
+<div class="pp-card">
+  <h2>Step 2 · Point the fan groups at the right schedule</h2>
+  <p class="sub">This is the step that changes how the fans run. {% if band %}At {{ t(out) }} the plan is slot {{ target }} ({{ band.ranges }}), so every fan group listed as changing will start following those hours as soon as its controller takes the change.{% else %}With no outdoor reading there is no target slot, so there is nothing to switch.{% endif %} A building whose slots are not loaded yet is skipped.</p>
+  <table>
+    <tr><th>Building</th><th>Fan groups: slot now → slot after</th><th>Fans</th><th></th></tr>
+    {% for r in rows %}
+    <tr><td>{{ r.site.name }}</td>
+      {% if not r.live %}<td colspan="3"><span class="pp-pill bad">not in Bloom's feed</span></td>
+      {% else %}{% set a = r.switch or r.restore %}
+      <td>{% for g in a.rows %}<span style="white-space:nowrap">{{ g.name|replace('Exhaust Fan ', '') }}: {{ g.now if g.now is not none else '?' }}{% if r.switch and g.change %} <span class="arrow">→</span> <span class="chg">{{ g.to }}</span>{% endif %}</span>{{ ' · ' if not loop.last }}{% endfor %}</td>
+      <td>{{ '—' if r.stale else r.on }}/{{ r.total }}{% if r.hand %} <span class="pp-pill warn" title="Running while commanded off — check the switch at the fan">{{ r.hand }} ignoring stop</span>{% endif %}</td>
+      <td>{% if r.stale %}<span class="pp-pill">not reporting</span>{% elif r.switch and r.switch.blocked %}<span class="pp-pill warn">skipped</span> <span class="card-sub">{{ r.switch.blocked }}</span>{% elif r.switch and r.switch.n_changes %}<span class="pp-pill blue">{{ r.switch.n_changes }} group{{ 's' if r.switch.n_changes != 1 }} will change</span>{% elif r.switch %}<span class="pp-pill ok">already on slot {{ target }}</span>{% endif %}</td>
+      {% endif %}</tr>
+    {% endfor %}
+  </table>
+  {% if act.switch.n %}
+    {{ sendform('switch', act.switch.digest, notes.switch, 'Switch ' ~ act.switch.changes ~ ' fan group' ~ ('s' if act.switch.changes != 1 else '') ~ ' at ' ~ act.switch.n ~ ' building' ~ ('s' if act.switch.n != 1 else '') ~ ' to slot ' ~ target) }}
+  {% elif band and act.load.n %}<p class="card-sub" style="margin:0">Nothing can be switched yet — do step 1 first; a fan group is never pointed at a slot that does not hold the plan's hours.</p>
+  {% elif band %}<p class="card-sub" style="margin:0">Nothing to switch — every loaded building's fan groups are already on slot {{ target }}.</p>{% endif %}
+</div>
+
+<div class="pp-card">
+  <h2>Step 3 · Automatic switching {% if auto_on %}<span class="pp-pill ok">ON</span>{% else %}<span class="pp-pill">OFF</span>{% endif %}</h2>
+  <p class="sub">When on, the portal does step 2 by itself, once a minute: whenever this property's temperature moves into another band (with the 2° hysteresis), it points the fan groups at that band's slot and logs it below as "automatic". It never changes a schedule's hours, skips any building that is not loaded or not reporting, and does nothing while there is no live outdoor reading. If the portal or Bloom is unreachable, fan groups simply stay on the slot they are on.{% if auto_on and auto_by %} Turned on by {{ auto_by }}, {{ auto_at }}.{% endif %}</p>
+  {% if not auto_master %}<div class="pp-banner warn">Automatic switching is turned off for the whole portal in its configuration (FAN_AUTO_ENABLED), so nothing is switched automatically whatever this is set to.</div>{% endif %}
+  <form method="post" style="margin:0">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="name" value="{{ name }}">
+    {% if auto_on %}<input type="hidden" name="action" value="auto_off"><button class="pp-go plain" type="submit">Turn automatic switching OFF for {{ name }}</button>
+    {% else %}<input type="hidden" name="action" value="auto_on"><button class="pp-go green" type="submit">Turn automatic switching ON for {{ name }}</button>{% endif %}
+  </form>
+</div>
+
+<div class="pp-card">
+  <h2>Undo · Put every fan group back on Schedule 1</h2>
+  <p class="sub">Schedule 1 is where every group was before the portal touched anything: the fans run all day at 35° or warmer and follow Bloom's own cold hours below that. This does not remove the loaded schedules. It also turns automatic switching off for this property, so the portal does not switch them straight back.</p>
+  {% if act.restore.n %}
+    {{ sendform('restore', act.restore.digest, notes.restore, 'Put ' ~ act.restore.changes ~ ' fan group' ~ ('s' if act.restore.changes != 1 else '') ~ ' back on Schedule 1', 'red') }}
+  {% else %}<p class="card-sub" style="margin:0">Nothing to undo — every fan group here is on Schedule 1.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="pp-card">
+  <h2>Changes the portal has sent to this property</h2>
+  {% if not log %}<p class="card-sub" style="margin:0">None yet.</p>{% else %}
+  <table>
+    <tr><th>When</th><th>Building</th><th>By</th><th>Result</th><th>Change</th><th>Reason</th></tr>
+    {% for w in log %}
+    <tr><td style="white-space:nowrap">{{ w.when }}</td><td>{{ w.site }}</td><td>{{ w.by or '—' }}</td>
+      <td>{% if not w.ok %}<span class="pp-pill bad">refused</span>{% elif w.landed %}<span class="pp-pill ok">sent · confirmed</span>{% else %}<span class="pp-pill warn">sent · unconfirmed</span>{% endif %}{% if w.detail %}<div class="card-sub">{{ w.detail }}</div>{% endif %}</td>
+      <td>{{ w.summary }}</td><td>{{ w.note }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

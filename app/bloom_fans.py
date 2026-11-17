@@ -265,6 +265,15 @@ def plan_gaps(pl, groups, scheds) -> list:
     upper temperature with the same hours."""
     used = {g["sched"] for g in groups if g["sched"] in scheds}
     armed = [scheds[n] for n in sorted(used) if scheds[n]["sp_on"] and scheds[n]["sp"] is not None]
+
+    # The portal's way of carrying the plan out: slots 3, 4 and 5 hold the
+    # plan's hours with no outdoor gate, every group follows one of them, and
+    # the portal moves the groups between them as the temperature changes.
+    def holds(b):
+        s = scheds.get(PLAN_SLOTS[b["key"]])
+        return bool(s) and s["bits"] == b["bits"] and not (s["sp_on"] and s["sp"] is not None)
+    if used and used <= set(PLAN_SLOTS.values()) and all(holds(b) for b in pl):
+        return []
     out, matched = [], set()
     for b in pl:
         if b["hi"] is None:
@@ -282,6 +291,11 @@ def plan_gaps(pl, groups, scheds) -> list:
     for s in armed:
         if s["n"] not in matched:
             out.append(f"Bloom has a schedule below {s['sp']:.0f}° ({s['ranges']}) that is not in the plan.")
+    for n in sorted(used):                           # a schedule with no outdoor gate holds at every temperature
+        s = scheds[n]
+        if not (s["sp_on"] and s["sp"] is not None):
+            out.append(f"Fan groups follow schedule {n} at every temperature ({s['ranges'] or 'never on'}) — "
+                       f"the plan changes with the temperature.")
     return out
 
 
@@ -378,9 +392,14 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
         # sits latched on a handful of fans that are running; those are shown
         # as "flagged", not counted as down.
         fail = (not on) and (cmd is True or (cmd is None and flag))
-        return {"key": key, "name": names.get(key) or key, "on": on,
+        # Running while its group is commanded OFF: the fan is not obeying the
+        # controller — in practice its switch at the fan is in hand. First
+        # seen 2026-11-16 at 1760 Park pl, the first time any group was ever
+        # commanded off; no schedule will stop such a fan.
+        hand = on and cmd is False
+        return {"key": key, "name": names.get(key) or key, "on": on, "hand": hand,
                 "num": _short(names.get(key) or str(key).replace("-", " "), 0),
-                "state": "on" if on else ("down" if fail else "off"),
+                "state": "hand" if hand else ("on" if on else ("down" if fail else "off")),
                 "fail": fail, "flagged": on and flag,
                 "manual": _on(v.get("fan-run-manual")),
                 "rt_h": None if (rt is None or rt_bad) else rt / 3600.0, "rt_bad": rt_bad}
@@ -405,6 +424,7 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     fans = [f for g in groups for f in g["fans"]]
     total, on = len(fans), sum(f["on"] for f in fans)
     fail = sum(f["fail"] for f in fans)
+    hand_n = sum(f["hand"] for f in fans)
     rts = ([f["rt_h"] for f in fans if f["on"] and f["rt_h"] is not None]
            or [f["rt_h"] for f in fans if f["rt_h"] is not None and not any(x["rt_bad"] for x in fans)])
 
@@ -440,7 +460,8 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
         if want["on"] is False:
             over = on
         else:
-            under = sum(len(g["fans"]) for g in groups if g["cmd"] is False)
+            # held off = not running in a group commanded off (one running anyway is "ignoring stop")
+            under = sum(1 for g in groups if g["cmd"] is False for f in g["fans"] if not f["on"])
 
     flags = []
     if stale:
@@ -458,7 +479,10 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
             if cut_active and hour is not None:       # what the cold schedule itself says for this hour
                 said = " — scheduled on this hour" if cut["bits"][hour % 24] else " — schedule says off"
             flags.append(("cold", f"{on} fan{'s' if on != 1 else ''} running at {outdoor:.0f}° outside{said}"))
-        if outdoor is None and armed:
+        if hand_n:
+            flags.append(("fault", f"{hand_n} fan{'s' if hand_n != 1 else ''} running while commanded off — "
+                                   f"check {'its' if hand_n == 1 else 'their'} switch at the fan"))
+        if outdoor is None and armed and any(g["sched"] == cut["n"] for g in groups):
             why = (f"outdoor reading is {age_words(out_age)} old" if out_stale else "no outdoor reading")
             flags.append(("blind", f"Cold schedule cannot engage — {why}"))
         if fail:
@@ -484,7 +508,21 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     if cut and hour is not None:
         on_now, nxt = until(cut["bits"], hour)
         sched_now = {"on": on_now, "until": nxt}
-    if not cut:
+    # Groups that have fans, and the schedules they follow that have NO outdoor
+    # gate. Such a schedule's hours hold at every temperature — proved at 1760
+    # Park pl on 2026-11-16 — which is how the plan's slots 3-5 work.
+    real = [g for g in groups if g["key"] and g["fans"]] or [g for g in groups if g["key"]]
+
+    def gated(s):
+        return bool(s["sp_on"] and s["sp"] is not None)
+    always = sorted({g["sched"] for g in real if g["sched"] in scheds and not gated(scheds[g["sched"]])})
+    if not cut and len(always) == 1:
+        s1 = scheds[always[0]]
+        banner = ("active", f"The fans follow schedule {s1['n']} at every temperature: {s1['ranges'] or 'never on'}.")
+    elif not cut and always:
+        banner = ("active", f"The fan groups follow schedules {' and '.join(str(n) for n in always)}, "
+                            f"each at every temperature.")
+    elif not cut:
         banner = ("none", "No cold schedule is assigned to these fans.")
     elif outdoor is None:
         banner = ("blind", f"No live outdoor reading, so the cold schedule (below {cut['sp']:.0f}°) cannot engage.")
@@ -501,16 +539,42 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     # cold schedule's hours while that is active, otherwise every hour — above
     # its setpoint (or with no outdoor reading of its own) Bloom has been seen
     # running the fans around the clock.
-    bloom_now = {"bits": cut["bits"] if cut_active else [1] * 24, "active": cut_active,
-                 "why": (f"Bloom's schedule {cut['n']} is active (below {cut['sp']:.0f}°): {cut['ranges']}" if cut_active
-                         else "Bloom has no schedule in force at this temperature, so the fans run all day"
-                         if outdoor is not None or not cut
-                         else "Bloom has no outdoor reading here, so its schedule cannot engage and the fans run all day")}
+    # Worked out per fan group from the schedule it follows: a gated schedule's
+    # hours hold only below its setpoint, an un-gated one's at every temperature.
+    ALL_DAY = "Bloom has no schedule in force at this temperature, so the fans run all day"
+
+    def set_for(g):
+        s = scheds.get(g["sched"])
+        if s is None:
+            return [1] * 24, False, ALL_DAY
+        if not gated(s):
+            return s["bits"], True, f"Bloom's schedule {s['n']} applies at every temperature: {s['ranges'] or 'never on'}"
+        if outdoor is None:
+            return [1] * 24, False, "Bloom has no outdoor reading here, so its schedule cannot engage and the fans run all day"
+        if outdoor < s["sp"]:
+            return s["bits"], True, f"Bloom's schedule {s['n']} is active (below {s['sp']:.0f}°): {s['ranges']}"
+        return [1] * 24, False, ALL_DAY
+
+    sets = [(g, *set_for(g)) for g in real]
+    if not sets:
+        bloom_now = {"bits": [1] * 24, "active": False, "why": ALL_DAY}
+    else:
+        whys = list(dict.fromkeys(w for *_, w in sets))
+        bloom_now = {"bits": [1 if any(b[h] for _, b, _, _ in sets) else 0 for h in range(24)],
+                     "active": any(a for _, _, a, _ in sets),
+                     "why": whys[0] if len(whys) == 1 else "; ".join(f"{g['name']}: {w}" for g, _, _, w in sets)}
+    # On the plan's slots but not the one for this temperature: say which it should be.
+    slots_now = sorted({g["sched"] for g in real if g["sched"]})
+    slot_want = PLAN_SLOTS[want["band"]["key"]] if want else None
+    slot_off = bool(slot_want and always and set(slots_now) <= set(PLAN_SLOTS.values()) and slots_now != [slot_want])
+    if slot_off:
+        bloom_now["why"] += f" — the plan at {plan_out:.0f}° is schedule {slot_want}"
 
     return {
         "plan_out": plan_out, "plan_shared": shared is not None, "plan_n": portal.get("n"),
         "out_dev": (outdoor - plan_out) if (shared is not None and outdoor is not None) else None,
-        "bloom_now": bloom_now,
+        "bloom_now": bloom_now, "hand": hand_n,
+        "slots_now": slots_now, "slot_want": slot_want, "slot_off": slot_off,
         "want": want, "over": over, "under": under,
         "gaps": plan_gaps(pl, groups, scheds) if pl else [],
         "banner": banner[1], "banner_tone": banner[0], "sched_now": sched_now,
@@ -601,6 +665,7 @@ def page(rows, show="all", q="", sort="property") -> dict:
                 "over": sum(1 for r in live if r.get("over")), "over_fans": sum(r.get("over") or 0 for r in live),
                 "under": sum(1 for r in live if r.get("under")), "under_fans": sum(r.get("under") or 0 for r in live),
                 "gaps": sum(1 for r in rs if r.get("gaps")),
+                "hand": sum(1 for r in live if r.get("hand")), "hand_fans": sum(r.get("hand") or 0 for r in live),
                 "bands": {k: sum(1 for r in live if r.get("want") and r["want"]["band"]["key"] == k)
                           for k in ("cold", "mild", "free")},
                 "held": sum(1 for r in live if r.get("want") and r["want"]["held"]),
@@ -616,6 +681,7 @@ def page(rows, show="all", q="", sort="property") -> dict:
     keep = {"cold": lambda r: r["tone"] == "cold", "blind": blind,
             "over": lambda r: not r["stale"] and r.get("over"), "under": lambda r: not r["stale"] and r.get("under"),
             "gaps": lambda r: bool(r.get("gaps")),
+            "hand": lambda r: not r["stale"] and r.get("hand"),
             "fault": lambda r: not r["stale"] and r["fail"], "dark": lambda r: r["stale"],
             "running": lambda r: not r["stale"] and r["on"]}.get(show)
     if keep is None:
@@ -701,14 +767,18 @@ def plan_push(building: dict, pl) -> dict:
         now = [(1 if _on(p.get("pv")) else 0) if p else None for p in hour_pts]
         enabled = by.get(("gen-sp-enabled", f"oatSp::{n}"))
         used_by = sorted(assign.get(n, []), key=_natural)
-        why = None
-        if used_by:
-            why = f"fan group{'s' if len(used_by) != 1 else ''} {', '.join(used_by)} follow{'s' if len(used_by) == 1 else ''} this slot"
-        elif missing:
-            why = f"Bloom's feed has no point for {len(missing)} of this slot's 24 hours"
         changes = [h for h in range(24) if now[h] is not None and now[h] != band["bits"][h]]
         gate_off = bool(enabled and _on(enabled.get("pv")))
+        # A slot fans are running on is only refused when loading it would
+        # CHANGE it; one that already holds the plan is simply left alone.
+        why = None
+        if missing:
+            why = f"Bloom's feed has no point for {len(missing)} of this slot's 24 hours"
+        elif used_by and (changes or gate_off):
+            why = (f"fan group{'s' if len(used_by) != 1 else ''} {', '.join(used_by)} "
+                   f"follow{'s' if len(used_by) == 1 else ''} this slot")
         slot = {"n": n, "key": band["key"], "label": band["label"], "now": now, "new": band["bits"],
+                "holds": not missing and not changes and not gate_off,
                 "now_ranges": ranges([b or 0 for b in now]), "new_ranges": band["ranges"],
                 "changes": changes, "gate_off": gate_off, "used_by": used_by, "blocked": why,
                 "sp_on": gate_off, "sp": _num((by.get(("oat-sp-gen", str(n))) or {}).get("pv"))}
@@ -730,6 +800,147 @@ def plan_push(building: dict, pl) -> dict:
                     for p in points]}
 
 
+def plan_assign(building: dict, pl, target_key=None, slot=None) -> dict:
+    """What pointing every fan group of this building at ONE schedule slot
+    would change — the step that actually changes how the fans run. The target
+    is the slot holding a plan band (`target_key`: "cold" / "mild" / "free") or
+    an explicit `slot` number; slot 1 is where every group sat before the
+    portal touched anything, so `slot=1` is the way back.
+
+    From the LIVE building object, like plan_push. Refused (`blocked`) when the
+    target is one of the plan's slots and that slot does not hold the plan's
+    hours yet — a group is never pointed at a slot with the wrong hours in it.
+    Returns rows (one per group: now -> to), the points to send, a digest."""
+    sensors = (building or {}).get("sensors") or []
+    points_by = {str(s.get("name")): s for s in sensors if s.get("type") == "gen-sched-assign"}
+    target = int(slot) if slot is not None else PLAN_SLOTS[target_key]
+    why = None
+    if target in PLAN_SLOTS.values():
+        held = {s["n"]: s for s in plan_push(building, pl)["slots"]}
+        if not held[target]["holds"]:
+            why = f"slot {target} does not hold the plan's hours yet — load the schedules first"
+    rows, points = [], []
+    for e in (building or {}).get("equipment") or []:
+        if e.get("type") != "fanGroup":
+            continue
+        key = str(e.get("key"))
+        pt = points_by.get(key)
+        try:
+            now = int(pt.get("pv")) if pt is not None else None
+        except (TypeError, ValueError):
+            now = None
+        missing = pt is None or not pt.get("_id")
+        rows.append({"key": key, "name": e.get("name") or key, "now": now, "to": target,
+                     "change": not missing and now != target, "missing": missing})
+        if not missing and now != target:
+            points.append({**pt, "pv": target, "originalPv": pt.get("pv")})
+    if why:
+        points = []
+    digest = hashlib.sha256(json.dumps(
+        sorted((str(p.get("_id")), p["pv"]) for p in points)).encode()).hexdigest()[:16] if points else ""
+    return {"target": target, "rows": rows, "points": points, "digest": digest, "n_changes": len(points),
+            "blocked": why,
+            "log": [{"type": p.get("type"), "name": p.get("name"), "old": p.get("originalPv"), "new": p["pv"]}
+                    for p in points]}
+
+
+def combined_digest(parts) -> str:
+    """One fingerprint for a change that spans several buildings."""
+    parts = sorted(p for p in parts if p)
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16] if parts else ""
+
+
+AUTO_BY = "automatic"
+AUTO_RETRY_MIN = 10            # after an automatic write to a building, wait this long before another
+
+
+def auto_plan(building, stored, pl, on_props, recent, now) -> tuple:
+    """What automatic switching does with ONE building this poll, as
+    (verdict, assignment). Pure: `building` is the live object from Bloom,
+    `stored` the site's stored slice (whose `portal` holds the property and
+    its band), `on_props` the properties switched on, `recent` whether an
+    automatic write went to this building in the last AUTO_RETRY_MIN.
+
+      (None, None)    not this building's business: its property is not
+                      switched on, or there is no live shared temperature
+      ("inplace", a)  every group already follows the band's slot
+      ("wait", a)     groups need moving but not now: the slots do not hold
+                      the plan, the building is not reporting, or it was
+                      written to a moment ago
+      ("send", a)     send a["points"]
+    """
+    portal = (stored or {}).get("portal") or {}
+    prop, band = portal.get("prop"), portal.get("band")
+    if not prop or prop not in on_props or band not in PLAN_SLOTS:
+        return None, None
+    a = plan_assign(building, pl, target_key=band)
+    if a["blocked"]:
+        return "wait", a
+    if not a["n_changes"]:
+        return "inplace", a
+    if recent or summary(stored, now=now)["stale"]:
+        return "wait", a
+    return "send", a
+
+
+def auto_switch(app, account, session, token, building_list, now) -> int:
+    """The portal as supervisor: for every property whose automatic switching
+    is ON, point each building's fan groups at the slot for the property's
+    current plan band (app context assumed; called from bloom.poll_account
+    right after record(), so `data["portal"]` is this poll's).
+
+    Deliberately narrow. It only ever changes which slot a group follows —
+    never a schedule's hours. It acts only on a property a person has switched
+    on, only from a live shared temperature (no band, no action), only on a
+    building that is reporting and whose three slots hold the plan, and at most
+    once per AUTO_RETRY_MIN per building, so a controller that does not take
+    the change is not hammered. Every write is logged as "automatic"."""
+    from app import bloom
+    from app.extensions import db
+    from app.models import BloomFanAuto, BloomFanSite, BloomFanWrite
+    cfg = app.config
+    if not cfg.get("FAN_AUTO_ENABLED", True):
+        return 0
+    on = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
+    if not on:
+        return 0
+    pl = plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    sites = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
+    since = now - _dt.timedelta(minutes=AUTO_RETRY_MIN)
+    recent = {}
+    for w in (BloomFanWrite.query.filter(BloomFanWrite.by == AUTO_BY, BloomFanWrite.at >= since)
+              .order_by(BloomFanWrite.at).all()):
+        recent[w.site_id] = w
+    sent = 0
+    for b in building_list:
+        site = sites.get(str(bloom.asset_key(b)))
+        if site is None:
+            continue
+        portal = (site.data or {}).get("portal") or {}
+        prop, band = portal.get("prop"), portal.get("band")
+        last = recent.get(site.id)
+        verdict, a = auto_plan(b, site.data, pl, on, last is not None, now)
+        if verdict == "inplace" and last is not None and last.ok and last.landed is None:
+            last.landed = True                           # the earlier automatic write is now in Bloom's feed
+        if verdict != "send":
+            continue
+        label = next(x["label"] for x in pl if x["key"] == band)
+        out = _num(portal.get("out"))
+        at = f" at {out:.0f}°" if out is not None else ""
+        note = f"Automatic: {prop}{at} → the '{label}' schedule (slot {a['target']})"
+        row = BloomFanWrite(site_id=site.id, at=now, by=AUTO_BY, note=note, changes=a["log"], ok=False)
+        try:
+            data, token = bloom.put_points(account, session, token, site.asset_key, a["points"], note)
+            row.ok, row.detail = reply_summary(data)
+        except Exception as e:
+            row.detail = str(e)[:500]
+            log.warning("automatic fan switch failed for %s: %s", site.name, e)
+        db.session.add(row)
+        sent += 1
+    db.session.commit()
+    return sent
+
+
 def reply_summary(data) -> tuple:
     """(accepted, one line) from Bloom's reply to a write. The reply seen on the
     first portal push (2026-11-16): {"success": true, "data": {"result": "The
@@ -745,6 +956,30 @@ def reply_summary(data) -> tuple:
         text = f"{text} {acked} of {len(results)} points acknowledged.".strip()
     accepted = data.get("success") is not False
     return accepted, (text or ("accepted" if accepted else "Bloom reported failure"))[:300]
+
+
+def write_summary(changes) -> str:
+    """A logged change in a few words: hours loaded into slots, outdoor gates
+    turned off, fan groups moved between schedules."""
+    ch = changes or []
+    hours = [c for c in ch if c.get("type") == "gen-sched"]
+    gates = [c for c in ch if c.get("type") == "gen-sp-enabled"]
+    moves = [c for c in ch if c.get("type") == "gen-sched-assign"]
+    other = len(ch) - len(hours) - len(gates) - len(moves)
+    parts = []
+    if hours:
+        slots = sorted({str(c.get("name", "")).split("::")[0] for c in hours})
+        parts.append(f"{len(hours)} hour{'s' if len(hours) != 1 else ''} in slot{'s' if len(slots) != 1 else ''} {', '.join(slots)}")
+    if gates:
+        slots = sorted({str(c.get("name", "")).split("::")[-1] for c in gates})
+        parts.append(f"outdoor gate off on slot{'s' if len(slots) != 1 else ''} {', '.join(slots)}")
+    if moves:
+        parts.append(", ".join(
+            f"{re.sub(r'^fg-', 'group ', str(c.get('name')))}: schedule {c.get('old')} → {c.get('new')}"
+            for c in sorted(moves, key=lambda c: _natural(c.get("name")))))
+    if other:
+        parts.append(f"{other} other")
+    return " + ".join(parts)
 
 
 def tidy_detail(detail) -> str:

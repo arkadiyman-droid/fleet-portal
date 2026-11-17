@@ -626,3 +626,143 @@ def test_reply_summary_reads_blooms_real_reply():
     old = "{'success': True, 'data': {'result': 'The change has been sent to the controller.', 'requestId': '82f0', 'resul"
     assert bf.tidy_detail(old) == "The change has been sent to the controller."
     assert bf.tidy_detail("HTTP 403") == "HTTP 403" and bf.tidy_detail(None) == ""
+
+
+# ── stage 2: pointing fan groups at a slot, by hand and automatically ─────────
+
+LOADED = {3: COLD, 4: MILD, 5: FREE}
+
+
+def test_plan_push_leaves_a_followed_slot_alone_when_it_already_holds_the_plan():
+    p = bf.plan_push(_live(LOADED, assign=4), PLAN)          # the group is ON slot 4, and slot 4 is right
+    assert not p["blocked"] and p["n_changes"] == 0 and all(s["holds"] for s in p["slots"])
+    assert bf.push_landed(_live(LOADED, assign=4), PLAN)
+    # ...but a followed slot that would have to CHANGE is still refused, hours or gate
+    assert bf.plan_push(_live({3: COLD, 4: COLD, 5: FREE}, assign=4), PLAN)["blocked"]
+    gate = bf.plan_push(_live(LOADED, assign=4, enabled={1: 1, 4: 1}), PLAN)
+    assert gate["blocked"] and not gate["slots"][1]["holds"] and gate["points"] == []
+
+
+def test_plan_assign_points_every_group_at_the_bands_slot():
+    a = bf.plan_assign(_live(LOADED), PLAN, target_key="mild")
+    assert a["target"] == 4 and not a["blocked"] and a["n_changes"] == 1 and len(a["digest"]) == 16
+    assert a["rows"] == [{"key": "fg-1", "name": "Exhaust Fan Group 1", "now": 1, "to": 4, "change": True, "missing": False}]
+    assert a["points"] == [{"_id": "a1", "type": "gen-sched-assign", "name": "fg-1", "pv": 4, "originalPv": 1}]
+    assert a["log"] == [{"type": "gen-sched-assign", "name": "fg-1", "old": 1, "new": 4}]
+    done = bf.plan_assign(_live(LOADED, assign=4), PLAN, target_key="mild")
+    assert done["n_changes"] == 0 and done["points"] == [] and done["digest"] == "" and not done["blocked"]
+    assert bf.plan_assign(_live(LOADED), PLAN, target_key="cold")["points"][0]["pv"] == 3
+    assert bf.plan_assign(_live(LOADED), PLAN, target_key="free")["points"][0]["pv"] == 5
+
+
+def test_plan_assign_never_points_a_group_at_a_slot_with_the_wrong_hours():
+    a = bf.plan_assign(_live({3: COLD, 5: FREE}), PLAN, target_key="mild")      # slot 4 is still empty
+    assert a["points"] == [] and a["n_changes"] == 0 and "load the schedules first" in a["blocked"]
+    assert a["rows"][0]["change"]                           # the row still shows what is wanted
+    gated = bf.plan_assign(_live(LOADED, enabled={1: 1, 4: 1}), PLAN, target_key="mild")
+    assert gated["blocked"] and gated["points"] == []       # right hours behind an outdoor gate is not loaded
+
+
+def test_plan_assign_slot_1_is_the_way_back_and_needs_nothing_loaded():
+    back = bf.plan_assign(_live(assign=4), PLAN, slot=1)    # nothing loaded at all
+    assert not back["blocked"] and back["target"] == 1
+    assert [(p["name"], p["pv"], p["originalPv"]) for p in back["points"]] == [("fg-1", 1, 4)]
+    assert bf.plan_assign(_live(), PLAN, slot=1)["n_changes"] == 0
+
+
+def test_plan_assign_skips_a_group_bloom_gives_no_point_for():
+    b = _live(LOADED)
+    b["sensors"] = [s for s in b["sensors"] if s["type"] != "gen-sched-assign"]
+    a = bf.plan_assign(b, PLAN, target_key="mild")
+    assert a["points"] == [] and a["rows"][0]["missing"] and not a["rows"][0]["change"]
+
+
+def test_combined_digest_is_one_fingerprint_for_many_buildings():
+    assert bf.combined_digest(["2:bb", "1:aa"]) == bf.combined_digest(["1:aa", "2:bb"])
+    assert bf.combined_digest(["1:aa"]) != bf.combined_digest(["1:aa", "2:bb"])
+    assert bf.combined_digest([]) == "" and bf.combined_digest(["", None]) == ""
+
+
+def _stored(prop="Berry", band="mild", fan_ts=FRESH):
+    raw = bf.trim(_building(outdoor=44, rs=(1, 1, 1), fan_ts=fan_ts))
+    raw["portal"] = {"band": band, "out": 44, "n": 3, "prop": prop}
+    return raw
+
+
+def test_auto_plan_acts_only_where_a_person_switched_it_on():
+    on = {"Berry"}
+    verdict, a = bf.auto_plan(_live(LOADED), _stored(), PLAN, on, False, NOW)
+    assert verdict == "send" and a["target"] == 4 and a["points"][0]["pv"] == 4
+    # it only ever moves a group between slots — never an hour, never a gate
+    assert {p["type"] for p in a["points"]} == {"gen-sched-assign"}
+    assert bf.auto_plan(_live(LOADED), _stored(), PLAN, set(), False, NOW) == (None, None)        # nobody turned it on
+    assert bf.auto_plan(_live(LOADED), _stored(prop="DCA"), PLAN, on, False, NOW) == (None, None)  # another property
+    assert bf.auto_plan(_live(LOADED), _stored(prop=None), PLAN, {None}, False, NOW) == (None, None)
+    assert bf.auto_plan(_live(LOADED), _stored(band=None), PLAN, on, False, NOW) == (None, None)   # no live temperature
+
+
+def test_auto_plan_waits_rather_than_guess():
+    on = {"Berry"}
+    assert bf.auto_plan(_live(), _stored(), PLAN, on, False, NOW)[0] == "wait"                    # slots not loaded
+    assert bf.auto_plan(_live(LOADED), _stored(), PLAN, on, True, NOW)[0] == "wait"               # written a moment ago
+    silent = _stored(fan_ts="2026-09-12T10:00:00.000Z")
+    assert bf.auto_plan(_live(LOADED), silent, PLAN, on, False, NOW)[0] == "wait"                 # not reporting
+    assert bf.auto_plan(_live(LOADED, assign=4), _stored(), PLAN, on, False, NOW)[0] == "inplace"
+    assert bf.auto_plan(_live(LOADED, assign=4), _stored(band="cold"), PLAN, on, False, NOW)[0] == "send"
+
+
+def test_a_fan_running_while_commanded_off_is_ignoring_the_controller():
+    s = _sum(rs=(1, 1, 0), cmd=0)
+    assert s["hand"] == 2 and s["fail"] == 0 and s["on"] == 2
+    assert [f["state"] for f in s["groups"][0]["fans"]] == ["hand", "hand", "off"]
+    assert any("2 fans running while commanded off — check their switch at the fan" == f for f in s["flags"])
+    one = _sum(rs=(1, 0, 0), cmd=0)
+    assert any("1 fan running while commanded off — check its switch at the fan" == f for f in one["flags"])
+    assert _sum(rs=(1, 1, 1), cmd=1)["hand"] == 0 and _sum(rs=(0, 0, 0), cmd=0)["hand"] == 0
+    rows = [_row("1 A St", "P", rs=(1, 1, 0), cmd=0), _row("2 A St", "P", rs=(1, 1, 1))]
+    pg = bf.page(rows, show="hand")
+    assert pg["summary"]["hand"] == 1 and pg["summary"]["hand_fans"] == 2
+    assert [r["name"] for g in pg["groups"] for r in g["rows"]] == ["1 A St"]
+
+
+def _on_slot(slot, bits, outdoor=44, band="mild", hour=14, gate=0, rs=(1, 1, 1)):
+    """The summary of a building loaded with the plan whose group follows `slot`."""
+    b = _building(outdoor=outdoor, rs=rs)
+    for x in b["sensors"]:
+        if x["type"] == "gen-sched-assign":
+            x["pv"] = slot
+    for n, bb in ((3, COLD), (4, MILD), (5, FREE)):
+        b["sensors"].append({"type": "gen-sp-enabled", "name": f"oatSp::{n}", "pv": gate if n == slot else 0})
+        b["sensors"].append({"type": "oat-sp-gen", "name": str(n), "pv": 38})
+        for h in range(24):
+            b["sensors"].append({"type": "gen-sched", "name": f"{n}::{h}", "pv": int((bits if n == slot else bb)[h])})
+    raw = bf.trim(b)
+    raw["portal"] = {"band": band, "out": outdoor, "n": 1, "prop": "P"}
+    return bf.summary(raw, now=NOW, hour=hour, minute=30, pl=PLAN, hyst=2)
+
+
+def test_an_ungated_schedule_holds_at_every_temperature():
+    s = _on_slot(4, MILD)                                    # 44°, on the middle slot: the plan, carried out
+    assert s["bloom_now"]["active"] and s["bloom_now"]["bits"] == [int(c) for c in MILD]
+    assert s["bloom_now"]["why"] == "Bloom's schedule 4 applies at every temperature: 8am–12pm, 5pm–10pm"
+    assert s["gaps"] == [] and not s["slot_off"] and s["slots_now"] == [4] and s["slot_want"] == 4
+    assert "follow schedule 4 at every temperature" in s["banner"]
+    # the same slot behind an outdoor gate is only in force below the gate
+    assert _on_slot(4, MILD, gate=1)["bloom_now"]["bits"] == [1] * 24
+
+
+def test_on_a_plan_slot_but_not_the_one_for_this_temperature():
+    s = _on_slot(4, MILD, outdoor=30, band="cold")           # it turned cold; the group is still on slot 4
+    assert s["slot_off"] and s["slot_want"] == 3 and s["slots_now"] == [4]
+    assert s["bloom_now"]["why"].endswith("— the plan at 30° is schedule 3")
+    assert s["gaps"] == []                                   # the schedules are all there; only the pointer is behind
+    old = _plan(outdoor=30, rs=(1, 1, 1))                    # a building still on Bloom's own schedule 1
+    assert not old["slot_off"] and old["slots_now"] == [1]
+
+
+def test_write_summary_says_what_a_logged_change_did():
+    load = bf.plan_push(_live({3: COLD, 4: MILD}, enabled={1: 1, 5: 1}), PLAN)["log"]
+    assert bf.write_summary(load) == "24 hours in slot 5 + outdoor gate off on slot 5"
+    move = bf.plan_assign(_live(LOADED), PLAN, target_key="mild")["log"]
+    assert bf.write_summary(move) == "group 1: schedule 1 → 4"
+    assert bf.write_summary([{"type": "x"}]) == "1 other" and bf.write_summary(None) == ""

@@ -801,8 +801,17 @@ def poll_account(app, account):
     except Exception as e:
         db.session.rollback()
         log.warning("Bloom fan write failed for %s: %s", account.label, e)
-    log.info("Bloom poll %s: %d buildings seen, %d rows updated, %d fan sites",
-             account.label, len(by_key), len(rows), n_fans)
+    # Automatic schedule switching, for the properties a person has turned it on
+    # for (bloom_fans.auto_switch) — the one thing the poller ever writes.
+    n_auto = 0
+    try:
+        from app import bloom_fans
+        n_auto = bloom_fans.auto_switch(app, account, session, token, buildings(assets_json), now)
+    except Exception as e:
+        db.session.rollback()
+        log.warning("Bloom automatic fan switching failed for %s: %s", account.label, e)
+    log.info("Bloom poll %s: %d buildings seen, %d rows updated, %d fan sites, %d automatic switches",
+             account.label, len(by_key), len(rows), n_fans, n_auto)
 
 
 def _record_samples(app, rows, by_key, by_name, now):

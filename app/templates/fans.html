@@ -5,11 +5,12 @@
 <style>
   /* state colours, used by every fan mark on the page */
   .fn-on { background:#16a34a; color:#fff; }
+  .fn-hand { background:#f59e0b; color:#fff; box-shadow:inset 0 0 0 2px #b45309; }
   .fn-down { background:#fff; color:#b91c1c; box-shadow:inset 0 0 0 2px #dc2626; }
   .fn-off { background:#d1d5db; color:#4b5563; }
   .fn-dark { background:repeating-linear-gradient(135deg, #e5e7eb 0 4px, #f3f4f6 4px 8px); color:#6b7280; }
 
-  .fn-tiles { display:grid; grid-template-columns:minmax(240px, 2fr) repeat(6, minmax(112px, 1fr)); gap:10px; margin:0 0 12px; }
+  .fn-tiles { display:grid; grid-template-columns:minmax(240px, 2fr) repeat(7, minmax(104px, 1fr)); gap:10px; margin:0 0 12px; }
   .fn-tile { display:block; background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 12px; text-decoration:none; color:var(--text); }
   a.fn-tile:hover { border-color:#c7ccd4; }
   .fn-tile.sel { outline:2px solid var(--text); outline-offset:-1px; }
@@ -157,6 +158,7 @@
   <a class="fn-tile down {{ 'zero' if not summary.down }} {{ 'sel' if show == 'fault' }}" href="{{ link('fault') }}"><div class="l">Fans down</div><div class="n">{{ summary.down }} <small>in {{ summary.fault }} bldg{{ 's' if summary.fault != 1 }}</small></div></a>
   <a class="fn-tile over {{ 'zero' if not summary.over }} {{ 'sel' if show == 'over' }}" href="{{ link('over') }}" title="Fans running in an hour the plan says off — heat going up the shaft"><div class="l">Running, plan says off</div><div class="n">{{ summary.over_fans }} <small>in {{ summary.over }} bldg{{ 's' if summary.over != 1 }}</small></div></a>
   <a class="fn-tile under {{ 'zero' if not summary.under }} {{ 'sel' if show == 'under' }}" href="{{ link('under') }}" title="Fan groups commanded off in an hour the plan says on"><div class="l">Held off, plan says on</div><div class="n">{{ summary.under_fans }} <small>in {{ summary.under }} bldg{{ 's' if summary.under != 1 }}</small></div></a>
+  <a class="fn-tile blind {{ 'zero' if not summary.hand_fans }} {{ 'sel' if show == 'hand' }}" href="{{ link('hand') }}" title="Fans still running although their group is commanded off — the switch at the fan is overriding the controller, so no schedule can stop them"><div class="l">Ignoring stop</div><div class="n">{{ summary.hand_fans }} <small>in {{ summary.hand }} bldg{{ 's' if summary.hand != 1 }}</small></div></a>
   <a class="fn-tile blind {{ 'zero' if not summary.blind }} {{ 'sel' if show == 'blind' }}" href="{{ link('blind') }}"><div class="l">No outdoor reading</div><div class="n">{{ summary.blind }} <small>bldg{{ 's' if summary.blind != 1 }}</small></div></a>
   <a class="fn-tile {{ 'zero' if not summary.dark }} {{ 'sel' if show == 'dark' }}" href="{{ link('dark') }}"><div class="l">Not reporting</div><div class="n">{{ summary.dark }} <small>bldg{{ 's' if summary.dark != 1 }}</small></div></a>
   <div class="fn-tile"><div class="l">Outdoor now</div><div class="n">{% if summary.out_min is not none %}{{ t(summary.out_min) }}{% if summary.out_max != summary.out_min %}<small> to </small>{{ t(summary.out_max) }}{% endif %}{% else %}—{% endif %}</div></div>
@@ -189,7 +191,7 @@
   </form>
 </div>
 <div class="fn-key">
-  <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
+  <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-hand"></i>running while commanded off</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
   <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today</span><span><i class="grey"></i>off</span><span>outlined = this hour</span>
   <span>· Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min</span>
 </div>
@@ -204,7 +206,8 @@
     <h2>{{ grp.name }}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
     {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
-    <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}</span>
+    <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}{% if grp.hand_fans %} · <b style="color:#b45309">{{ grp.hand_fans }} ignoring stop</b>{% endif %}</span>
+    {% if grp.name != unfiled %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% endif %}
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
   </div>
   {% endif %}
@@ -218,7 +221,7 @@
       <span class="fn-nm" title="{{ r.name }}">{{ r.name }}</span>
       <span class="fn-st" title="{{ r.flags|join(' · ') if r.flags else r.status }}">{{ r.status }}{% if r.flags|length > 1 %} <span class="card-sub">+{{ r.flags|length - 1 }}</span>{% endif %}</span>
       <span class="fn-num" {% if r.outdoor_stale %}title="Last outdoor reading {{ t(r.outdoor_last) }}, not updated since"{% elif r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) %}title="This building's sensor reads {{ '%.0f'|format(r.out_dev|abs) }}° {{ 'above' if r.out_dev > 0 else 'below' }} the property's {{ t(r.plan_out) }} — the plan uses the property's"{% endif %}><span class="{{ 'fn-odd' if r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) }}">{{ t(r.outdoor) }}</span></span>
-      <span class="fn-fans">{% for g in r.groups %}<span class="fn-g {{ 'stop' if g.cmd is sameas false }}" title="{{ g.name }}{% if g.cmd is not none %} — commanded {{ 'START' if g.cmd else 'STOP' }}{% endif %}">{% for f in g.fans %}<span class="fn-f fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}: {{ 'not reporting' if r.stale else ('running' if f.on else ('DOWN — off while commanded on' if f.fail else 'off')) }}">{{ f.num }}</span>{% endfor %}</span>{% endfor %}</span>
+      <span class="fn-fans">{% for g in r.groups %}<span class="fn-g {{ 'stop' if g.cmd is sameas false }}" title="{{ g.name }}{% if g.cmd is not none %} — commanded {{ 'START' if g.cmd else 'STOP' }}{% endif %}">{% for f in g.fans %}<span class="fn-f fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}: {{ 'not reporting' if r.stale else ('RUNNING while commanded off — check the switch at the fan' if f.state == 'hand' else 'running' if f.on else ('DOWN — off while commanded on' if f.fail else 'off')) }}">{{ f.num }}</span>{% endfor %}</span>{% endfor %}</span>
       <span class="fn-num">{{ "—" if r.stale else r.on }}/{{ r.total }}</span>
       {% if r.want %}{% set w = r.want %}
       <span class="fn-cs" title="PLAN (top): {{ t(r.plan_out) }} outside, the {{ w.band.label|lower }} schedule — {{ w.band.ranges }}{% if w.held %}; held on this colder schedule by hysteresis until it reads {{ t(w.release) }}{% endif %}.&#10;SET IN BLOOM (bottom): {{ r.bloom_now.why }}.">
@@ -242,9 +245,9 @@
           </div>
           <div class="fn-big">
             {% for f in g.fans %}
-            <div class="fn-b fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}{% if f.manual %} · in manual{% endif %}{% if f.flagged %} · Bloom's run-fail flag is set although it is running{% endif %}">
+            <div class="fn-b fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}{% if f.state == 'hand' and not r.stale %} · running although its group is commanded off — check the switch at the fan{% endif %}{% if f.manual %} · in manual{% endif %}{% if f.flagged %} · Bloom's run-fail flag is set although it is running{% endif %}">
               <div class="no">{{ f.num }}</div>
-              <div class="st">{{ 'NO DATA' if r.stale else ('ON' if f.on else ('DOWN' if f.fail else 'OFF')) }}{% if f.manual %} · MAN{% endif %}{% if f.flagged %} ⚑{% endif %}</div>
+              <div class="st">{{ 'NO DATA' if r.stale else ('ON · HAND' if f.state == 'hand' else 'ON' if f.on else ('DOWN' if f.fail else 'OFF')) }}{% if f.manual %} · MAN{% endif %}{% if f.flagged %} ⚑{% endif %}</div>
               <div class="rt">{% if f.rt_h is not none %}{{ "%.1f"|format(f.rt_h) }} h today{% elif f.rt_bad %}run time n/a{% else %}&nbsp;{% endif %}</div>
             </div>
             {% endfor %}

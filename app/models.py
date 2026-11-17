@@ -880,6 +880,20 @@ class BloomFanWrite(db.Model):
     site = db.relationship("BloomFanSite")
 
 
+class BloomFanAuto(db.Model):
+    """Whether the portal may switch a property's fan groups between schedule
+    slots by itself as the temperature band changes (bloom_fans.auto_switch).
+    One row per property, keyed by the property's name as the Fans page files
+    it; no row, or enabled False, means the portal only watches. A person
+    turns it on per property — it is never on by default."""
+    __tablename__ = "bloom_fan_auto"
+
+    prop = db.Column(db.String(200), primary_key=True)
+    enabled = db.Column(db.Boolean, nullable=False, default=False)
+    by = db.Column(db.String(120))
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are
