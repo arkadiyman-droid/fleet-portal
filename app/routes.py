@@ -1643,6 +1643,7 @@ def fans_page():
     from app.models import BloomFanAuto
     auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
+                           hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0),
                            auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=is_superuser(),
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
@@ -1783,6 +1784,12 @@ def fans_property():
     portal = next((p for p in ((s.data or {}).get("portal") or {} for s in sites) if p.get("band")), {})
     band = next((b for b in pl if b["key"] == portal.get("band")), None)
     target = bloom_fans.PLAN_SLOTS[band["key"]] if band else None
+    # A move to another band that is waiting out the hold (bloom_fans.shared_bands).
+    pending, due = None, bloom_fans._iso(portal.get("due"))
+    nxt_band = next((b for b in pl if b["key"] == portal.get("pend")), None)
+    if band and nxt_band and due and nxt_band["key"] != band["key"]:
+        mins = max(1, int(-(-(due - datetime.utcnow()).total_seconds() // 60)))
+        pending = {"band": nxt_band, "slot": bloom_fans.PLAN_SLOTS[nxt_band["key"]], "mins": mins}
     STEP = {"load": "push", "switch": "switch", "restore": "restore"}
     # Where the portal loaded the schedules before, a slot fans now follow may
     # have its hours revised (the plan was changed); anywhere else it is refused.
@@ -1893,7 +1900,8 @@ def fans_property():
                      .order_by(BloomFanWrite.at.desc()).limit(60).all())]
     return render_template("fans_property.html", title=f"{name} — fan schedules", name=name, rows=rows, act=act,
                            error=error, result=result, band=band, target=target, out=out,
-                           n_sensors=portal.get("n") or 0, notes=notes, log=log,
+                           n_sensors=portal.get("n") or 0, notes=notes, log=log, pending=pending,
+                           hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0),
                            auto_on=bool(auto and auto.enabled), auto_by=auto.by if auto else None,
                            auto_at=local(auto.at) if auto else None,
                            auto_master=bool(cfg.get("FAN_AUTO_ENABLED", True)),

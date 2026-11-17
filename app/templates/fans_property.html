@@ -74,6 +74,7 @@
 
 <div class="pp-now">
   {% if band %}<b>{{ t(out) }}</b> outside (middle reading of {{ n_sensors }} sensor{{ 's' if n_sensors != 1 }}) → the <b>{{ band.label }}</b> schedule, which is <b>slot {{ target }}</b>: {{ band.ranges }}.
+  {% if pending %}The temperature is now in the <b>{{ pending.band.label }}</b> range; if it stays there, the property moves to that schedule (slot {{ pending.slot }}) in {{ pending.mins }} min.{% endif %}
   {% else %}No live outdoor reading on this property, so the portal cannot say which schedule applies and will not switch anything.{% endif %}
   Read live from Bloom at {{ read_at }}.
 </div>
@@ -121,7 +122,7 @@
 
 <div class="pp-card">
   <h2>Step 3 · Automatic switching {% if auto_on %}<span class="pp-pill ok">ON</span>{% else %}<span class="pp-pill">OFF</span>{% endif %}</h2>
-  <p class="sub">When on, the portal does step 2 by itself, once a minute: whenever this property's temperature moves into another band (with the 2° hysteresis), it points the fan groups at that band's slot and logs it below as "automatic". It never changes a schedule's hours, skips any building that is not loaded or not reporting, and does nothing while there is no live outdoor reading. If the portal or Bloom is unreachable, fan groups simply stay on the slot they are on.{% if auto_on and auto_by %} Turned on by {{ auto_by }}, {{ auto_at }}.{% endif %}</p>
+  <p class="sub">When on, the portal does step 2 by itself, once a minute: whenever this property's temperature moves into another band (with the 2° hysteresis){% if hold %} and has stayed there {{ "%g"|format(hold) }} minutes{% endif %}, it points the fan groups at that band's slot and logs it below as "automatic". It never changes a schedule's hours, skips any building that is not loaded or not reporting, and does nothing while there is no live outdoor reading. If the portal or Bloom is unreachable, fan groups simply stay on the slot they are on.{% if auto_on and auto_by %} Turned on by {{ auto_by }}, {{ auto_at }}.{% endif %}</p>
   {% if not auto_master %}<div class="pp-banner warn">Automatic switching is turned off for the whole portal in its configuration (FAN_AUTO_ENABLED), so nothing is switched automatically whatever this is set to.</div>{% endif %}
   <form method="post" style="margin:0">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

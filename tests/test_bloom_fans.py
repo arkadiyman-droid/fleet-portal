@@ -823,3 +823,72 @@ def test_plan_gaps_say_a_loaded_slot_is_behind_the_plan():
     s = _on_slot(4, OLD_MILD)                                # on slot 4, which still holds 8am–12pm
     assert s["gaps"] == ["Schedule 4 (36° to 55°) holds 8am–12pm, 5pm–10pm; the plan is now 7am–12pm, 5pm–10pm"
                          " — send the schedules again."]
+
+
+# ── the hold: a new band must last before it is acted on ───────────────────────
+
+def _polls(readings, start="mild", hold=30):
+    """Run shared_bands over a series of (minute, temperature) polls for one
+    two-building property, feeding each result back in the way record() does.
+    Returns [(minute, band in force, band waiting)]."""
+    t0 = dt.datetime(2026, 11, 17, 11, 0)
+    state = {"band": start}
+    seen = []
+    for minute, temp in readings:
+        items = [{"key": k, "group": "P", "out": temp, "prev": state.get("band"),
+                  "pend": state.get("pend"), "since": state.get("since")} for k in "ab"]
+        got = bf.shared_bands(items, PLAN, 2, now=t0 + dt.timedelta(minutes=minute), hold_min=hold)
+        assert got["a"] == got["b"]
+        state = got["a"]
+        seen.append((minute, state["band"], state.get("pend")))
+    return seen
+
+
+def test_a_dip_into_another_band_and_back_switches_nothing():
+    # 2026-11-17: 42° -> 35° at 6:30, 38° by 6:51 — three properties went to cold and straight back
+    seen = _polls([(0, 42), (30, 35), (35, 35), (45, 35), (51, 38), (60, 41)])
+    assert [b for _, b, _ in seen] == ["mild"] * 6                          # never left the middle schedule
+    assert [p for _, _, p in seen] == [None, "cold", "cold", "cold", None, None]
+
+
+def test_a_band_that_lasts_thirty_minutes_is_taken():
+    seen = _polls([(0, 42), (10, 35), (20, 34), (39, 35), (40, 35), (41, 35)])
+    assert seen[3] == (39, "mild", "cold")                                  # 29 minutes: still waiting
+    assert seen[4] == (40, "cold", None) and seen[5] == (41, "cold", None)  # 30 minutes: moved, and stays
+    # warmer works the same way, on top of the hysteresis (38°, not 36°)
+    up = _polls([(0, 30), (5, 37), (10, 38), (30, 39), (39, 40), (40, 40)], start="cold")
+    assert [b for _, b, _ in up] == ["cold", "cold", "cold", "cold", "cold", "mild"]
+    assert up[1][2] is None and up[2][2] == "mild"                          # 37° is held by hysteresis, 38° starts the clock
+
+
+def test_the_clock_restarts_when_the_reading_asks_for_something_else():
+    seen = _polls([(0, 42), (10, 35), (25, 40), (30, 35), (55, 35), (60, 35)])
+    assert [b for _, b, _ in seen] == ["mild", "mild", "mild", "mild", "mild", "cold"]   # 30 min from 0:30, not 0:10
+    # two bands at once (a cold front): the clock runs on the band asked for now
+    jump = _polls([(0, 60), (10, 50), (20, 30), (45, 30), (50, 30)], start="free")
+    assert [(b, p) for _, b, p in jump] == [("free", None), ("free", "mild"), ("free", "cold"),
+                                            ("free", "cold"), ("cold", None)]
+
+
+def test_the_hold_never_delays_a_first_placing_and_can_be_turned_off():
+    first = bf.shared_bands([{"key": "a", "group": "P", "out": 30, "prev": None}], PLAN, 2, now=NOW, hold_min=30)
+    assert first["a"] == {"band": "cold", "out": 30, "n": 1}                # nothing to hold on to: placed at once
+    assert [b for _, b, _ in _polls([(0, 42), (1, 35)], hold=0)] == ["mild", "cold"]
+    no_reading = bf.shared_bands([{"key": "a", "group": "P", "out": None, "prev": "mild", "pend": "cold",
+                                   "since": "2026-11-17T11:00:00"}], PLAN, 2, now=NOW, hold_min=30)
+    assert no_reading["a"] == {"band": None, "out": None, "n": 0}           # no temperature, no band, no clock
+
+
+def test_the_page_follows_the_band_in_force_while_a_move_waits():
+    raw = bf.trim(_building(outdoor=35, rs=(1, 1, 1)))
+    due = (NOW + dt.timedelta(minutes=12)).isoformat(timespec="seconds")
+    raw["portal"] = {"band": "mild", "out": 35, "n": 4, "prop": "P", "pend": "cold",
+                     "since": (NOW - dt.timedelta(minutes=18)).isoformat(timespec="seconds"), "due": due}
+    s = bf.summary(raw, now=NOW, hour=9, minute=30, pl=PLAN, hyst=2)
+    w = s["want"]
+    assert w["band"]["key"] == "mild" and s["slot_want"] == bf.PLAN_SLOTS["mild"]      # what automatic switching targets
+    assert w["pending"]["band"]["key"] == "cold" and w["pending"]["mins"] == 12 and not w["held"]
+    # hysteresis is still reported as hysteresis, and nothing is pending
+    raw["portal"] = {"band": "cold", "out": 37, "n": 4, "prop": "P"}
+    w = bf.summary(raw, now=NOW, hour=9, minute=30, pl=PLAN, hyst=2)["want"]
+    assert w["band"]["key"] == "cold" and w["held"] and w["release"] == 38 and w["pending"] is None

@@ -209,7 +209,15 @@ def step_band(pl, prev_key, outdoor, hyst=0.0):
     return pl[i]
 
 
-def shared_bands(items, pl, hyst=0.0) -> dict:
+def _iso(v):
+    """A stored naive-UTC ISO time -> datetime, or None."""
+    try:
+        return _dt.datetime.fromisoformat(str(v)) if v else None
+    except ValueError:
+        return None
+
+
+def shared_bands(items, pl, hyst=0.0, now=None, hold_min=0.0) -> dict:
     """One outdoor temperature and one plan band per property.
 
     The buildings' own outdoor sensors disagree — a sensor in the sun read 71°
@@ -223,7 +231,19 @@ def shared_bands(items, pl, hyst=0.0) -> dict:
     reading or None, prev its remembered band; a building with no property is
     its own group. Returns {key: {"band", "out", "n"}}: the group's band key
     (None when no sensor in the group is live), the shared temperature, and how
-    many sensors it came from."""
+    many sensors it came from.
+
+    The hold (`hold_min` minutes, with `now` naive UTC): a property that is
+    already in a band moves to another only once the temperature has asked for
+    that other band on every poll for hold_min minutes. On 2026-11-17 a shared
+    reading went 42° -> 35° -> 38° inside 21 minutes and three properties were
+    switched to the cold schedule and straight back — 28 writes to real
+    controllers for nothing. While a move is waiting the result also carries
+    "pend" (the band asked for), "since" (when it was first asked for) and
+    "due" (when it takes effect if it lasts), which the caller stores and
+    hands back on the next poll as the items' "pend" / "since". A property
+    with no remembered band is placed at once, and hold_min 0 is no hold."""
+    keys = [b["key"] for b in pl]
     groups = {}
     for it in items:
         groups.setdefault(it["group"], []).append(it)
@@ -237,25 +257,45 @@ def shared_bands(items, pl, hyst=0.0) -> dict:
         prevs = [m["prev"] for m in members if m["prev"]]
         prev = max(set(prevs), key=prevs.count) if prevs else None      # the band most of them remember
         band = step_band(pl, prev, shared, hyst)
+        res = {"band": band["key"] if band else None, "out": shared, "n": len(temps)}
+        if hold_min and now is not None and band and prev in keys and band["key"] != prev:
+            # asked to move: start the clock, or keep the one already running for this same band
+            started = None
+            for m in members:
+                t = _iso(m.get("since")) if m.get("pend") == band["key"] else None
+                if t and (started is None or t < started):
+                    started = t
+            if started is None or started > now:
+                started = now
+            due = started + _dt.timedelta(minutes=hold_min)
+            if now < due:
+                res.update(band=prev, pend=band["key"], since=started.isoformat(timespec="seconds"),
+                           due=due.isoformat(timespec="seconds"))
         for m in members:
-            out[m["key"]] = {"band": band["key"] if band else None, "out": shared, "n": len(temps)}
+            out[m["key"]] = dict(res)
     return out
 
 
-def expect(pl, outdoor, hour, minute=None, prev_key=None, hyst=0.0):
+def expect(pl, outdoor, hour, minute=None, prev_key=None, hyst=0.0, band_key=None):
     """What the plan asks for right now: {band, on, until, settling, held,
-    release}. `held` is true while hysteresis keeps the building on a colder
-    schedule than the bare temperature would give; `release` is the reading at
-    which it moves up. `settling` covers the first ten minutes after the plan
-    changes state, when a building has not had time to follow yet."""
-    b = step_band(pl, prev_key, outdoor, hyst)
+    release, pending}. `held` is true while hysteresis keeps the building on a
+    colder schedule than the bare temperature would give; `release` is the
+    reading at which it moves up. `settling` covers the first ten minutes after
+    the plan changes state, when a building has not had time to follow yet.
+    `band_key` is the band already in force for the property (the poller's,
+    which also applies the hold in shared_bands): when given it IS the band,
+    rather than one worked out again from the temperature. `pending` is None
+    here; summary() fills it while a move to another band is waiting out the
+    hold."""
+    keys = [x["key"] for x in pl]
+    b = pl[keys.index(band_key)] if band_key in keys else step_band(pl, prev_key, outdoor, hyst)
     if b is None:
         return None
     nominal = band_of(pl, outdoor)
-    held = nominal is not None and nominal["key"] != b["key"]
+    held = nominal is not None and keys.index(nominal["key"]) > keys.index(b["key"])
     on_now, nxt = until(b["bits"], hour)
     changed = bool(b["bits"][(hour - 1) % 24]) != on_now
-    return {"band": b, "on": on_now, "until": nxt, "held": held,
+    return {"band": b, "on": on_now, "until": nxt, "held": held, "pending": None,
             "release": (b["hi"] + hyst) if held else None,
             "settling": bool(changed and minute is not None and minute < 10)}
 
@@ -462,8 +502,17 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     held_band = portal.get("band")                                   # kept by the poller: the hysteresis memory
     shared = _num(portal.get("out")) if "out" in portal else None
     plan_out = shared if shared is not None else outdoor
-    want = (expect(pl, plan_out, hour, minute, prev_key=held_band, hyst=hyst)
+    want = (expect(pl, plan_out, hour, minute, prev_key=held_band, hyst=hyst,
+                   band_key=held_band if shared is not None else None)
             if (pl and plan_out is not None and hour is not None) else None)
+    if want and shared is not None and portal.get("pend") and portal.get("pend") != want["band"]["key"]:
+        # the temperature asks for another band, which has not lasted long enough yet (shared_bands' hold)
+        nxt_band = next((x for x in pl if x["key"] == portal["pend"]), None)
+        due = _iso(portal.get("due"))
+        if nxt_band and due:
+            want["pending"] = {"band": nxt_band, "mins": max(1, int(-(-(due - now).total_seconds() // 60)))}
+            want["held"] = False                     # it is the hold keeping it here, not the hysteresis
+            want["release"] = None
     over = under = 0
     if want and not want["settling"] and not stale:
         if want["on"] is False:
@@ -916,7 +965,9 @@ def auto_switch(app, account, session, token, building_list, now) -> int:
     """The portal as supervisor: for every property whose automatic switching
     is ON, point each building's fan groups at the slot for the property's
     current plan band (app context assumed; called from bloom.poll_account
-    right after record(), so `data["portal"]` is this poll's).
+    right after record(), so `data["portal"]` is this poll's). That band has
+    already been through the hysteresis and the hold (shared_bands), so a
+    reading that dips into another band and comes back switches nothing.
 
     Deliberately narrow. It only ever changes which slot a group follows —
     never a schedule's hours. It acts only on a property a person has switched
@@ -1202,13 +1253,16 @@ def record(app, account, building_list, now) -> int:
         slice_ = trim(b)
         out_v, out_age = _outdoor(slice_["sensors"], now)
         live_out = out_v if (out_v is not None and out_age is not None and out_age <= STALE_MIN) else None
-        prev = ((site.data or {}).get("portal") or {}).get("band") if site.data else None
+        was = ((site.data or {}).get("portal") or {}) if site.data else {}
+        prev = was.get("band")
         prop = place(index, site.name, key)
-        items.append({"key": key, "group": prop or ("site", key), "out": live_out, "prev": prev})
+        items.append({"key": key, "group": prop or ("site", key), "out": live_out, "prev": prev,
+                      "pend": was.get("pend"), "since": was.get("since")})
         touched.append((site, slice_, prop))
     # One temperature and one plan band per property, carried from poll to poll
-    # so the hysteresis has something to hold on to (shared_bands).
-    bands = shared_bands(items, pl, hyst)
+    # so the hysteresis has something to hold on to — and so does the hold: a
+    # move to another band waits FAN_PLAN_HOLD_MIN minutes (shared_bands).
+    bands = shared_bands(items, pl, hyst, now=now, hold_min=cfg.get("FAN_PLAN_HOLD_MIN", 30.0))
     sites = []
     for site, slice_, prop in touched:
         slice_["portal"] = {**bands[site.asset_key], "prop": prop}

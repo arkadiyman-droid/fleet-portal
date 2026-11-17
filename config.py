@@ -98,6 +98,11 @@ class Config:
         self.FAN_PLAN_MILD_FROM_F = float(os.environ.get("FAN_PLAN_MILD_FROM_F", "36"))
         self.FAN_PLAN_FREE_FROM_F = float(os.environ.get("FAN_PLAN_FREE_FROM_F", "56"))
         self.FAN_PLAN_HYST_F = float(os.environ.get("FAN_PLAN_HYST_F", "2"))
+        # The hold: a property moves to another schedule only once its
+        # temperature has asked for it on every reading for this many minutes,
+        # so one stray reading does not switch a property and switch it back
+        # (bloom_fans.shared_bands). 0 turns the hold off.
+        self.FAN_PLAN_HOLD_MIN = float(os.environ.get("FAN_PLAN_HOLD_MIN", "30"))
         # Master switch for the portal re-pointing fan groups between Bloom
         # schedule slots by itself (bloom_fans.auto_switch). Even when true it
         # acts only on a property a person has turned on at /fans/property;
