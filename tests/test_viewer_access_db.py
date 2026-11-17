@@ -363,3 +363,9 @@ def test_my_properties_shows_the_average_and_the_mix_temperature(pat, world, ses
     row = re.search(r"<tr>(?:(?!</tr>).)*50 South 9 St.*?</tr>", page, re.S).group(0)
     cells = [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r'<td class="num"[^>]*>(.*?)</td>', row, re.S)]
     assert cells[1] == "—" and cells[5] == "—" and "No apartment sensor is reporting" in row
+
+
+def test_the_users_list_has_a_search_box(root, world):
+    users = root.get("/users").get_data(as_text=True)
+    assert 'id="el-q"' in users and "Search by name, email or property" in users and 'id="el-table"' in users
+    assert 'id="el-q"' not in root.get("/clients").get_data(as_text=True)      # only where it was asked for

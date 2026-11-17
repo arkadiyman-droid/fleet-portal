@@ -14,8 +14,15 @@
     {% endif %}
   </p>
 
+  {% if rows and search %}
+  <div style="display:flex;gap:10px;align-items:center;margin:0 0 12px;flex-wrap:wrap">
+    <input type="search" id="el-q" placeholder="{{ search }}" autocomplete="off" autofocus
+           style="flex:1;min-width:220px;max-width:460px;padding:8px 10px;font-size:14px;border:1px solid var(--border);border-radius:6px">
+    <span class="card-sub" id="el-count"></span>
+  </div>
+  {% endif %}
   {% if rows %}
-  <table>
+  <table id="el-table">
     <thead>
       <tr>
         {% for col in columns %}<th>{{ col }}</th>{% endfor %}
@@ -53,6 +60,38 @@
       {% endfor %}
     </tbody>
   </table>
+  {% if search %}
+  <div class="empty" id="el-none" style="display:none">Nobody matches that search.</div>
+  <script>
+  (function () {
+    // Filter as you type: every word typed must appear somewhere in the row
+    // (any column but the buttons). Nothing is sent to the server.
+    var q = document.getElementById("el-q"), table = document.getElementById("el-table");
+    if (!q || !table) return;
+    var rows = [].slice.call(table.tBodies[0].rows).map(function (tr) {
+      var text = [].slice.call(tr.cells, 0, -1).map(function (td) { return td.textContent; }).join(" ").toLowerCase();
+      return {tr: tr, text: text};
+    });
+    var count = document.getElementById("el-count"), none = document.getElementById("el-none");
+    function apply() {
+      var words = q.value.toLowerCase().split(/\s+/).filter(Boolean), shown = 0;
+      rows.forEach(function (r) {
+        var ok = words.every(function (w) { return r.text.indexOf(w) !== -1; });
+        r.tr.style.display = ok ? "" : "none";
+        if (ok) shown++;
+      });
+      count.textContent = words.length ? shown + " of " + rows.length : rows.length + " in the list";
+      table.style.display = shown ? "" : "none";
+      none.style.display = shown ? "none" : "";
+    }
+    var start = new URLSearchParams(location.search).get("q");
+    if (start) q.value = start;
+    q.addEventListener("input", apply);
+    q.addEventListener("keydown", function (e) { if (e.key === "Escape") { q.value = ""; apply(); } });
+    apply();
+  })();
+  </script>
+  {% endif %}
   {% else %}
     <div class="empty">No records yet.</div>
   {% endif %}

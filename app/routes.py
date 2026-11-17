@@ -2546,6 +2546,7 @@ def list_users():
         title="Users",
         columns=["Name", "Email", "Login", "Can see"],
         rows=rows,
+        search="Search by name, email or property",
         entity="users",
         entity_singular="user",
         show_archived=show_archived,
