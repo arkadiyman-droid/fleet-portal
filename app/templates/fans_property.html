@@ -80,19 +80,20 @@
 
 <div class="pp-card">
   <h2>Step 1 · Load the plan's three schedules</h2>
-  <p class="sub">Puts the plan's hours into slots 3 (35° and below), 4 (36–55°) and 5 (56° and above) at every building. It does not move any fan group, so on its own it changes nothing about how fans run.</p>
+  <p class="sub">Puts the plan's hours into slots 3 (35° and below), 4 (36–55°) and 5 (56° and above) at every building. It does not move any fan group. Loading a building for the first time changes nothing about how its fans run; sending changed hours to a schedule fan groups already follow does, and is called out below before you send.</p>
   <table>
     <tr><th>Building</th><th>Slots 3 · 4 · 5</th><th>To send</th></tr>
     {% for r in rows %}
     <tr><td>{{ r.site.name }}</td>
       {% if not r.live %}<td colspan="2"><span class="pp-pill bad">not in Bloom's feed</span></td>
       {% else %}
-      <td>{% for s in r.push.slots %}<span class="pp-pill {{ 'ok' if s.holds else ('bad' if s.blocked else 'warn') }}" title="{{ s.now_ranges }}">slot {{ s.n }} {{ 'ready' if s.holds else ('blocked' if s.blocked else 'needs loading') }}</span> {% endfor %}</td>
+      <td>{% for s in r.push.slots %}<span class="pp-pill {{ 'ok' if s.holds else ('bad' if s.blocked else 'warn') }}" title="{{ s.now_ranges }}">slot {{ s.n }} {{ 'ready' if s.holds else ('blocked' if s.blocked else ('in use · hours change' if s.live else 'needs loading')) }}</span> {% endfor %}</td>
       <td>{% if r.stale %}<span class="pp-pill">not reporting</span> <span class="card-sub">skipped until its controller reports again</span>{% elif r.push.blocked %}<span class="pp-pill bad">skipped</span> <span class="card-sub">{% for s in r.push.slots if s.blocked %}slot {{ s.n }}: {{ s.blocked }}{{ '; ' if not loop.last }}{% endfor %}</span>{% elif r.push.n_changes %}{{ r.push.n_changes }} change{{ 's' if r.push.n_changes != 1 }}{% else %}<span class="card-sub">nothing — already loaded</span>{% endif %}</td>
       {% endif %}</tr>
     {% endfor %}
   </table>
   {% if act.load.n %}
+    {% if act.load.live %}<div class="pp-banner warn"><b>This changes how fans run.</b> Fan groups are following {{ 'these schedules' if act.load.live|length != 1 else 'this schedule' }} right now, so the new hours take effect as soon as each controller takes the change: {% for nm, s in act.load.live %}{{ nm }} slot {{ s.n }} ({{ s.now_ranges }} → <b>{{ s.new_ranges }}</b>){{ '; ' if not loop.last }}{% endfor %}.</div>{% endif %}
     {{ sendform('load', act.load.digest, notes.load, 'Send ' ~ act.load.changes ~ ' changes to Bloom for ' ~ act.load.n ~ ' building' ~ ('s' if act.load.n != 1 else '')) }}
   {% else %}<p class="card-sub" style="margin:0">Nothing to send — every building that can be loaded already holds the plan.</p>{% endif %}
 </div>

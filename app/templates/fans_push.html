@@ -70,7 +70,7 @@
 
 <div class="ps-safe">
   <b>What this does not touch:</b> slots 1 and 2, and which slot each fan group follows.
-  {% if p.blocked %}One of the target slots is in use, so nothing can be sent (see below).{% else %}No fan group follows slots 3, 4 or 5 on this building, so loading them changes nothing about how the fans run right now. Moving a group onto one of them is a separate step.{% endif %}
+  {% if p.blocked %}One of the target slots is in use, so nothing can be sent (see below).{% elif p.live %}<b>This changes how fans run:</b> fan groups follow slot {{ p.live|join(' and ') }} right now, so its new hours take effect as soon as the controller takes the change.{% else %}No fan group follows slots 3, 4 or 5 on this building, so loading them changes nothing about how the fans run right now. Moving a group onto one of them is a separate step.{% endif %}
 </div>
 
 <div class="ps-card">
@@ -81,7 +81,7 @@
     <span class="nm">Slot {{ s.n }}<small>plan: {{ s.label }}</small></span>
     <span class="lab">Now</span>{{ strip(s.now, s.changes, 'now') }}<span class="card-sub">{{ s.now_ranges }}{% if s.sp_on %} · gated below {{ "%.0f"|format(s.sp) if s.sp is not none else '?' }}°{% endif %}</span>
     <span class="lab">After</span>{{ strip(s.new, s.changes) }}
-    <span>{% if s.blocked %}<span class="ps-blocked">Not allowed: {{ s.blocked }}.</span>{% elif not s.changes and not s.gate_off %}<span class="card-sub">{{ s.new_ranges }} · already in place</span>{% else %}<b>{{ s.new_ranges }}</b> · {{ s.changes|length }} hour{{ 's' if s.changes|length != 1 }} change{{ 's' if s.changes|length == 1 }}{% if s.gate_off %} · outdoor gate switched off{% endif %}{% endif %}</span>
+    <span>{% if s.blocked %}<span class="ps-blocked">Not allowed: {{ s.blocked }}.</span>{% elif not s.changes and not s.gate_off %}<span class="card-sub">{{ s.new_ranges }} · already in place</span>{% else %}<b>{{ s.new_ranges }}</b> · {{ s.changes|length }} hour{{ 's' if s.changes|length != 1 }} change{{ 's' if s.changes|length == 1 }}{% if s.live %} · <span class="ps-blocked">in use by {{ s.used_by|join(', ') }} — takes effect at once</span>{% endif %}{% if s.gate_off %} · outdoor gate switched off{% endif %}{% endif %}</span>
   </div>
   {% endfor %}
   <p class="card-sub" style="margin:10px 0 0">Teal = hours the slot runs the fans now · blue = after the push · amber outline = an hour that changes.</p>

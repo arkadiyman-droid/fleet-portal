@@ -243,8 +243,8 @@ PLAN = bf.plan(36, 56)
 def test_plan_bands_and_hours():
     assert [b["key"] for b in PLAN] == ["cold", "mild", "free"]
     cold, mild, free = PLAN
-    assert cold["label"] == "35° and below" and cold["ranges"] == "8am–10am, 6pm–8pm" and cold["hours_on"] == 4
-    assert mild["label"] == "36° to 55°" and mild["ranges"] == "8am–12pm, 5pm–10pm" and mild["hours_on"] == 9
+    assert cold["label"] == "35° and below" and cold["ranges"] == "7am–10am, 6pm–8pm" and cold["hours_on"] == 5
+    assert mild["label"] == "36° to 55°" and mild["ranges"] == "7am–12pm, 5pm–10pm" and mild["hours_on"] == 10
     assert free["label"] == "56° and above" and free["hours_on"] == 24
     # 35 is in the cold band, 36 is not; 55 is in the middle band, 56 is not
     assert [bf.band_of(PLAN, v)["key"] for v in (20, 35, 35.9, 36, 55, 55.9, 56, 80)] == \
@@ -304,7 +304,7 @@ def test_fans_running_when_the_plan_says_off_is_the_headline():
     assert s["over"] == 3 and s["under"] == 0 and s["tone"] == "over"
     assert "3 fans running — plan says off until 5pm (44° outside)" == s["status"]
     night = _plan(outdoor=20, rs=(1, 1, 0), hour=23)      # a cold night, two still on (the third is "down")
-    assert night["over"] == 2 and night["tone"] == "over" and "until 8am" in night["status"]
+    assert night["over"] == 2 and night["tone"] == "over" and "until 7am" in night["status"]
     assert _plan(outdoor=52, rs=(1, 1, 1), hour=3)["over"] == 3             # 50-55 is judged now
 
 
@@ -346,13 +346,14 @@ def test_no_outdoor_or_no_report_means_no_judgement():
 
 def test_plan_gaps_name_what_bloom_is_missing():
     g = _plan(outdoor=44, rs=(1, 1, 1))["gaps"]           # fixture: one schedule, below 35°, 8-10 + 6-8
-    assert g == ["No schedule in Bloom for 36° to 55° — the plan is 8am–12pm, 5pm–10pm."]
+    assert g == ["35° and below: Bloom runs the fans 8am–10am, 6pm–8pm; the plan is 7am–10am, 6pm–8pm.",
+                 "No schedule in Bloom for 36° to 55° — the plan is 7am–12pm, 5pm–10pm."]
     b = _building(rs=(1, 1, 1))
     for x in b["sensors"]:                                # stretch the cold schedule to 8-11
         if x["type"] == "gen-sched" and x["name"] == "1::10":
             x["pv"] = 1
     g = bf.summary(bf.trim(b), now=NOW, hour=14, pl=PLAN)["gaps"]
-    assert g[0] == "35° and below: Bloom runs the fans 8am–11am, 6pm–8pm; the plan is 8am–10am, 6pm–8pm."
+    assert g[0] == "35° and below: Bloom runs the fans 8am–11am, 6pm–8pm; the plan is 7am–10am, 6pm–8pm."
     for x in b["sensors"]:                                # a setpoint the plan does not have
         if x["type"] == "oat-sp-gen" and x["name"] == "1":
             x["pv"] = 40
@@ -509,9 +510,9 @@ COLD, MILD, FREE = ("".join(str(b) for b in band["bits"]) for band in PLAN)
 def test_plan_push_loads_the_three_schedules_into_slots_3_4_5():
     p = bf.plan_push(_live(), PLAN)                       # slots empty, group on slot 1
     assert [(s["n"], s["key"]) for s in p["slots"]] == [(3, "cold"), (4, "mild"), (5, "free")]
-    assert not p["blocked"] and p["n_changes"] == 4 + 9 + 24
-    assert [len(s["changes"]) for s in p["slots"]] == [4, 9, 24]
-    assert p["slots"][0]["changes"] == [8, 9, 18, 19] and p["slots"][0]["new_ranges"] == "8am–10am, 6pm–8pm"
+    assert not p["blocked"] and p["n_changes"] == 5 + 10 + 24
+    assert [len(s["changes"]) for s in p["slots"]] == [5, 10, 24]
+    assert p["slots"][0]["changes"] == [7, 8, 9, 18, 19] and p["slots"][0]["new_ranges"] == "7am–10am, 6pm–8pm"
     # every point sent is Bloom's own object, with the new value and the old one
     pt = next(x for x in p["points"] if x["name"] == "3::8")
     assert pt == {"_id": "s3-8", "type": "gen-sched", "name": "3::8", "pv": 1, "originalPv": 0, "pollTs": FRESH}
@@ -744,7 +745,7 @@ def _on_slot(slot, bits, outdoor=44, band="mild", hour=14, gate=0, rs=(1, 1, 1))
 def test_an_ungated_schedule_holds_at_every_temperature():
     s = _on_slot(4, MILD)                                    # 44°, on the middle slot: the plan, carried out
     assert s["bloom_now"]["active"] and s["bloom_now"]["bits"] == [int(c) for c in MILD]
-    assert s["bloom_now"]["why"] == "Bloom's schedule 4 applies at every temperature: 8am–12pm, 5pm–10pm"
+    assert s["bloom_now"]["why"] == "Bloom's schedule 4 applies at every temperature: 7am–12pm, 5pm–10pm"
     assert s["gaps"] == [] and not s["slot_off"] and s["slots_now"] == [4] and s["slot_want"] == 4
     assert "follow schedule 4 at every temperature" in s["banner"]
     # the same slot behind an outdoor gate is only in force below the gate
@@ -766,3 +767,59 @@ def test_write_summary_says_what_a_logged_change_did():
     move = bf.plan_assign(_live(LOADED), PLAN, target_key="mild")["log"]
     assert bf.write_summary(move) == "group 1: schedule 1 → 4"
     assert bf.write_summary([{"type": "x"}]) == "1 other" and bf.write_summary(None) == ""
+
+
+# ── changing the plan after the groups are on its slots ───────────────────────
+
+def _span_bits(*spans):
+    return "".join(str(b) for b in bf._hours(*spans))
+
+
+OLD_COLD, OLD_MILD = _span_bits((8, 10), (18, 20)), _span_bits((8, 12), (17, 22))     # the 8am plan Berry was loaded with
+PLAN_8AM = {3: OLD_COLD, 4: OLD_MILD, 5: FREE}
+
+
+def test_the_morning_start_is_7am_in_both_schedules():
+    cold, mild, free = PLAN
+    assert cold["bits"][7] == 1 and mild["bits"][7] == 1 and cold["bits"][6] == 0 and mild["bits"][6] == 0
+    assert cold["bits"][9] == 1 and cold["bits"][10] == 0          # cold still stops at 10am: three hours
+    assert mild["bits"][11] == 1 and mild["bits"][12] == 0 and mild["bits"][21] == 1 and mild["bits"][22] == 0
+
+
+def test_a_followed_slot_is_revised_only_where_the_portal_loaded_it():
+    b = _live(PLAN_8AM, assign=4)                                 # groups on slot 4, which holds the 8am hours
+    refused = bf.plan_push(b, PLAN)
+    assert refused["blocked"] and refused["points"] == [] and refused["live"] == []
+    p = bf.plan_push(b, PLAN, revise=True)
+    assert not p["blocked"] and p["live"] == [4] and p["slots"][1]["live"] and not p["slots"][0]["live"]
+    # exactly the 7am hour, in the cold slot and in the one the fans follow
+    assert sorted((x["name"], x["pv"], x["originalPv"]) for x in p["points"]) == [("3::7", 1, 0), ("4::7", 1, 0)]
+    assert p["slots"][1]["now_ranges"] == "8am–12pm, 5pm–10pm" and p["slots"][1]["new_ranges"] == "7am–12pm, 5pm–10pm"
+    assert not bf.push_landed(b, PLAN, revise=True) and bf.push_landed(_live(LOADED, assign=4), PLAN, revise=True)
+    # a slot nobody follows is an ordinary load either way, and never flagged
+    assert bf.plan_push(_live(PLAN_8AM), PLAN, revise=True)["live"] == []
+    # a followed slot behind an outdoor gate is not one the portal set up: still refused
+    gated = bf.plan_push(_live(PLAN_8AM, assign=4, enabled={1: 1, 4: 1}), PLAN, revise=True)
+    assert gated["blocked"] and gated["points"] == [] and gated["live"] == []
+
+
+def test_groups_are_not_moved_onto_a_slot_still_holding_the_old_hours():
+    a = bf.plan_assign(_live(PLAN_8AM), PLAN, target_key="mild")
+    assert a["points"] == [] and "load the schedules first" in a["blocked"]
+    # so automatic switching waits until the revised hours have been sent
+    assert bf.auto_plan(_live(PLAN_8AM, assign=4), _stored(band="cold"), PLAN, {"Berry"}, False, NOW)[0] == "wait"
+
+
+def test_portal_loaded_is_an_accepted_write_of_schedule_hours():
+    from types import SimpleNamespace as W
+    load = [{"type": "gen-sched", "name": "4::8", "old": 0, "new": 1}]
+    move = [{"type": "gen-sched-assign", "name": "fg-1", "old": 1, "new": 4}]
+    writes = [W(site_id=1, ok=True, changes=load), W(site_id=2, ok=True, changes=move),
+              W(site_id=3, ok=False, changes=load), W(site_id=4, ok=True, changes=None)]
+    assert bf.portal_loaded(writes) == {1}
+
+
+def test_plan_gaps_say_a_loaded_slot_is_behind_the_plan():
+    s = _on_slot(4, OLD_MILD)                                # on slot 4, which still holds 8am–12pm
+    assert s["gaps"] == ["Schedule 4 (36° to 55°) holds 8am–12pm, 5pm–10pm; the plan is now 7am–12pm, 5pm–10pm"
+                         " — send the schedules again."]

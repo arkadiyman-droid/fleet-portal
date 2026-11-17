@@ -1641,6 +1641,10 @@ def fans_property():
     band = next((b for b in pl if b["key"] == portal.get("band")), None)
     target = bloom_fans.PLAN_SLOTS[band["key"]] if band else None
     STEP = {"load": "push", "switch": "switch", "restore": "restore"}
+    # Where the portal loaded the schedules before, a slot fans now follow may
+    # have its hours revised (the plan was changed); anywhere else it is refused.
+    revisable = bloom_fans.portal_loaded(
+        BloomFanWrite.query.filter(BloomFanWrite.site_id.in_([s.id for s in sites]), BloomFanWrite.ok.is_(True)).all())
 
     def build(accts):
         now = datetime.utcnow()
@@ -1653,7 +1657,7 @@ def fans_property():
             sm = bloom_fans.summary(bloom_fans.trim(b), now=now)
             rows.append({"site": s, "live": True, "stale": sm["stale"], "on": sm["on"], "total": sm["total"],
                          "hand": sm.get("hand") or 0,
-                         "push": bloom_fans.plan_push(b, pl),
+                         "push": bloom_fans.plan_push(b, pl, revise=s.id in revisable),
                          "switch": bloom_fans.plan_assign(b, pl, target_key=band["key"]) if band else None,
                          "restore": bloom_fans.plan_assign(b, pl, slot=1)})
         act = {}
@@ -1661,10 +1665,12 @@ def fans_property():
             todo = [r for r in rows if r["live"] and not r["stale"] and r[part] and r[part]["points"]]
             act[k] = {"todo": todo, "n": len(todo), "changes": sum(r[part]["n_changes"] for r in todo),
                       "digest": bloom_fans.combined_digest(f"{r['site'].id}:{r[part]['digest']}" for r in todo)}
+        # a load that rewrites hours fan groups are following right now
+        act["load"]["live"] = [(r["site"].name, sl) for r in act["load"]["todo"] for sl in r["push"]["slots"] if sl["live"]]
         return rows, act
 
     error = result = None
-    rows, act = [], {k: {"todo": [], "n": 0, "changes": 0, "digest": ""} for k in STEP}
+    rows, act = [], {k: {"todo": [], "n": 0, "changes": 0, "digest": "", "live": []} for k in STEP}
     accts = {}
     try:
         accts = _fans_live_accounts(sites)
@@ -1732,7 +1738,8 @@ def fans_property():
 
     auto = db.session.get(BloomFanAuto, name)
     out = portal.get("out")
-    notes = {"load": f"Fleet portal: load the plan's schedules into slots 3-5 at {name}",
+    notes = {"load": (f"Fleet portal: update the plan's hours in slots 3-5 at {name}" if act["load"].get("live")
+                      else f"Fleet portal: load the plan's schedules into slots 3-5 at {name}"),
              "switch": (f"Fleet portal: {name} at {out:.0f}° — fan groups to the '{band['label']}' schedule (slot {target})"
                         if band and out is not None else ""),
              "restore": f"Fleet portal: {name} fan groups back to Schedule 1"}
@@ -1771,12 +1778,16 @@ def fans_push(site_id):
     error = preview = result = None
     note = (request.form.get("note") or "").strip()[:500] if request.method == "POST" else \
         "Fleet portal: load the plan's schedules into slots 3-5 (no fan group follows them)"
+    # only where the portal loaded the slots before may a followed slot's hours be revised
+    revise = site.id in bloom_fans.portal_loaded(BloomFanWrite.query.filter_by(site_id=site.id, ok=True).all())
     try:
         building, sess, tok = _fans_live_building(site)
         if building is None:
             error = "the building is not in Bloom's feed for this login"
         else:
-            preview = bloom_fans.plan_push(building, pl)
+            preview = bloom_fans.plan_push(building, pl, revise=revise)
+            if request.method != "POST" and preview["live"]:
+                note = "Fleet portal: update the plan's hours in slots 3-5 (fan groups follow a revised slot)"
     except Exception as e:
         db.session.rollback()
         error = str(e)[:300]
@@ -1801,8 +1812,8 @@ def fans_push(site_id):
                     _time.sleep(3)
                     again, sess, tok = _fans_live_building(site)
                     if again is not None:
-                        row.landed = bloom_fans.push_landed(again, pl)
-                        preview = bloom_fans.plan_push(again, pl)
+                        row.landed = bloom_fans.push_landed(again, pl, revise=revise)
+                        preview = bloom_fans.plan_push(again, pl, revise=revise)
                 except Exception as e:
                     db.session.rollback()
                     row.landed = None

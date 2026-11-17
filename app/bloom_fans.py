@@ -143,9 +143,10 @@ def until(bits, hour):
 # ── the plan: how the fans SHOULD run ──────────────────────────────────────────
 #
 # The operator's rule (2026-11-16, as he tightened it the same day), by outdoor
-# temperature in whole degrees:
-#   35° and below   off, except 8-10am and 6-8pm
-#   36° to 55°      on 8am-12pm and 5-10pm, off otherwise
+# temperature in whole degrees. The morning start was 8am until that night,
+# when he moved it to 7am in both schedules after watching Berry stop at 10pm:
+#   35° and below   off, except 7-10am and 6-8pm
+#   36° to 55°      on 7am-12pm and 5-10pm, off otherwise
 #   56° and above   on around the clock
 # So the lines are at 36 and 56 (FAN_PLAN_MILD_FROM_F / FAN_PLAN_FREE_FROM_F):
 # a reading of 35.9 is still "35 and below".
@@ -175,9 +176,9 @@ def plan(mild_from=36.0, free_from=56.0) -> list:
     def band(key, lo, hi, bits, label, short):
         return {"key": key, "lo": lo, "hi": hi, "bits": bits, "label": label, "short": short,
                 "hours_on": sum(bits), "ranges": ranges(bits)}
-    return [band("cold", None, mild_from, _hours((8, 10), (18, 20)),
+    return [band("cold", None, mild_from, _hours((7, 10), (18, 20)),
                  f"{mild_from - 1:.0f}° and below", f"≤{mild_from - 1:.0f}°"),
-            band("mild", mild_from, free_from, _hours((8, 12), (17, 22)),
+            band("mild", mild_from, free_from, _hours((7, 12), (17, 22)),
                  f"{mild_from:.0f}° to {free_from - 1:.0f}°", f"{mild_from:.0f}–{free_from - 1:.0f}°"),
             band("free", free_from, None, [1] * 24, f"{free_from:.0f}° and above", f"{free_from:.0f}°+")]
 
@@ -274,6 +275,14 @@ def plan_gaps(pl, groups, scheds) -> list:
         return bool(s) and s["bits"] == b["bits"] and not (s["sp_on"] and s["sp"] is not None)
     if used and used <= set(PLAN_SLOTS.values()) and all(holds(b) for b in pl):
         return []
+    # Same arrangement, but the plan has been changed since the slots were
+    # loaded: say which slot is behind, not that Bloom has no such schedule.
+    plan_scheds = [scheds.get(n) for n in PLAN_SLOTS.values()]
+    if used and used <= set(PLAN_SLOTS.values()) and all(
+            s and not (s["sp_on"] and s["sp"] is not None) for s in plan_scheds):
+        return [f"Schedule {PLAN_SLOTS[b['key']]} ({b['label'].lower()}) holds {scheds[PLAN_SLOTS[b['key']]]['ranges'] or 'no hours'}; "
+                f"the plan is now {b['ranges']} — send the schedules again."
+                for b in pl if not holds(b)]
     out, matched = [], set()
     for b in pl:
         if b["hi"] is None:
@@ -726,6 +735,13 @@ def page(rows, show="all", q="", sort="property") -> dict:
 # assignment are left exactly as they are; putting a group ON one of the new
 # slots is a later, separate step. A slot a group does follow is refused.
 #
+# The one exception (`revise`) is for changing the plan after the groups have
+# been moved onto its slots: a followed slot's HOURS may then be rewritten,
+# which changes how those fans run at once and is flagged `live` so the page
+# can say so. The caller passes revise only for a building the portal itself
+# loaded before (portal_loaded), and a followed slot behind an outdoor gate is
+# still refused — the portal's own slots never have one.
+#
 # Each slot is written as its 24 hourly points (gen-sched "S::H") and, if it is
 # on, its outdoor-setpoint switch (gen-sp-enabled "oatSp::S") is turned off so
 # the hours are not gated by Bloom's own outdoor reading.
@@ -733,14 +749,24 @@ def page(rows, show="all", q="", sort="property") -> dict:
 PLAN_SLOTS = {"cold": 3, "mild": 4, "free": 5}
 
 
-def plan_push(building: dict, pl) -> dict:
+def portal_loaded(writes) -> set:
+    """The site ids whose schedule slots the portal has loaded before: an
+    accepted write that set schedule hours. Those are the buildings where a
+    followed slot's hours may be revised (plan_push revise=True)."""
+    return {w.site_id for w in writes
+            if w.ok and any((c or {}).get("type") == "gen-sched" for c in (w.changes or []))}
+
+
+def plan_push(building: dict, pl, revise=False) -> dict:
     """What loading the plan into this building's slots would change, from the
     LIVE building object out of /api/assets (the full one: its points carry the
     ids Bloom needs). Pure. Returns:
 
       slots   one per plan band: slot number, the hours there now and after,
               which hours change, which groups follow it, and `blocked` (with
-              the reason) when the slot must not be written
+              the reason) when the slot must not be written, and `live` when
+              fan groups follow the slot and its hours are being revised
+              (revise=True) — the one case where a load changes how fans run
       points  the exact point objects to send — Bloom's own object with `pv`
               new and `originalPv` old — empty when nothing needs changing or
               any slot is blocked
@@ -771,16 +797,18 @@ def plan_push(building: dict, pl) -> dict:
         gate_off = bool(enabled and _on(enabled.get("pv")))
         # A slot fans are running on is only refused when loading it would
         # CHANGE it; one that already holds the plan is simply left alone.
-        why = None
+        why, live = None, False
         if missing:
             why = f"Bloom's feed has no point for {len(missing)} of this slot's 24 hours"
+        elif used_by and changes and revise and not gate_off:
+            live = True                              # the portal's own slot: new hours under the fans
         elif used_by and (changes or gate_off):
             why = (f"fan group{'s' if len(used_by) != 1 else ''} {', '.join(used_by)} "
                    f"follow{'s' if len(used_by) == 1 else ''} this slot")
         slot = {"n": n, "key": band["key"], "label": band["label"], "now": now, "new": band["bits"],
                 "holds": not missing and not changes and not gate_off,
                 "now_ranges": ranges([b or 0 for b in now]), "new_ranges": band["ranges"],
-                "changes": changes, "gate_off": gate_off, "used_by": used_by, "blocked": why,
+                "changes": changes, "gate_off": gate_off, "used_by": used_by, "blocked": why, "live": live,
                 "sp_on": gate_off, "sp": _num((by.get(("oat-sp-gen", str(n))) or {}).get("pv"))}
         slots.append(slot)
         if why:
@@ -796,6 +824,7 @@ def plan_push(building: dict, pl) -> dict:
         sorted((str(p.get("_id")), p["pv"]) for p in points)).encode()).hexdigest()[:16] if points else ""
     return {"slots": slots, "points": points, "digest": digest,
             "n_changes": len(points), "blocked": any(s["blocked"] for s in slots),
+            "live": [s["n"] for s in slots if s["live"]] if points else [],
             "log": [{"type": p.get("type"), "name": p.get("name"), "old": p.get("originalPv"), "new": p["pv"]}
                     for p in points]}
 
@@ -990,9 +1019,9 @@ def tidy_detail(detail) -> str:
     return m.group(1) if (s.startswith("{") and m) else s
 
 
-def push_landed(building: dict, pl) -> bool:
+def push_landed(building: dict, pl, revise=False) -> bool:
     """True when the building's slots now hold the plan (nothing left to push)."""
-    p = plan_push(building, pl)
+    p = plan_push(building, pl, revise=revise)
     return not p["blocked"] and p["n_changes"] == 0
 
 

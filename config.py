@@ -90,8 +90,8 @@ class Config:
         # outdoor setpoint of the buildings' own cold schedules.
         self.FAN_COLD_F = float(os.environ.get("FAN_COLD_F", "35"))
         # The plan the Fans page measures every building against
-        # (bloom_fans.plan): 35 and below the fans run 8-10am and 6-8pm only;
-        # 36 to 55, 8am-12pm and 5-10pm; 56 and above, always. So the two lines
+        # (bloom_fans.plan): 35 and below the fans run 7-10am and 6-8pm only;
+        # 36 to 55, 7am-12pm and 5-10pm; 56 and above, always. So the two lines
         # are at 36 and 56. HYST is the hysteresis: a building drops to the
         # colder schedule at the line and moves back up only once it reads
         # HYST degrees above it (38 and 58 at the default 2).
