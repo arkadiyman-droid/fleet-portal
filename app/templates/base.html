@@ -187,6 +187,15 @@
       <button type="submit">Log out</button>
     </form>
   </header>
+  {% if g.get('viewing_as') %}
+  <div style="background:#fff7e6;border-bottom:1px solid #f0c36d;color:#5c3d00;padding:8px 20px;font-size:13px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <span>You are seeing the portal exactly as <b>{{ g.user.name }}</b> sees it. Nothing can be changed while you look.</span>
+    <form method="post" action="{{ url_for('auth.view_as_stop') }}" style="margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn plain" style="padding:3px 10px">Back to administrator</button>
+    </form>
+  </div>
+  {% endif %}
   <main class="{% block main_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}

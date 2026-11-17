@@ -2537,6 +2537,7 @@ def list_users():
             "can_edit": True,
             "can_archive": True,
             "extra_url": url_for("admin.user_permissions", user_id=u.id),
+            "see_as_url": url_for("auth.view_as", user_id=u.id) if u.is_active else None,
         }
         for u in users
     ]

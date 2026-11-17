@@ -3,7 +3,13 @@
 {% block content %}
   <div class="page-head">
     <h1>{{ title }}</h1>
-    <a class="btn plain" href="{{ url_for('admin.list_users') }}">Back to Users</a>
+    <span style="display:flex;gap:8px;align-items:center">
+      {% if user.is_active %}<form method="post" action="{{ url_for('auth.view_as', user_id=user.id) }}" style="margin:0" title="Open the portal exactly as {{ user.name }} sees it. Nothing can be changed while you look.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit" class="btn">See the portal as {{ user.name }}</button>
+      </form>{% endif %}
+      <a class="btn plain" href="{{ url_for('admin.list_users') }}">Back to Users</a>
+    </span>
   </div>
 
   <h2 style="font-size:14px;margin:0 0 4px">Properties {{ user.name }} can watch</h2>

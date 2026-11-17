@@ -52,7 +52,19 @@ def load_identity() -> bool:
     Returns False if the session references a deleted/deactivated DB user
     — the caller (admin_auth._require_login) must clear the session and
     redirect to login in that case."""
+    g.viewing_as = False
     if session.get("superuser"):
+        # "See as": the administrator looking at the portal as one of the
+        # users (admin_auth.view_as). For this request they ARE that user —
+        # every page applies that person's own access rule — and
+        # admin_auth refuses anything that would change something.
+        as_id = session.get("view_as")
+        if as_id is not None:
+            seen = User.query.get(as_id)
+            if seen is not None and seen.is_active:
+                g.is_superuser, g.user, g.viewing_as = False, seen, True
+                return True
+            session.pop("view_as", None)             # that account is gone: back to the administrator
         g.is_superuser, g.user = True, None
         return True
     user_id = session.get("user_id")

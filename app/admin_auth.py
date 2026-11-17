@@ -1,6 +1,6 @@
 from urllib.parse import urlparse
 
-from flask import Blueprint, current_app, flash, redirect, render_template, request, session, url_for
+from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, session, url_for
 from sqlalchemy import func
 from werkzeug.security import check_password_hash
 
@@ -13,6 +13,10 @@ auth_bp = Blueprint("auth", __name__)
 # calls them, so no login. Their own secret check stands in (enroll_api.py).
 _EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "auth.email_login", "static", "admin.stripe_webhook",
                      "enroll.hello", "enroll.status", "enroll.complete", "enroll.bundle"}
+
+# The two requests that may be POSTed while the administrator is looking at the
+# portal as someone else: stop, and switch to another person.
+_VIEW_AS_ENDPOINTS = {"auth.view_as", "auth.view_as_stop"}
 
 # A directory-made account has no password of its own: this never matches
 # anything check_password_hash accepts, so the password form cannot open it.
@@ -52,6 +56,12 @@ def _require_login():
         return None
     if session.get("superuser") or "user_id" in session:
         if load_identity():
+            if (getattr(g, "viewing_as", False) and request.method not in ("GET", "HEAD", "OPTIONS")
+                    and request.endpoint not in _VIEW_AS_ENDPOINTS):
+                # Looking as someone else is looking only: nothing is saved or sent under their name.
+                flash(f"You are seeing the portal as {g.user.name}. Nothing can be changed from here — "
+                      "go back to the administrator first.", "error")
+                return redirect(request.referrer or url_for("admin.index"), code=303)
             return None
         # session referenced a deleted/deactivated DB user — drop it and
         # fall through rather than leave it dangling.
@@ -108,3 +118,32 @@ def logout():
     if by_email:
         session["email_signin_off"] = True          # or the very next page would sign them straight back in
     return redirect(url_for("auth.login"))
+
+
+# ─── "See as": the administrator looks at the portal as one of the users ───
+#
+# The surest way to know what a person has been given is to look at it. The
+# administrator's own session stays the administrator's (session["superuser"]);
+# session["view_as"] names the account being looked through, and
+# permissions.load_identity turns each request into that person's. No password
+# or email code is involved, nothing is recorded against the other account, and
+# _require_login refuses every request that would change anything.
+
+@auth_bp.route("/view-as/<int:user_id>", methods=["POST"])
+def view_as(user_id):
+    if not session.get("superuser"):
+        abort(403)
+    user = User.query.get_or_404(user_id)
+    if not user.is_active:
+        flash(f"{user.name} is archived, so there is nothing to see as them.", "error")
+        return redirect(url_for("admin.list_users"))
+    session["view_as"] = user.id
+    return redirect(url_for("admin.index"))
+
+
+@auth_bp.route("/view-as/stop", methods=["POST"])
+def view_as_stop():
+    seen = session.pop("view_as", None)
+    if session.get("superuser") and seen is not None:
+        return redirect(url_for("admin.user_permissions", user_id=seen))
+    return redirect(url_for("admin.index"))

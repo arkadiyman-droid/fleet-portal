@@ -274,3 +274,56 @@ def test_the_administrator_still_sees_everything(root, world):
         assert root.get(url).status_code == 200, url
     home = root.get("/home").get_data(as_text=True)
     assert "Owner A" in home and "Owner B" in home and "9 Elsewhere Ave" in home
+
+
+# ── "See as": the administrator looks at the portal as one of the users ────────
+
+def test_the_administrator_can_see_the_portal_as_a_viewer(root, world):
+    w = world
+    assert "See as" in root.get("/users").get_data(as_text=True)
+    r = root.post(f"/view-as/{w['viewer']}")
+    assert r.status_code == 302
+    home = root.get("/", follow_redirects=True).get_data(as_text=True)
+    assert "seeing the portal exactly as <b>Pat Viewer</b>" in home and "Back to administrator" in home
+    assert "50 South 9 St" in home and "440 Berry St" in home and "18 Monroe St" not in home and "9 Elsewhere" not in home
+    # their rule, not the administrator's: someone else's box is refused, the Users page is not theirs
+    assert root.get(f"/live/{w['box_mine']}").status_code == 200
+    assert root.get(f"/live/{w['box_other']}").status_code in (403, 404)
+    assert root.get("/users").status_code in (302, 403)
+    fans = root.get("/fans").get_data(as_text=True)
+    assert "440 Berry St" in fans and "18 Monroe St" not in fans and "Schedules &amp; switching" not in fans
+    # and back: the administrator again, landing on that person's access page
+    r = root.post("/view-as/stop")
+    assert r.status_code == 302 and f"/users/{w['viewer']}/permissions" in r.headers["Location"]
+    assert root.get("/users").status_code == 200
+    assert "seeing the portal exactly as" not in root.get("/fans").get_data(as_text=True)
+
+
+def test_nothing_can_be_changed_while_seeing_as_someone(root, world, session):
+    import app.models as m
+    w = world
+    root.post(f"/view-as/{w['viewer']}")
+    before = session.get(m.User, w["viewer"]).password_hash
+    r = root.post("/account", data={"current": "first-password-1", "new": "a-brand-new-password", "again": "a-brand-new-password"})
+    assert r.status_code == 303                                         # turned back, not carried out
+    session.expire_all()
+    assert session.get(m.User, w["viewer"]).password_hash == before
+    assert "Nothing can be changed from here" in root.get("/home").get_data(as_text=True)
+    root.post("/view-as/stop")
+    assert root.get("/users").status_code == 200
+
+
+def test_only_the_administrator_can_see_as_someone(pat, root, world, session):
+    import app.models as m
+    w = world
+    other = m.User(name="Sam Other", email="sam@example.test", login="sam", password_hash="!email-sign-in-only")
+    session.add(other); session.commit()
+    assert pat.post(f"/view-as/{other.id}").status_code == 403           # a viewer cannot become someone else
+    assert "Back to administrator" not in pat.get("/home").get_data(as_text=True)
+    # an archived account cannot be looked through, and one archived mid-look drops back to the administrator
+    root.post(f"/view-as/{other.id}")
+    assert "as <b>Sam Other</b>" in root.get("/home").get_data(as_text=True)
+    other.is_active = False; session.commit()
+    assert root.get("/users").status_code == 200
+    assert root.post(f"/view-as/{other.id}", follow_redirects=True).status_code == 200
+    assert "seeing the portal exactly as" not in root.get("/home").get_data(as_text=True)
