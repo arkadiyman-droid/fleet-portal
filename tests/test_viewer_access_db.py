@@ -1,0 +1,276 @@
+"""
+tests/test_viewer_access_db.py — a view-only account sees its own properties
+and nothing else (Postgres tier).
+
+Two owners, three properties. One person is given view access to ONE
+property. Every monitoring page and data feed is then tried as that person:
+their own buildings open, everyone else's are refused, and nothing that
+changes anything is reachable. The administrator is unaffected.
+"""
+import datetime as dt
+
+import pytest
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from tests.conftest import requires_postgres
+from tests.test_bloom_fans import _building
+
+pytestmark = requires_postgres
+
+
+@pytest.fixture
+def world(app, session):
+    """Returns ids. Owner A: property Berry (2 buildings: one 2010 box, one
+    Bloom asset, one fan site) and property DCA (1 building, box + fan site).
+    Owner B: property Other (1 building, box + Bloom asset). Plus an unfiled
+    box, an unfiled Bloom asset and an unfiled fan site."""
+    import app.models as m
+    from app import bloom_fans as bf
+    app.config["WTF_CSRF_ENABLED"] = False
+    now = dt.datetime.utcnow()
+    a, b = m.Client(name="Owner A"), m.Client(name="Owner B")
+    session.add_all([a, b]); session.flush()
+    berry, dca, other = (m.Property(client_id=a.id, name="Berry"), m.Property(client_id=a.id, name="DCA"),
+                         m.Property(client_id=b.id, name="Other"))
+    session.add_all([berry, dca, other]); session.flush()
+    b1, b2 = m.Building(property_id=berry.id, name="50 South 9 St"), m.Building(property_id=berry.id, name="440 Berry St")
+    b3, b4 = m.Building(property_id=dca.id, name="18 Monroe St"), m.Building(property_id=other.id, name="9 Elsewhere Ave")
+    session.add_all([b1, b2, b3, b4]); session.flush()
+    login = m.LegacyLogin(label="main", username="Manager", password="pw")
+    acct = m.BloomAccount(label="omni", username="u", password="p")
+    session.add_all([login, acct]); session.flush()
+
+    def box(name, port, building):
+        return m.LegacyBox(name=name, host="203.0.113.77", port=port, identity="gateway", login_id=login.id,
+                           building_id=building.id if building else None)
+    boxes = [box("50 South 9 St", 8001, b1), box("18 Monroe St", 8002, b3), box("9 Elsewhere Ave", 8003, b4),
+             box("Loose Box", 8004, None)]
+    assets = [m.BloomAsset(account_id=acct.id, asset_key="440-Berry-St", name="440 Berry St", building_id=b2.id),
+              m.BloomAsset(account_id=acct.id, asset_key="9-Elsewhere", name="9 Elsewhere Ave", building_id=b4.id),
+              m.BloomAsset(account_id=acct.id, asset_key="loose", name="Loose Asset", building_id=None)]
+
+    def fan(name, key):
+        raw = _building()
+        raw["name"], raw["locid"] = name, key
+        return m.BloomFanSite(account_id=acct.id, asset_key=key, name=name, data=bf.trim(raw), polled_at=now)
+    fans = [fan("440 Berry St", "440-Berry-St"), fan("18 Monroe St", "18-Monroe-St"),
+            fan("9 Elsewhere Ave", "9-Elsewhere-Ave"), fan("77 Nowhere Rd", "77-Nowhere-Rd")]
+    viewer = m.User(name="Pat Viewer", email="pat@example.test", login="pat",
+                    password_hash=generate_password_hash("first-password-1"))
+    session.add_all(boxes + assets + fans + [viewer]); session.flush()
+    session.add(m.Permission(user_id=viewer.id, scope_type="property", scope_id=berry.id, role="viewer"))
+    session.commit()
+    return {"viewer": viewer.id, "berry": berry.id, "dca": dca.id, "other": other.id,
+            "box_mine": boxes[0].id, "box_dca": boxes[1].id, "box_other": boxes[2].id, "box_loose": boxes[3].id,
+            "asset_mine": assets[0].id, "asset_other": assets[1].id, "asset_loose": assets[2].id,
+            "fan_mine": fans[0].id, "fan_dca": fans[1].id, "fan_other": fans[2].id, "fan_loose": fans[3].id}
+
+
+def _as(app, **who):
+    c = app.test_client()
+    with c.session_transaction() as s:
+        s.update(who)
+    return c
+
+
+@pytest.fixture
+def pat(app, world):
+    return _as(app, user_id=world["viewer"])
+
+
+@pytest.fixture
+def root(app, world):
+    return _as(app, superuser=True)
+
+
+def test_a_viewer_lands_on_their_own_properties(pat, world):
+    r = pat.get("/")
+    assert r.status_code == 302 and r.headers["Location"].endswith("/home")
+    page = pat.get("/home")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200
+    assert "Berry" in html and "50 South 9 St" in html and "440 Berry St" in html
+    for foreign in ("18 Monroe St", "9 Elsewhere Ave", "Owner B", "Loose Box", "Loose Asset", "77 Nowhere Rd"):
+        assert foreign not in html
+    assert "Roof exhaust fans" in html                      # Berry's fan site is on the page
+    # the short menu: no fleet-wide pages, no management pages
+    for hidden in (">Portfolio<", ">Live<", ">Users<", ">Billing<", ">Analytics<", ">Adopt<", ">Clients<"):
+        assert hidden not in html
+    assert ">My properties<" in html and ">Fans<" in html and "view only" in html
+
+
+def test_a_viewer_opens_their_own_buildings_and_no_one_elses(pat, world):
+    w = world
+    assert pat.get(f"/live/{w['box_mine']}").status_code == 200
+    assert pat.get(f"/skyline/{w['asset_mine']}").status_code == 200
+    for url in (f"/live/{w['box_dca']}", f"/live/{w['box_other']}", f"/live/{w['box_loose']}",
+                f"/skyline/{w['asset_other']}", f"/skyline/{w['asset_loose']}"):
+        assert pat.get(url).status_code == 403, url
+
+
+def test_the_data_feeds_behind_a_page_follow_the_same_rule(pat, world):
+    w = world
+    for path in ("history.json", "series.json", "history.csv?res=hourly&days=30"):
+        assert pat.get(f"/live/{w['box_mine']}/{path}").status_code == 200, path
+        assert pat.get(f"/live/{w['box_other']}/{path}").status_code == 403, path
+        assert pat.get(f"/live/{w['box_loose']}/{path}").status_code == 403, path
+    assert pat.get(f"/skyline/{w['asset_mine']}/series.json").status_code == 200
+    assert pat.get(f"/skyline/{w['asset_other']}/series.json").status_code == 403
+    assert pat.get(f"/fans/{w['fan_mine']}/series.json").status_code == 200
+    for k in ("fan_dca", "fan_other", "fan_loose"):
+        assert pat.get(f"/fans/{w[k]}/series.json").status_code == 403, k
+
+
+def test_a_viewers_box_page_shows_readings_but_no_controls_or_address(pat, root, world):
+    html = pat.get(f"/live/{world['box_mine']}").get_data(as_text=True)
+    assert "50 South 9 St" in html
+    for secret in ("203.0.113.77", "8001", "Delete", ">Hide<", "Mute for", "/live/action"):
+        assert secret not in html, secret
+    admin = root.get(f"/live/{world['box_mine']}").get_data(as_text=True)
+    assert "203.0.113.77:8001" in admin and "Delete" in admin and "Mute for" in admin
+
+
+def test_the_fans_page_is_only_their_buildings_and_has_no_switches(pat, root, world):
+    page = pat.get("/fans")
+    html = page.get_data(as_text=True)
+    assert page.status_code == 200 and "440 Berry St" in html
+    for foreign in ("18 Monroe St", "9 Elsewhere Ave", "77 Nowhere Rd"):
+        assert foreign not in html
+    for control in ("Schedules &amp; switching", "Push plan schedules", "Raw Bloom values", "Open schedules in Bloom"):
+        assert control not in html, control
+    admin = root.get("/fans").get_data(as_text=True)
+    for name in ("440 Berry St", "18 Monroe St", "9 Elsewhere Ave", "77 Nowhere Rd", "Schedules &amp; switching"):
+        assert name in admin
+
+
+def test_nothing_that_changes_anything_is_reachable(pat, world):
+    w = world
+    for url in ("/portfolio", "/live", "/skyline", "/heat", "/sensors", "/analytics", "/users", "/billing",
+                "/fans/property?name=Berry", f"/fans/{w['fan_mine']}/push", f"/fans/{w['fan_mine']}/raw",
+                f"/users/{w['viewer']}/permissions"):
+        assert pat.get(url).status_code == 403, url
+    posts = {"/live/action": {"action": "delete", "box_id": w["box_mine"]},
+             f"/live/{w['box_mine']}/mute": {"hours": "4"},
+             "/fans/property": {"name": "Berry", "action": "auto_on"},
+             f"/fans/{w['fan_mine']}/push": {"digest": "x", "note": "x"},
+             "/portfolio/delete": {}, "/portfolio/move": {}, "/portfolio/assign": {},
+             f"/users/{w['viewer']}/properties": {"property_id": w["other"]},
+             f"/users/{w['viewer']}/permissions": {"scope_type": "client", "scope_id": 1, "role": "admin"}}
+    for url, data in posts.items():
+        assert pat.post(url, data=data).status_code == 403, url
+    import app.models as m
+    assert m.LegacyBox.query.get(w["box_mine"]).deleted_at is None
+    assert m.BloomFanAuto.query.count() == 0
+    assert [p.scope_id for p in m.Permission.query.filter_by(user_id=w["viewer"]).all()] == [w["berry"]]
+
+
+def test_a_second_property_is_one_more_tick(root, pat, world, session):
+    import app.models as m
+    w = world
+    assert pat.get(f"/live/{w['box_dca']}").status_code == 403
+    r = root.post(f"/users/{w['viewer']}/properties", data={"property_id": [w["berry"], w["dca"]]})
+    assert r.status_code == 302
+    assert pat.get(f"/live/{w['box_dca']}").status_code == 200
+    assert "18 Monroe St" in pat.get("/home").get_data(as_text=True)
+    assert "18 Monroe St" in pat.get("/fans").get_data(as_text=True)
+    # unticking takes it away again; an operator grant is never removed by the tick list
+    session.add(m.Permission(user_id=w["viewer"], scope_type="property", scope_id=w["other"], role="operator"))
+    session.commit()
+    root.post(f"/users/{w['viewer']}/properties", data={"property_id": [w["berry"]]})
+    held = {(p.scope_id, p.role) for p in m.Permission.query.filter_by(user_id=w["viewer"]).all()}
+    assert held == {(w["berry"], "viewer"), (w["other"], "operator")}
+    assert pat.get(f"/live/{w['box_dca']}").status_code == 403
+
+
+def test_a_grant_on_one_building_shows_only_that_building(app, world, session):
+    import app.models as m
+    w = world
+    solo = m.User(name="Sam Single", email="sam@example.test", login="sam", password_hash=generate_password_hash("x" * 12))
+    session.add(solo); session.flush()
+    b2 = m.Building.query.filter_by(name="440 Berry St").one()
+    session.add(m.Permission(user_id=solo.id, scope_type="building", scope_id=b2.id, role="viewer"))
+    session.commit()
+    sam = _as(app, user_id=solo.id)
+    html = sam.get("/home").get_data(as_text=True)
+    assert "440 Berry St" in html and "50 South 9 St" not in html
+    assert sam.get(f"/skyline/{w['asset_mine']}").status_code == 200
+    assert sam.get(f"/live/{w['box_mine']}").status_code == 403
+    assert sam.get(f"/fans/{w['fan_mine']}/series.json").status_code == 200
+
+
+def test_an_account_with_nothing_shared_sees_nothing(app, world, session):
+    import app.models as m
+    nobody = m.User(name="New Person", email="new@example.test", login="new", password_hash=generate_password_hash("x" * 12))
+    session.add(nobody); session.commit()
+    c = _as(app, user_id=nobody.id)
+    html = c.get("/home").get_data(as_text=True)
+    assert "Nothing has been shared with this account yet" in html and "Berry" not in html
+    fans = c.get("/fans").get_data(as_text=True)
+    assert "440 Berry St" not in fans
+    assert c.get(f"/live/{world['box_mine']}").status_code == 403
+
+
+def test_a_hidden_or_archived_building_is_not_shown_to_a_viewer(pat, world, session):
+    import app.models as m
+    box = m.LegacyBox.query.get(world["box_mine"])
+    box.is_active = False                                   # hidden by the administrator
+    session.commit()
+    assert pat.get(f"/live/{world['box_mine']}").status_code == 403
+    m.Building.query.filter_by(name="440 Berry St").one().is_active = False
+    session.commit()
+    assert "440 Berry St" not in pat.get("/home").get_data(as_text=True).split("Roof exhaust fans")[0]
+
+
+def test_alerts_show_a_viewer_only_their_own_boxes(pat, root, world, session):
+    import app.models as m
+    w, now = world, dt.datetime.utcnow()
+    session.add_all([
+        m.LegacyAlertState(box_id=w["box_mine"], alerting=True, opened_at=now, issue="Safety"),
+        m.LegacyAlertState(box_id=w["box_other"], alerting=True, opened_at=now, issue="Safety"),
+        m.AlertEvent(legacy_box_id=w["box_mine"], controller_name="50 South 9 St", kind="open", title="mine tripped",
+                     delivered="not sent", created_at=now),
+        m.AlertEvent(legacy_box_id=w["box_other"], controller_name="9 Elsewhere Ave", kind="open", title="theirs tripped",
+                     delivered="not sent", created_at=now)])
+    session.commit()
+    html = pat.get("/alerts").get_data(as_text=True)
+    assert "50 South 9 St" in html and "mine tripped" in html
+    assert "9 Elsewhere Ave" not in html and "theirs tripped" not in html
+    assert "Send a test alert" not in html
+    admin = root.get("/alerts").get_data(as_text=True)
+    assert "9 Elsewhere Ave" in admin and "50 South 9 St" in admin
+
+
+def test_a_person_can_change_their_own_password(pat, world, session):
+    import app.models as m
+    bad = pat.post("/account", data={"current": "wrong", "new": "second-password-2", "again": "second-password-2"})
+    assert bad.status_code == 302
+    session.expire_all()
+    assert check_password_hash(m.User.query.get(world["viewer"]).password_hash, "first-password-1")
+    for new, again in (("short", "short"), ("second-password-2", "different-one-22")):
+        pat.post("/account", data={"current": "first-password-1", "new": new, "again": again})
+        session.expire_all()
+        assert check_password_hash(m.User.query.get(world["viewer"]).password_hash, "first-password-1")
+    pat.post("/account", data={"current": "first-password-1", "new": "second-password-2", "again": "second-password-2"})
+    session.expire_all()
+    assert check_password_hash(m.User.query.get(world["viewer"]).password_hash, "second-password-2")
+    page = pat.get("/account").get_data(as_text=True)
+    assert "Property: Berry" in page and "view only" in page
+
+
+def test_a_new_user_goes_straight_to_choosing_what_they_see(root, world):
+    r = root.post("/users/new", data={"name": "Lee New", "email": "lee@example.test", "login": "lee",
+                                      "password": "a-first-password"})
+    assert r.status_code == 302 and "/permissions" in r.headers["Location"]
+    page = root.get(r.headers["Location"]).get_data(as_text=True)
+    assert "Save view access" in page and "Berry" in page and "DCA" in page and "Other" in page
+    listing = root.get("/users").get_data(as_text=True)
+    assert "Berry (view)" in listing and "nothing yet" in listing
+
+
+def test_the_administrator_still_sees_everything(root, world):
+    w = world
+    for url in ("/portfolio", "/live", "/fans", "/home", "/users", f"/live/{w['box_other']}", f"/live/{w['box_loose']}",
+                f"/skyline/{w['asset_loose']}", f"/fans/{w['fan_loose']}/series.json", f"/fans/{w['fan_mine']}/raw"):
+        assert root.get(url).status_code == 200, url
+    home = root.get("/home").get_data(as_text=True)
+    assert "Owner A" in home and "Owner B" in home and "9 Elsewhere Ave" in home

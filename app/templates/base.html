@@ -163,25 +163,25 @@
   <header>
     <div class="brand">EchoTherm Fleet Portal</div>
     <nav>
-      {% if g.is_superuser %}<a href="{{ url_for('admin.portfolio_page') }}">Portfolio</a>{% endif %}
-      <a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
-      <a href="{{ url_for('admin.adopt') }}">Adopt</a>
+      {% if g.is_superuser %}<a href="{{ url_for('admin.portfolio_page') }}">Portfolio</a>{% elif g.user %}<a href="{{ url_for('admin.home_page') }}">My properties</a>{% endif %}
+      {% if not view_only %}<a href="{{ url_for('admin.fleet_overview') }}">Overview</a>
+      <a href="{{ url_for('admin.adopt') }}">Adopt</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %}
       {% if g.is_superuser and heat_badge %}<a href="{{ url_for('admin.heat_overnight_page') }}" title="Which buildings ran for heat overnight">Overnight</a>{% endif %}
-      {% if g.is_superuser %}<a href="{{ url_for('admin.fans_page') }}" title="Roof exhaust fans: running, schedules, cold-weather cutback">Fans</a>{% endif %}
+      {% if g.is_superuser or g.user %}<a href="{{ url_for('admin.fans_page') }}" title="Roof exhaust fans: running, schedules, cold-weather cutback">Fans</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.analytics_page') }}">Analytics</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.sensor_health_page') }}" title="Sensors that look faulty">Sensors</a>{% endif %}
-      <a href="{{ url_for('admin.updates_page') }}">Updates</a>
+      {% if not view_only %}<a href="{{ url_for('admin.updates_page') }}">Updates</a>{% endif %}
       <a href="{{ url_for('admin.alerts_page') }}">Alerts{% if open_alerts %} <span class="navbadge">{{ open_alerts }}</span>{% endif %}</a>
-      <a href="{{ url_for('admin.list_clients') }}">Clients</a>
+      {% if not view_only %}<a href="{{ url_for('admin.list_clients') }}">Clients</a>
       <a href="{{ url_for('admin.list_properties') }}">Properties</a>
       <a href="{{ url_for('admin.list_buildings') }}">Buildings</a>
       <a href="{{ url_for('admin.list_controllers') }}">Controllers</a>
-      <a href="{{ url_for('admin.fleet_status') }}">Fleet Status</a>
+      <a href="{{ url_for('admin.fleet_status') }}">Fleet Status</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.list_users') }}">Users</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.billing_dashboard') }}">Billing</a>{% endif %}
     </nav>
-    <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}{{ g.user.name }}{% endif %}</span>
+    <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}<a href="{{ url_for('admin.account_page') }}" style="color:inherit" title="Your account: what you can see, change your password">{{ g.user.name }}</a>{% if view_only %} · view only{% endif %}{% endif %}</span>
     <form method="post" action="{{ url_for('auth.logout') }}">
       <button type="submit">Log out</button>
     </form>

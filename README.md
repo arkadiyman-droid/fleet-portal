@@ -18,7 +18,7 @@ the controller mints itself (EMS `use_controller/fleet/token.py`).
 |---|---|---|
 | 1 | Data model + super-admin CRUD | ✅ built |
 | 2 | Read-only status polling over Tailscale | ✅ built |
-| 3 | Multi-user accounts, roles, scoped permissions | ✅ built |
+| 3 | Multi-user accounts, roles, scoped permissions, view-only "My properties" | ✅ built |
 | 4 | Billing — contracts, invoices, payments | ✅ built |
 | 5 | Stripe payment processor | ✅ built |
 | 6 | Fleet-proxied control actions into EMS | ❌ not built |
@@ -189,6 +189,50 @@ Models `AlertState`, `AlertEvent` (migration `c4e8b2f9a1d7`). Tests:
 DEP Green Button). See `UTILITY_DATA_INTEGRATION.md` in the EMS repo for the
 research, endpoints and constraints — the conclusion there is that this pull
 belongs in *this* service rather than on a controller.
+
+### View-only accounts ("My properties")
+
+How a knowledgeable person outside the company is given a look at their own
+buildings and nothing else.
+
+**Setting one up** (the administrator, under **Users**):
+
+1. **New user** — name, email, login and a first password. The page goes
+   straight on to what that person can see.
+2. **Properties … can watch** — tick the properties to share and press **Save
+   view access**. Each tick is a `viewer` grant on that property; unticking
+   takes it away. The grants below the tick list are for anything finer (one
+   building, a whole client, or operator/admin rights) and are left alone by
+   the ticks. The Users list shows what each person can see.
+3. The site sits behind Cloudflare Access, so the person's email also has to
+   be allowed in the Access policy for the portal's hostname before the
+   portal's own login page is reachable.
+
+**What the person gets** — a short menu: **My properties**, **Fans**,
+**Alerts**, and their own name (their account page, where they can change the
+password they were given).
+
+- **My properties** (`/home`, `app/home.py`): each shared property with every
+  building's heating status — outdoor, supply, return, hot water, setpoint,
+  run time, alarms — whatever reads the building (EchoTherm controller, Bloom
+  or a 2010 box), and the property's roof fans. A building opens its own page
+  with readings, charts, history and CSV export.
+- **Fans**: the same Fans page the administrator has, limited to their
+  buildings, with the schedule/switching, push, raw-values and Bloom links
+  removed.
+- **Alerts**: only their buildings' alerts and alert history.
+
+**What they never get** — anything that changes something (hide/delete/mute a
+box, fan schedules or automatic switching, filing, users, billing, updates),
+a box's network address, and any building not shared with them.
+
+The rule is in one place per kind of thing: `permissions.can_view_building`
+(a grant of any role on the building, its property or its client), applied by
+`routes._live_box_or_404`, `_bloom_asset_or_403`, `_fan_rows` /
+`_fan_site_or_403` and `_visible_box_ids`. A reading that is not filed under
+a building belongs to the administrator alone, so **file a building in
+Portfolio before sharing its property**. `tests/test_viewer_access_db.py`
+signs in as a view-only person and tries every page and data feed.
 
 ---
 

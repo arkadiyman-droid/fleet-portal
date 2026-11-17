@@ -92,7 +92,7 @@
     {% if heat_badge and heat and heat.state != 'unknown' %}<span class="ho ho-{{ heat.tone }}" title="{{ heat.detail }}">Overnight: {{ heat.label }}</span>{% endif %}
     {% if c.cfh %}<span class="card-sub">calling for heat</span>{% endif %}
     {% if read_ago %}<span class="card-sub">read {{ read_ago }}</span>{% endif %}
-    {% if d.locid %}<a class="bd-ext" href="https://my.empoweredbuildings.com/property/{{ d.locid }}" target="_blank" rel="noopener">Open in Bloom ↗</a>{% endif %}
+    {% if d.locid and g.is_superuser %}<a class="bd-ext" href="https://my.empoweredbuildings.com/property/{{ d.locid }}" target="_blank" rel="noopener">Open in Bloom ↗</a>{% endif %}
   </div>
 
   <div class="bd-sections" data-box="b{{ a.id }}" data-src="bloom">

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}My account — Fleet Portal{% endblock %}
+{% block content %}
+<div class="page-head"><h1>My account</h1></div>
+
+{% if not user %}
+  <div class="form-panel">You are signed in as the administrator. That password is kept in the server's settings, not here.</div>
+{% else %}
+<div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start">
+  <div class="form-panel" style="max-width:420px">
+    <div style="font-weight:600;margin-bottom:10px">{{ user.name }}</div>
+    <div class="kv" style="margin-bottom:14px">
+      <div class="k">Login</div><div class="v">{{ user.login }}</div>
+      <div class="k">Email</div><div class="v">{{ user.email }}</div>
+    </div>
+    <div style="font-weight:600;margin-bottom:6px">What you can see</div>
+    {% if grants %}
+      <ul class="issues" style="margin-bottom:0">
+        {% for gr in grants %}<li class="info">{{ gr.label }} <span class="card-sub">· {{ {'viewer': 'view only', 'operator': 'view and edit', 'admin': 'full'}[gr.role] }}</span></li>{% endfor %}
+      </ul>
+    {% else %}<div class="card-sub">Nothing has been shared with this account yet.</div>{% endif %}
+  </div>
+
+  <div class="form-panel" style="max-width:420px">
+    <div style="font-weight:600;margin-bottom:10px">Change your password</div>
+    <form method="post" action="{{ url_for('admin.account_page') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="current">Current password</label>
+      <input id="current" name="current" type="password" autocomplete="current-password" required>
+      <label for="new">New password <span class="card-sub" style="font-weight:400">at least 10 characters</span></label>
+      <input id="new" name="new" type="password" autocomplete="new-password" minlength="10" required>
+      <label for="again">New password again</label>
+      <input id="again" name="again" type="password" autocomplete="new-password" minlength="10" required>
+      <button type="submit" class="btn">Change password</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

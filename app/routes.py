@@ -2,8 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 from flask import (Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request,
                    session, stream_with_context, url_for)
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app.billing import INVOICE_DUE_DAYS, _finalize_payment, current_contract, generate_invoices, period_for_date
 from app.extensions import csrf, db
@@ -15,15 +16,18 @@ from app.models import (AlertEvent, AlertState, BloomAsset, Building, Client, Co
                         RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
+    can_view_building,
     creatable_building_property_query,
     creatable_controller_building_query,
     creatable_property_client_query,
     current_user,
     effective_role,
     is_superuser,
+    is_view_only,
     require_role,
     superuser_required,
     user_has_min_role_anywhere,
+    visible_building_ids,
     visible_building_query,
     visible_client_query,
     visible_controller_query,
@@ -102,10 +106,78 @@ def _soft_delete_cascade(obj) -> int:
 @admin_bp.route("/")
 def index():
     # Portfolio (the whole fleet by owner -> property) is the landing page for
-    # superusers; others keep the Overview (Portfolio is superuser-only for now).
+    # the administrator; everyone else lands on the properties shared with them.
     if is_superuser():
         return redirect(url_for("admin.portfolio_page"))
-    return redirect(url_for("admin.fleet_overview"))
+    return redirect(url_for("admin.home_page"))
+
+
+# ─── My properties: what a signed-in person may watch (app/home.py) ──────
+
+@admin_bp.app_context_processor
+def _menu_flags():
+    """view_only: a signed-in person whose every grant is 'viewer' gets the
+    short menu (My properties, Fans, Alerts)."""
+    try:
+        return {"view_only": is_view_only()}
+    except Exception:
+        return {"view_only": False}
+
+
+@admin_bp.route("/home")
+def home_page():
+    """The properties shared with this account: every building's heating
+    status, whatever reads it, and the property's roof fans. Read-only. The
+    administrator sees every filed building here (Portfolio is the fuller view)."""
+    import time as _time
+    from sqlalchemy.orm import joinedload
+    from app import home, portfolio
+    now_dt, now = datetime.utcnow(), _time.time()
+    q = Building.query.options(joinedload(Building.property).joinedload(Property.client)) \
+        .filter(Building.is_active.is_(True))
+    ids = visible_building_ids()
+    if ids is not None:
+        q = q.filter(Building.id.in_(ids or [-1]))
+    buildings = []
+    for b in q.all():
+        p = b.property
+        if p is None or not p.is_active or (p.client is not None and not p.client.is_active):
+            continue
+        buildings.append({"client": p.client.name if p.client else None, "client_id": p.client_id,
+                          "prop": p.name, "prop_id": p.id,
+                          "entry": portfolio.building_entry(b, now, now_dt)})
+    data = home.assemble(buildings, _fan_rows(now_dt))
+    return render_template("home.html", title="My properties", **data)
+
+
+@admin_bp.route("/account", methods=["GET", "POST"])
+def account_page():
+    """A signed-in person's own account: what has been shared with them, and
+    changing their own password (the administrator sets the first one)."""
+    user = current_user()
+    if request.method == "POST":
+        if user is None:
+            abort(403)                               # the administrator's password lives in the server's settings
+        cur, new = request.form.get("current", ""), request.form.get("new", "")
+        if not check_password_hash(user.password_hash, cur):
+            flash("The current password is not right. Nothing was changed.", "error")
+        elif len(new) < 10:
+            flash("Choose a new password of at least 10 characters.", "error")
+        elif new != request.form.get("again", ""):
+            flash("The two new passwords do not match.", "error")
+        elif new == cur:
+            flash("The new password is the same as the current one.", "error")
+        else:
+            user.password_hash = generate_password_hash(new)
+            db.session.commit()
+            flash("Password changed.", "success")
+        return redirect(url_for("admin.account_page"))
+    grants = []
+    if user is not None:
+        grants = [{"label": _scope_label(p.scope_type, p.scope_id), "role": p.role}
+                  for p in Permission.query.filter_by(user_id=user.id)
+                  .order_by(Permission.scope_type, Permission.scope_id).all()]
+    return render_template("account.html", title="My account", user=user, grants=grants)
 
 
 # ─── Client ──────────────────────────────────────────────────────────────
@@ -710,6 +782,18 @@ def _visible_controller_ids():
     return [c.id for c in visible_controller_query(current_user().id).all()]
 
 
+def _visible_box_ids():
+    """None = every 2010 box (the administrator); otherwise the ids of the
+    boxes filed under a building this person may see."""
+    ids = visible_building_ids()
+    if ids is None:
+        return None
+    if not ids:
+        return []
+    return [i for (i,) in db.session.query(LegacyBox.id).filter(
+        LegacyBox.building_id.in_(ids), LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)).all()]
+
+
 @admin_bp.app_context_processor
 def _alert_badge():
     """The red count next to "Alerts" in the menu: open alerts this person can see."""
@@ -721,8 +805,11 @@ def _alert_badge():
         if ids is not None:
             q = q.filter(AlertState.controller_id.in_(ids or [-1]))
         n = q.count()
-        if ids is None:                               # the 2010 boxes are the administrator's for now
-            n += _legacy_alert_states().filter(LegacyAlertState.alerting.is_(True)).count()
+        box_ids = _visible_box_ids()
+        lq = _legacy_alert_states().filter(LegacyAlertState.alerting.is_(True))
+        if box_ids is not None:
+            lq = lq.filter(LegacyAlertState.box_id.in_(box_ids or [-1]))
+        n += lq.count()
         return {"open_alerts": n}
     except Exception:
         return {"open_alerts": 0}
@@ -764,17 +851,23 @@ def _legacy_alert_states():
 def alerts_page():
     from app import history, notify
     ids = _visible_controller_ids()
+    box_ids = _visible_box_ids()                       # None = all; a list = only those 2010 boxes
     states = AlertState.query.join(Controller).filter(Controller.is_active.is_(True))
     events = AlertEvent.query
     if ids is not None:
         states = states.filter(AlertState.controller_id.in_(ids or [-1]))
-        events = events.filter(AlertEvent.controller_id.in_(ids or [-1]))
+        events = events.filter(or_(AlertEvent.controller_id.in_(ids or [-1]),
+                                   AlertEvent.legacy_box_id.in_(box_ids or [-1])))
     states = states.all()
     now = datetime.utcnow()
     open_ = sorted([s for s in states if s.alerting], key=lambda s: s.opened_at or now)
     waiting = [s for s in states if not s.alerting and s.first_bad_at]
     muted = [s for s in states if s.muted_until and s.muted_until > now]
-    lstates = _legacy_alert_states().all() if ids is None else []
+    lq = _legacy_alert_states()
+    if box_ids is not None:
+        lq = lq.filter(LegacyAlertState.box_id.in_(box_ids or [-1]))
+    lstates = lq.all()
+    show_legacy = box_ids is None or bool(box_ids)
     l_open = sorted([s for s in lstates if s.alerting], key=lambda s: s.opened_at or now)
     l_waiting = [s for s in lstates if not s.alerting and s.first_bad_at]
     l_muted = [s for s in lstates if s.muted_until and s.muted_until > now]
@@ -783,17 +876,19 @@ def alerts_page():
     # Alarm column showed), now combined into the Alerts tab. From the event log
     # (app/history.changes), newest first; these may or may not have paged.
     box_alarms = []
-    if ids is None:
+    if show_legacy:
         from app.models import LegacyBox, LegacyEvent
-        rows = (LegacyEvent.query.filter(LegacyEvent.kind == "alarm")
-                .order_by(LegacyEvent.ts.desc()).limit(40).all())
+        rq = LegacyEvent.query.filter(LegacyEvent.kind == "alarm")
+        if box_ids is not None:
+            rq = rq.filter(LegacyEvent.box_id.in_(box_ids))
+        rows = rq.order_by(LegacyEvent.ts.desc()).limit(40).all()
         bn = {b.id: b.name for b in LegacyBox.query
               .filter(LegacyBox.id.in_([e.box_id for e in rows] or [-1])).all()}
         box_alarms = [{"name": bn.get(e.box_id, f"box {e.box_id}"), "box_id": e.box_id,
                        "when": history.local(e.ts).strftime("%b %d %I:%M %p").replace(" 0", " "),
                        "text": e.text or e.code or "alarm"} for e in rows if e.box_id in bn]
     hw_now = _hot_water_now([s.box_id for s in lstates if s.alerting or s.first_bad_at or (s.muted_until and s.muted_until > now)]
-                            + [e.legacy_box_id for e in events if e.legacy_box_id], now) if ids is None else {}
+                            + [e.legacy_box_id for e in events if e.legacy_box_id], now) if show_legacy else {}
     cfg = current_app.config
     ntfy_qr = None
     if is_superuser() and cfg.get("ALERT_NTFY_TOPIC"):
@@ -802,7 +897,7 @@ def alerts_page():
         url = f"{cfg.get('ALERT_NTFY_SERVER', 'https://ntfy.sh').rstrip('/')}/{cfg['ALERT_NTFY_TOPIC']}"
         ntfy_qr = Markup(segno.make(url, error="m").svg_inline(scale=4, border=2))
     return render_template("alerts.html", title="Alerts", open_=open_, waiting=waiting, muted=muted, ntfy_qr=ntfy_qr,
-                           l_open=l_open, l_waiting=l_waiting, l_muted=l_muted, show_legacy=ids is None,
+                           l_open=l_open, l_waiting=l_waiting, l_muted=l_muted, show_legacy=show_legacy,
                            legacy_dark_min=cfg.get("LEGACY_DARK_MINUTES", 30),
                            events=events, hw_now=hw_now, box_alarms=box_alarms,
                            channels=notify.channels(), now=now,
@@ -1399,11 +1494,7 @@ def heat_overnight_page():
 
 @admin_bp.route("/live/<int:box_id>")
 def live_box(box_id):
-    if not is_superuser():
-        abort(403)
-    b = LegacyBox.query.get_or_404(box_id)
-    if b.deleted_at:
-        abort(404)
+    b = _live_box_or_404(box_id)
     row = _legacy_rows(datetime.utcnow(), [b])[0]
     from app import history, legacy, sensor_health
     from app.models import LegacyDaily, LegacyEvent
@@ -1417,12 +1508,25 @@ def live_box(box_id):
 
 
 def _live_box_or_404(box_id):
-    if not is_superuser():
-        abort(403)
+    """A 2010 box this request may READ: the administrator, or anyone with a
+    grant on the building it is filed under. A hidden box, a deleted one and
+    one not filed under a building are the administrator's alone. Used by
+    the box's page and every data feed behind it; nothing that changes a
+    box goes through here."""
     b = LegacyBox.query.get_or_404(box_id)
+    if not is_superuser() and not (b.is_active and not b.deleted_at and can_view_building(b.building)):
+        abort(403)
     if b.deleted_at:
         abort(404)
     return b
+
+
+def _bloom_asset_or_403(asset_id):
+    """A Bloom building this request may READ, by the same rule as a 2010 box."""
+    a = BloomAsset.query.get_or_404(asset_id)
+    if not is_superuser() and not (a.is_active and not a.deleted_at and can_view_building(a.building)):
+        abort(403)
+    return a
 
 
 @admin_bp.route("/live/<int:box_id>/history.json")
@@ -1523,42 +1627,78 @@ def fans_page():
     """Roof exhaust fans on every Bloom building that has them: running or not,
     the cold-weather schedule, and whether that schedule can engage. Read
     view-only (app/bloom_fans.py)."""
-    if not is_superuser():
-        abort(403)
-    from sqlalchemy.orm import joinedload
     from app import bloom_fans, legacy
-    from app.models import BloomFanSite
     now = datetime.utcnow()
-    local = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
-    hour = local.hour
+    hour = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).hour
     cold_f = current_app.config.get("FAN_COLD_F", 35.0)
     cfg = current_app.config
     pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
-    # Each building's property comes from the portal's own hierarchy, by name
-    # (bloom_fans.place) — these buildings are already filed there.
-    index = bloom_fans.building_index(
-        (b.name, (b.property.name, b.property.client.name if b.property.client else None))
-        for b in Building.query.options(joinedload(Building.property).joinedload(Property.client)).all()
-        if b.property)
-    rows = []
-    for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
-        if not site.account or not site.account.is_active:
-            continue
-        s = bloom_fans.summary(site.data, now=now, cold_f=cold_f, hour=hour, minute=local.minute, pl=pl, hyst=hyst)
-        prop, client = bloom_fans.place(index, site.name, site.asset_key) or (None, None)
-        s.update(id=site.id, name=site.name, account=site.account.label, prop=prop, client=client,
-                 heard=bloom_fans.age_words(s["heard_age"]),
-                 url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
-        rows.append(s)
+    rows = _fan_rows(now)                             # only the buildings this person may see
     pg = bloom_fans.page(rows, show=request.args.get("show", "all"), q=request.args.get("q", ""),
                          sort=request.args.get("sort", "property"))
     from app.models import BloomFanAuto
     auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
-                           auto_props=auto_props, unfiled=bloom_fans.UNFILED,
+                           auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=is_superuser(),
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
+
+
+def _fan_index():
+    """The lookup that files a fan site under a building of the portal's own
+    hierarchy, by name (bloom_fans.place). The value is (property name, owner
+    name, building id, property id). Built from EVERY building so a site
+    resolves to the same building for everyone; who may see it is decided
+    from that building afterwards."""
+    from sqlalchemy.orm import joinedload
+    from app import bloom_fans
+    return bloom_fans.building_index(
+        (b.name, (b.property.name, b.property.client.name if b.property.client else None, b.id, b.property_id))
+        for b in Building.query.options(joinedload(Building.property).joinedload(Property.client)).all()
+        if b.property)
+
+
+def _fan_rows(now):
+    """One summary row per fan site this request may see: all of them for the
+    administrator, otherwise only sites filed under a building the person
+    holds a grant on. A site not filed under any building is the
+    administrator's alone."""
+    from sqlalchemy.orm import joinedload
+    from app import bloom_fans, legacy
+    from app.models import BloomFanSite
+    local = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
+    cfg = current_app.config
+    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    index, ids = _fan_index(), visible_building_ids()
+    rows = []
+    for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
+        if not site.account or not site.account.is_active:
+            continue
+        placed = bloom_fans.place(index, site.name, site.asset_key)
+        if ids is not None and (placed is None or placed[2] not in ids):
+            continue
+        prop, client, _building_id, prop_id = placed or (None, None, None, None)
+        s = bloom_fans.summary(site.data, now=now, cold_f=cfg.get("FAN_COLD_F", 35.0), hour=local.hour,
+                               minute=local.minute, pl=pl, hyst=cfg.get("FAN_PLAN_HYST_F", 2.0))
+        s.update(id=site.id, name=site.name, account=site.account.label, prop=prop, client=client, prop_id=prop_id,
+                 heard=bloom_fans.age_words(s["heard_age"]),
+                 url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
+        rows.append(s)
+    return rows
+
+
+def _fan_site_or_403(site_id):
+    """A fan site this request may READ (its history chart), by the rule in _fan_rows."""
+    from app import bloom_fans
+    from app.models import BloomFanSite
+    site = BloomFanSite.query.get_or_404(site_id)
+    ids = visible_building_ids()
+    if ids is not None:
+        placed = bloom_fans.place(_fan_index(), site.name, site.asset_key)
+        if placed is None or placed[2] not in ids:
+            abort(403)
+    return site
 
 
 def _fans_live_building(site):
@@ -1859,11 +1999,8 @@ def fans_raw(site_id):
 def fans_series(site_id):
     """History for one building's fans — outdoor, fans running, and an on/off
     row per fan (app/bloom_fans.series) — drawn in the expanded row on /fans."""
-    if not is_superuser():
-        abort(403)
     from app import bloom_fans
-    from app.models import BloomFanSite
-    site = BloomFanSite.query.get_or_404(site_id)
+    site = _fan_site_or_403(site_id)
     days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
     data = bloom_fans.series(site, days)
     data["name"] = site.name
@@ -1874,11 +2011,9 @@ def fans_series(site_id):
 def skyline_building(asset_id):
     """Everything Bloom has for one Skyline building, with a Back button
     (returns to wherever you came from, else Live). See app/bloom.py::detail."""
-    if not is_superuser():
-        abort(403)
     from urllib.parse import urlparse
     from app import bloom
-    a = BloomAsset.query.get_or_404(asset_id)
+    a = _bloom_asset_or_403(asset_id)
     st = a.status
     d = bloom.detail(st.data, a.view, a.plant_tag) if st and st.ok and st.data else None
     read_ago = (fleet_health.ago((datetime.utcnow() - st.last_ok_at).total_seconds())
@@ -1896,7 +2031,8 @@ def skyline_building(asset_id):
                        if dhw.last_ok_at else None)
     ref = request.referrer or ""
     back = ref if (ref and urlparse(ref).netloc == request.host
-                   and "/skyline/" not in urlparse(ref).path) else url_for("admin.live_page")
+                   and "/skyline/" not in urlparse(ref).path) else url_for(
+        "admin.live_page" if is_superuser() else "admin.home_page")
     # Same Anagha cell colours as the Live wall (supply/return loop, outdoor
     # band, comfort cell, hot water), computed from the card's readings.
     tints = {}
@@ -1920,10 +2056,8 @@ def skyline_building(asset_id):
 def skyline_series(asset_id):
     """The Live page's pop-up chart for a Bloom building (app/bloom.series).
     Same shape as a legacy box's /live/<id>/series.json."""
-    if not is_superuser():
-        abort(403)
     from app import bloom
-    a = BloomAsset.query.get_or_404(asset_id)
+    a = _bloom_asset_or_403(asset_id)
     days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
     keys = [k for k in request.args.get("keys", "").split(",") if k]
     data = bloom.series(a, days, keys)
@@ -2360,6 +2494,18 @@ def adopt_restore(eid):
 _SCOPE_MODELS = {"client": Client, "property": Property, "building": Building}
 
 
+def _access_summary(user) -> str:
+    """'Berry, DCA (view)' — what a person can see, for the Users list."""
+    by_role = {}
+    for p in user.permissions:
+        model = _SCOPE_MODELS.get(p.scope_type)
+        entity = model.query.get(p.scope_id) if model else None
+        by_role.setdefault(p.role, []).append(entity.name if entity else f"#{p.scope_id} (deleted)")
+    words = {"viewer": "view", "operator": "operate", "admin": "admin"}
+    return "; ".join(f"{', '.join(sorted(by_role[r]))} ({words[r]})" for r in ("admin", "operator", "viewer")
+                     if r in by_role) or "nothing yet"
+
+
 def _scope_label(scope_type: str, scope_id: int) -> str:
     model = _SCOPE_MODELS.get(scope_type)
     entity = model.query.get(scope_id) if model else None
@@ -2376,7 +2522,7 @@ def list_users():
         {
             "id": u.id,
             "is_active": u.is_active,
-            "cells": [u.name, u.email, u.login],
+            "cells": [u.name, u.email, u.login, _access_summary(u)],
             "can_edit": True,
             "can_archive": True,
             "extra_url": url_for("admin.user_permissions", user_id=u.id),
@@ -2386,7 +2532,7 @@ def list_users():
     return render_template(
         "entity_list.html",
         title="Users",
-        columns=["Name", "Email", "Login"],
+        columns=["Name", "Email", "Login", "Can see"],
         rows=rows,
         entity="users",
         entity_singular="user",
@@ -2430,8 +2576,8 @@ def new_user():
             db.session.rollback()
             flash("Email or login already in use.", "error")
             return render_template("entity_form.html", title="New User", fields=_user_fields(), action=url_for("admin.new_user"))
-        flash(f"User {user.name!r} created.", "success")
-        return redirect(url_for("admin.list_users"))
+        flash(f"User {user.name!r} created. Now choose what they can see.", "success")
+        return redirect(url_for("admin.user_permissions", user_id=user.id))
     return render_template("entity_form.html", title="New User", fields=_user_fields(), action=url_for("admin.new_user"))
 
 
@@ -2502,10 +2648,43 @@ def user_permissions(user_id):
     clients = Client.query.filter_by(is_active=True).order_by(Client.name).all()
     properties = Property.query.filter_by(is_active=True).order_by(Property.name).all()
     buildings = Building.query.filter_by(is_active=True).order_by(Building.name).all()
+    # The simple way to share: one tick per property (view-only).
+    held = {p.scope_id: p.role for p in grants if p.scope_type == "property"}
+    by_client = {p.scope_id: p.role for p in grants if p.scope_type == "client"}
+    share = []
+    for c in clients:
+        props = [{"id": p.id, "name": p.name, "role": held.get(p.id), "via_client": by_client.get(c.id),
+                  "n": sum(1 for b in p.buildings if b.is_active)}
+                 for p in sorted(c.properties, key=lambda x: x.name.lower()) if p.is_active]
+        if props:
+            share.append({"client": c.name, "props": props})
     return render_template(
         "user_permissions.html", title=f"Permissions: {user.name}", user=user, grants=grant_rows,
-        clients=clients, properties=properties, buildings=buildings,
+        clients=clients, properties=properties, buildings=buildings, share=share,
     )
+
+
+@admin_bp.route("/users/<int:user_id>/properties", methods=["POST"])
+@superuser_required
+def set_user_properties(user_id):
+    """Share properties view-only by ticking them: the person's 'viewer'
+    grants at property level become exactly the ticked set. Operator and
+    admin grants, and grants on a client or a single building, are not touched."""
+    user = User.query.get_or_404(user_id)
+    want = {int(v) for v in request.form.getlist("property_id") if v.isdigit()}
+    valid = {p.id for p in Property.query.filter(Property.id.in_(want or [-1])).all()}
+    have = {p.scope_id: p for p in Permission.query.filter_by(user_id=user.id, scope_type="property").all()}
+    added = removed = 0
+    for pid in valid - set(have):
+        db.session.add(Permission(user_id=user.id, scope_type="property", scope_id=pid, role="viewer"))
+        added += 1
+    for pid, grant in have.items():
+        if pid not in valid and grant.role == "viewer":
+            db.session.delete(grant)
+            removed += 1
+    db.session.commit()
+    flash(f"View access saved: {added} propert{'y' if added == 1 else 'ies'} added, {removed} removed.", "success")
+    return redirect(url_for("admin.user_permissions", user_id=user.id))
 
 
 @admin_bp.route("/users/<int:user_id>/permissions", methods=["POST"])

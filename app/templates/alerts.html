@@ -35,7 +35,7 @@
     (they stay in the history below). A building that alerts {{ flap_opens }} times in {{ flap_hours|int }} hours gets one
     "keeps tripping" message and is paused for {{ flap_hours|int }} hours. No repeated reminders: one morning summary{% if digest_hour >= 0 %} at {{ digest_hour }} am{% endif %}
     lists what is still in alarm and what tripped overnight. Yellow never pages anyone. Mute a building or controller from its own page during a service visit.
-    {% if show_legacy %}<br>The 2010 boxes on <a href="{{ url_for('admin.live_page') }}">Live</a> alert when their status reads Safety (and, on steam,
+    {% if show_legacy %}<br>The 2010 boxes{% if g.is_superuser %} on <a href="{{ url_for('admin.live_page') }}">Live</a>{% endif %} alert when their status reads Safety (and, on steam,
     Ignition Failure) on three reads in a row, and when one that was reading stops answering for {{ legacy_dark_min }} minutes. A box alarm the box clears
     by itself sends nothing; a steam ignition failure with the aquastat or hot water really dropping goes out at once, with that evidence.
     A steam building that has called for heat 30+ minutes while its aquastat fell 10 F (never rising 5) sends "No heat", with the readings.

@@ -25,19 +25,19 @@
 {% endblock %}
 {% macro row(k, v) -%}<div class="k">{{ k }}</div><div class="v">{{ v if v is not none and v != '' else '—' }}</div>{%- endmacro %}
 {# a temperature that opens its chart when clicked (static/js/sensorchart.js) #}
-{% macro trow(k, v, key, tint={}) -%}<div class="k">{{ k }}</div>{% if v is not none and v != '' and v != 0 or (key == 'out' and v == 0) %}{% set ti = tint.get(key) %}<div class="v"><span class="lv-t{% if ti %} t-{{ ti[0] }}{% endif %}" data-k="{{ key }}" title="{% if ti %}{{ ti[1] }} · {% endif %}Click for the chart">{{ v }}</span></div>{% else %}<div class="v">—</div>{% endif %}{%- endmacro %}
+{% macro trow(k, v, key, tint={}) -%}<div class="k">{{ k }}</div>{% if v is not none and v != '' and v != 0 or (key == 'out' and v == 0) %}{% set ti = (tint or {}).get(key) %}<div class="v"><span class="lv-t{% if ti %} t-{{ ti[0] }}{% endif %}" data-k="{{ key }}" title="{% if ti %}{{ ti[1] }} · {% endif %}Click for the chart">{{ v }}</span></div>{% else %}<div class="v">—</div>{% endif %}{%- endmacro %}
 
 {% block content %}<div data-box="{{ r.box.id }}">
   {% set c = r.c or {} %}{% set b = r.box %}
-  <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
+  <div class="crumbs">{% if g.is_superuser %}<a href="{{ url_for('admin.live_page') }}">Live</a>{% else %}<a href="{{ url_for('admin.home_page') }}">My properties</a>{% endif %}</div>
   <div class="page-head"><h1>{{ b.name }}{% if not b.is_active %} <span class="chip warn">hidden</span>{% endif %}</h1>
-    <form method="post" action="{{ url_for('admin.live_action') }}" style="display:flex;gap:6px">
+    {% if g.is_superuser %}<form method="post" action="{{ url_for('admin.live_action') }}" style="display:flex;gap:6px">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="box_id" value="{{ b.id }}">
       <input type="hidden" name="from_box" value="1">
       {% if b.is_active %}<button class="btn plain" name="action" value="hide" type="submit">Hide</button>
       {% else %}<button class="btn plain" name="action" value="show" type="submit">Show again</button>{% endif %}
       <button class="btn danger" name="action" value="delete" type="submit" onclick='return confirm({{ ("Delete " ~ b.name ~ " from the portal for good? It stops being read and a re-import will not bring it back.")|tojson }})'>Delete</button>
-    </form></div>
+    </form>{% endif %}</div>
 
   <div class="banner {{ {'live': ({'crit':'crit','warn':'warn'}.get(c.tone, 'ok')), 'dark':'crit', 'login':'crit', 'other':'crit'}[r.state] }}">
     {% if r.state == 'live' %}{{ c.status }} · read {{ r.age }}{% else %}{{ r.why }}{% endif %}
@@ -45,7 +45,7 @@
   {% if heat_badge and r.heat and r.heat.state != 'unknown' %}<div style="margin:8px 0 0"><span class="ho ho-{{ r.heat.tone }}">{{ r.heat.label }}</span> <span class="card-sub">overnight — {{ r.heat.detail }}</span></div>{% endif %}
   {% if bad_sensors %}<div class="bs"><span class="bs-n">{{ bad_sensors|length }}</span> <span>sensor{{ 's' if bad_sensors|length != 1 }} look{{ '' if bad_sensors|length != 1 else 's' }} faulty</span>
     {% for f in bad_sensors %}<span class="lv-t sf sf-{{ f.kind }}" data-k="{{ f.attr }}" title="{{ f.sensor }} — {{ f.fault }}: {{ f.evidence }} · click for the chart">{{ f.sensor }}{% if f.wireless %} ⚡{% endif %}</span>{% endfor %}
-    <span class="card-sub">over the last {{ sensor_window_days }} days · <a href="{{ url_for('admin.sensor_health_page') }}">all sensors</a></span></div>{% endif %}
+    <span class="card-sub">over the last {{ sensor_window_days }} days{% if g.is_superuser %} · <a href="{{ url_for('admin.sensor_health_page') }}">all sensors</a>{% endif %}</span></div>{% endif %}
 
   {% if b.is_active %}{% set a = b.alert_state %}
   <div class="section" style="margin-top:14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px">
@@ -56,7 +56,7 @@
       {% elif a and a.first_bad_at %}Red since {{ a.first_bad_at.strftime('%H:%M UTC') }}: an alert goes out if it is still red at the next read.
       {% else %}On: Safety or Ignition Failure, a new safety/ignition alarm, or not answering for {{ dark_min }} minutes sends an alert.{% endif %}
       <a href="{{ url_for('admin.alerts_page') }}">All alerts</a></span>
-    <form method="post" action="{{ url_for('admin.live_mute', box_id=b.id) }}" style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+    {% if g.is_superuser %}<form method="post" action="{{ url_for('admin.live_mute', box_id=b.id) }}" style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="next" value="{{ request.path }}">
       {% if a and a.muted_until and a.muted_until > now_utc %}
@@ -67,7 +67,7 @@
         <button class="btn plain" name="hours" value="24" type="submit">24 h</button>
         <button class="btn plain" name="hours" value="72" type="submit">3 days</button>
       {% endif %}
-    </form>
+    </form>{% endif %}
   </div>
   {% endif %}
 
@@ -94,7 +94,7 @@
     <div class="section"><h2>Box</h2><div class="kv">
       {{ row('Heating system', (c.system_label ~ (' · ' ~ c.fuel if c.fuel else '') ~ ' · ' ~ c.n_boilers ~ ' boiler' ~ ('s' if c.n_boilers > 1 else '')) if c.system_label else none) }}
       {% if c.system == 'hot water' %}{{ row('Ignition alerts', 'off: hot-water boilers here have no fuel-valve feedback') }}{% elif c.system == 'steam' %}{{ row('Ignition alerts', 'on, with the aquastat / hot-water evidence') }}{% endif %}
-      {{ row('Address', b.host ~ ':' ~ b.port) }}{{ row('Identity', b.identity) }}
+      {% if g.is_superuser %}{{ row('Address', b.host ~ ':' ~ b.port) }}{{ row('Identity', b.identity) }}{% endif %}
       {{ row('Last good read', r.last_ok.strftime('%Y-%m-%d %H:%M UTC') if r.last_ok else none) }}
       {% set off = (' (' ~ ('+' if r.drift_min > 0 else '') ~ r.drift_min ~ ' min off: alarm times corrected)') if r.drift_min else '' %}
       {{ row('Box clock', (c.box_time ~ off) if c.box_time else none) }}

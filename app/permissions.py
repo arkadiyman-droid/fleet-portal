@@ -229,3 +229,38 @@ def creatable_controller_building_query(user_id, min_role="operator"):
         Permission.user_id == user_id, Permission.role.in_(roles)
     )
     return Building.query.filter(Building.id.in_(direct.union(via_property, via_client)))
+
+
+# ─── watching: the read-only monitoring pages ────────────────────────────
+#
+# The pages that show what a building is doing — My properties, a 2010 box's
+# page, a Bloom building's page, Fans, Alerts — are open to anyone holding a
+# grant (any role) on the building, its property or its client. Everything
+# that changes something stays with the administrator or an operator.
+
+def can_view_building(building) -> bool:
+    """May this request read what `building` is doing? The administrator
+    always; otherwise a grant on it or above it. A reading that is not filed
+    under any building (None) belongs to the administrator alone."""
+    if is_superuser():
+        return True
+    if building is None or current_user() is None:
+        return False
+    return effective_role(building) is not None
+
+
+def visible_building_ids():
+    """None for the administrator (meaning every building); otherwise the set
+    of building ids this person may see, possibly empty."""
+    if is_superuser():
+        return None
+    user = current_user()
+    if user is None:
+        return set()
+    return {bid for (bid,) in visible_building_query(user.id).with_entities(Building.id).all()}
+
+
+def is_view_only() -> bool:
+    """A signed-in person (not the administrator) with no grant above
+    'viewer' anywhere — they are shown the short menu."""
+    return current_user() is not None and not user_has_min_role_anywhere("operator")

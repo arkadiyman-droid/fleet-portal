@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}My properties — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<meta http-equiv="refresh" content="120">
+<style>
+  .hm-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; margin:0 0 16px; }
+  .hm-tile { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .hm-tile .l { color:var(--muted); font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; }
+  .hm-tile .n { font-size:26px; font-weight:700; line-height:1.15; font-variant-numeric:tabular-nums; }
+  .hm-tile .n small { font-size:13px; font-weight:500; color:var(--muted); }
+  .hm-tile.crit .n { color:var(--crit); } .hm-tile.warn .n { color:var(--warn); } .hm-tile.ok .n { color:var(--ok); }
+  .hm-tile.zero .n { color:#c3c8d0; }
+  .hm-owner { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:18px 0 8px; }
+  .hm-prop { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
+  .hm-head { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline; margin:0 0 10px; }
+  .hm-head h2 { font-size:17px; margin:0; }
+  .hm-prop table { font-size:13px; border-radius:0; table-layout:fixed; min-width:900px; }
+  .hm-prop col.st { width:128px; } .hm-prop col.n { width:92px; } .hm-prop col.src { width:170px; } .hm-prop col.al { width:24%; }
+  .hm-prop td { overflow-wrap:anywhere; }
+  .hm-prop th { font-size:11px; padding:5px 10px 5px 0; white-space:nowrap; }
+  .hm-prop td { padding:7px 10px 7px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; font-variant-numeric:tabular-nums; }
+  .hm-prop td.num, .hm-prop th.num { text-align:right; }
+  .hm-prop tr:last-child td { border-bottom:none; }
+  .hm-pill { display:inline-block; min-width:92px; text-align:center; font-size:11px; font-weight:700; border-radius:8px; padding:2px 8px; white-space:nowrap; }
+  .hm-pill.crit { background:#fee2e2; color:#b91c1c; } .hm-pill.warn { background:#fef3c7; color:#92400e; }
+  .hm-pill.heat { background:#ffedd5; color:#9a3412; } .hm-pill.ok { background:#dcfce7; color:#166534; }
+  .hm-pill.dark { background:#e5e7eb; color:#4b5563; }
+  .hm-name { font-weight:600; color:var(--text); text-decoration:none; }
+  a.hm-name:hover { color:var(--accent); text-decoration:underline; }
+  .hm-sub { font-size:13px; font-weight:700; margin:14px 0 6px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
+  .hm-alarm { color:#b91c1c; }
+  @media (max-width: 760px) { .hm-prop { overflow-x:auto; } }
+</style>
+{% endblock %}
+{% block content %}
+{% macro t(v) %}{% if v is not none %}{{ "%.0f"|format(v) }}°{% else %}<span class="card-sub">—</span>{% endif %}{% endmacro %}
+<div class="page-head" style="margin-bottom:6px">
+  <h1>My properties</h1>
+  <span class="card-sub">{% if g.is_superuser %}every filed building · {% elif view_only %}view only · {% endif %}refreshes every 2 minutes</span>
+</div>
+
+{% if not owners %}
+  <div class="empty" style="background:var(--panel);border:1px solid var(--border);border-radius:10px">
+    Nothing has been shared with this account yet. Ask the person who gave you this login to add your properties.
+  </div>
+{% else %}
+{% set s = summary %}
+<div class="hm-tiles">
+  <div class="hm-tile"><div class="l">Buildings</div><div class="n">{{ s.buildings }} <small>in {{ s.properties }} propert{{ 'y' if s.properties == 1 else 'ies' }}</small></div></div>
+  <div class="hm-tile crit {{ 'zero' if not s.crit }}"><div class="l">Problems</div><div class="n">{{ s.crit }}</div></div>
+  <div class="hm-tile warn {{ 'zero' if not s.warn }}"><div class="l">Warnings</div><div class="n">{{ s.warn }}</div></div>
+  <div class="hm-tile"><div class="l">Heating now</div><div class="n">{{ s.heat }}</div></div>
+  <div class="hm-tile {{ 'zero' if not s.dark }}"><div class="l">Not reporting</div><div class="n">{{ s.dark }}</div></div>
+  {% if s.fan_sites %}
+  <div class="hm-tile"><div class="l">Roof fans running</div><div class="n">{{ s.fans_on }} <small>of {{ s.fans }}</small></div></div>
+  <div class="hm-tile crit {{ 'zero' if not s.fans_down }}"><div class="l">Roof fans down</div><div class="n">{{ s.fans_down }}</div></div>
+  {% endif %}
+</div>
+
+{% for o in owners %}
+  {% if owners|length > 1 or g.is_superuser %}<div class="hm-owner">{{ o.name or 'No owner' }}</div>{% endif %}
+  {% for p in o.props %}{% set ty = p.tally %}
+  <div class="hm-prop">
+    <div class="hm-head">
+      <h2>{{ p.name }}</h2>
+      <span class="card-sub">{{ ty.buildings }} building{{ 's' if ty.buildings != 1 }}{% if ty.crit %} · <b style="color:var(--crit)">{{ ty.crit }} problem{{ 's' if ty.crit != 1 }}</b>{% endif %}{% if ty.warn %} · <b style="color:var(--warn)">{{ ty.warn }} warning{{ 's' if ty.warn != 1 }}</b>{% endif %}{% if ty.heat %} · {{ ty.heat }} heating{% endif %}{% if ty.dark %} · {{ ty.dark }} not reporting{% endif %}</span>
+    </div>
+    <table>
+      <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="al"><col class="src"></colgroup>
+      <tr><th>Status</th><th>Building</th><th class="num">Outdoor</th><th class="num">Supply</th><th class="num">Return</th><th class="num">Hot water</th><th class="num">Setpoint</th><th class="num" title="How long the heat has run today, hours:minutes">Heat run</th><th>Alarms</th><th>Read by</th></tr>
+      {% for e in p.buildings %}
+      <tr>
+        <td><span class="hm-pill {{ e.status }}">{{ e.tone_label }}</span></td>
+        <td>{% if e.url %}<a class="hm-name" href="{{ e.url }}">{{ e.name }}</a>{% else %}<span class="hm-name">{{ e.name }}</span>{% endif %}{% if e.mode %} <span class="card-sub">{{ e.mode }}</span>{% endif %}</td>
+        <td class="num">{{ t(e.out) }}</td><td class="num">{{ t(e.sup) }}</td><td class="num">{{ t(e.ret) }}</td>
+        <td class="num">{{ t(e.dhw) }}</td><td class="num">{{ t(e.spt) }}</td>
+        <td class="num">{% if e.rt %}{{ e.rt }}{% else %}<span class="card-sub">—</span>{% endif %}</td>
+        <td>{% if e.alarms %}<span class="hm-alarm">{{ e.alarms[:3]|join(' · ') }}{% if e.alarms|length > 3 %} · +{{ e.alarms|length - 3 }} more{% endif %}</span>{% else %}<span class="card-sub">none</span>{% endif %}</td>
+        <td><span class="card-sub">{{ e.source_label }}</span></td>
+      </tr>
+      {% endfor %}
+    </table>
+
+    {% if p.fans %}
+    <div class="hm-sub">Roof exhaust fans
+      <span class="card-sub" style="font-weight:400">{{ ty.fans_on }} of {{ ty.fans }} running{% if ty.fans_down %} · <b style="color:var(--crit)">{{ ty.fans_down }} down</b>{% endif %}{% if ty.fan_dark %} · {{ ty.fan_dark }} building{{ 's' if ty.fan_dark != 1 }} not reporting{% endif %}</span>
+      <a href="{{ url_for('admin.fans_page') }}" style="font-weight:400;font-size:13px">Fan details and history →</a></div>
+    <table>
+      <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col style="width:46%"></colgroup>
+      <tr><th>Status</th><th>Building</th><th class="num">Running</th><th class="num">Down</th><th class="num">Outdoor</th><th>What they are doing</th></tr>
+      {% for f in p.fans %}
+      <tr>
+        <td><span class="hm-pill {{ 'dark' if f.stale else ('crit' if f.fail else ('warn' if f.hand else ('ok' if f.on else 'dark'))) }}">{{ 'Not reporting' if f.stale else ('Fan down' if f.fail else ('Ignoring stop' if f.hand else ('Running' if f.on else 'Off'))) }}</span></td>
+        <td><a class="hm-name" href="{{ url_for('admin.fans_page', q=f.name) }}">{{ f.name }}</a></td>
+        <td class="num">{% if f.stale %}<span class="card-sub">—</span>{% else %}{{ f.on }} of {{ f.total }}{% endif %}</td>
+        <td class="num">{% if f.stale or not f.fail %}<span class="card-sub">—</span>{% else %}<b style="color:var(--crit)">{{ f.fail }}</b>{% endif %}</td>
+        <td class="num">{{ t(f.outdoor) }}</td>
+        <td style="padding-left:14px"><span class="card-sub">{{ f.status }}{% if f.stale and f.heard %} · last heard {{ f.heard }}{% endif %}</span></td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% endfor %}
+
+<p class="card-sub" style="max-width:900px">Click a building for its readings, charts and history. <b>Problem</b> is a fault or a building calling for heat with a cold loop; <b>Not reporting</b> means its controller has not answered recently, so nothing is known about it right now.</p>
+{% endif %}
+{% endblock %}

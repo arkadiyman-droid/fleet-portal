@@ -17,10 +17,10 @@ _EXEMPT_ENDPOINTS = {"auth.login", "auth.logout", "static", "admin.stripe_webhoo
 def _safe_next(target: str) -> str:
     """Only allow same-origin relative redirects after login — guards against open redirects."""
     if not target:
-        return url_for("admin.list_clients")
+        return url_for("admin.index")              # lands each person on their own start page
     parsed = urlparse(target)
     if parsed.scheme or parsed.netloc:
-        return url_for("admin.list_clients")
+        return url_for("admin.index")
     return target
 
 

@@ -6,6 +6,28 @@
     <a class="btn plain" href="{{ url_for('admin.list_users') }}">Back to Users</a>
   </div>
 
+  <h2 style="font-size:14px;margin:0 0 4px">Properties {{ user.name }} can watch</h2>
+  <p class="card-sub" style="margin:0 0 10px;max-width:820px">Tick a property to share it view-only: the person sees every building in it — heating, roof fans, alerts and history — and can change nothing. Untick to take it away. This is the usual way to give access; the grants below are for anything finer.</p>
+  {% if share %}
+  <form method="post" action="{{ url_for('admin.set_user_properties', user_id=user.id) }}" style="margin:0 0 28px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+      {% for grp in share %}
+      <div class="form-panel" style="max-width:340px;padding:14px 16px">
+        <div style="font-weight:600;margin-bottom:8px">{{ grp.client }}</div>
+        {% for p in grp.props %}
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0 0 6px">
+          <input type="checkbox" name="property_id" value="{{ p.id }}" style="width:auto;margin:0"{% if p.role %} checked{% endif %}{% if p.role and p.role != 'viewer' %} disabled{% endif %}>
+          <span>{{ p.name }} <span class="card-sub">· {{ p.n }} building{{ 's' if p.n != 1 }}{% if p.role and p.role != 'viewer' %} · {{ p.role }} grant, change it below{% elif p.via_client %} · already included by a grant on {{ grp.client }}{% endif %}</span></span>
+        </label>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    <button type="submit" class="btn">Save view access</button>
+  </form>
+  {% else %}<div class="empty" style="margin-bottom:28px">There are no properties to share yet.</div>{% endif %}
+
   <h2 style="font-size:14px;margin:0 0 8px">Current Grants</h2>
   {% if grants %}
   <table style="margin-bottom:28px">
