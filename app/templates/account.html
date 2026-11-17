@@ -21,6 +21,12 @@
     {% else %}<div class="card-sub">Nothing has been shared with this account yet.</div>{% endif %}
   </div>
 
+  {% if not has_password %}
+  <div class="form-panel" style="max-width:420px">
+    <div style="font-weight:600;margin-bottom:10px">Signing in</div>
+    <div class="card-sub">You sign in with your company email — the code sent to your mailbox is all there is. This account has no password to change.</div>
+  </div>
+  {% else %}
   <div class="form-panel" style="max-width:420px">
     <div style="font-weight:600;margin-bottom:10px">Change your password</div>
     <form method="post" action="{{ url_for('admin.account_page') }}">
@@ -34,6 +40,7 @@
       <button type="submit" class="btn">Change password</button>
     </form>
   </div>
+  {% endif %}
 </div>
 {% endif %}
 {% endblock %}

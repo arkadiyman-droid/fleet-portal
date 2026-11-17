@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Directory — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .dr-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:980px; }
+  .dr-card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
+  .dr-card h2 { font-size:15px; margin:0 0 4px; }
+  .dr-card .sub { font-size:13px; color:var(--muted); margin:0 0 10px; max-width:980px; }
+  .dr-card table { font-size:13px; border-radius:0; }
+  .dr-card th { font-size:11px; padding:5px 12px 5px 0; white-space:nowrap; }
+  .dr-card td { padding:7px 12px 7px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  .dr-card select { margin:0; padding:5px 8px; width:auto; min-width:220px; font-size:13px; }
+  .dr-card input[type=checkbox] { width:auto; margin:0; }
+  .dr-pill { display:inline-block; font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; white-space:nowrap; background:#e5e7eb; color:#374151; }
+  .dr-pill.ok { background:#dcfce7; color:#166534; } .dr-pill.new { background:#dbeafe; color:#1e40af; }
+  .dr-pill.warn { background:#fef3c7; color:#92400e; } .dr-pill.bad { background:#fee2e2; color:#b91c1c; }
+  .dr-status { border-radius:8px; padding:10px 14px; font-size:14px; margin:0 0 14px; background:#eff6ff; border-left:4px solid #1d4ed8; color:#1e3a8a; display:flex; gap:10px 16px; flex-wrap:wrap; align-items:center; }
+  .dr-status.bad { background:#fef2f2; border-left-color:#dc2626; color:#7f1d1d; }
+  .dr-status.warn { background:#fffbeb; border-left-color:#f59e0b; color:#92400e; }
+  .dr-status form { margin:0 0 0 auto; }
+  .dr-mgr { white-space:nowrap; } .dr-mgr small { color:var(--muted); }
+  .dr-hint { color:#92400e; font-size:12px; }
+  details.dr-more summary { cursor:pointer; font-size:13px; color:var(--muted); margin:6px 0; }
+  code.dr { background:var(--bg); border:1px solid var(--border); border-radius:5px; padding:1px 6px; font-size:12px; }
+</style>
+{% endblock %}
+{% block content %}
+{% macro linkrow(x) %}{% set r = x.row %}
+<tr>
+  <td><b>{{ r.name }}</b><div class="card-sub">{{ r.buildings|length }} building{{ 's' if r.buildings|length != 1 }}{% if r.unit_count %} · {{ r.unit_count }} units{% endif %}{% if r.buildings %} · {{ r.buildings[0].address }}{% if r.buildings|length > 1 %}, …{% endif %}{% endif %}</div></td>
+  <td>{% if r.pm_email or r.pm_name %}<div class="dr-mgr">{{ r.pm_name or '—' }} <small>manager{% if r.pm_email %} · {{ r.pm_email }}{% endif %}</small></div>{% endif %}
+      {% if r.rpm_email or r.rpm_name %}<div class="dr-mgr">{{ r.rpm_name or '—' }} <small>regional{% if r.rpm_email %} · {{ r.rpm_email }}{% endif %}</small></div>{% endif %}
+      {% if not (r.pm_email or r.pm_name or r.rpm_email or r.rpm_name) %}<span class="card-sub">no managers listed</span>{% endif %}</td>
+  <td><select name="link_{{ r.id }}" aria-label="Fleet property for {{ r.name }}">
+        <option value="">— not in the fleet portal —</option>
+        {% for p in props %}<option value="{{ p.id }}"{% if x.choice == p.id %} selected{% endif %}>{{ p.name }}{% if p.client %} ({{ p.client.name }}){% endif %}</option>{% endfor %}
+      </select>
+      {% if x.linked %}<span class="dr-pill ok">linked</span>
+      {% elif x.suggest and x.suggest.confidence == 'name' %}<span class="dr-pill new">suggested</span> <span class="card-sub">{{ x.suggest.why }}</span>
+      {% elif x.suggest %}<div class="dr-hint">Possibly {{ x.suggest_name }} — {{ x.suggest.why }}, but the names differ. Pick it if it is.</div>{% endif %}</td>
+</tr>
+{% endmacro %}
+
+<div class="page-head" style="margin-bottom:6px"><h1>Directory</h1></div>
+<p class="dr-note">The violations portal already knows who manages each property. This page reads that list, lets you say which of its properties is which property here, and shows who would then be able to watch what. <b>Nobody gets access until you approve them.</b> Approved managers see their properties view-only and sign in with their company email.</p>
+
+{% if not configured %}
+  <div class="dr-status warn"><span><b>Not connected yet.</b> Two settings are missing on the server. In the violations portal, open <b>Integrations</b> and create an API token; then add these two lines to the fleet portal's <code class="dr">.env</code> on the Pi and reload it:<br>
+    <code class="dr">DIRECTORY_URL=http://127.0.0.1:8000</code> &nbsp; <code class="dr">DIRECTORY_TOKEN=</code><i>the token</i></span></div>
+{% elif state.ok %}
+  <div class="dr-status"><span>Read from the violations portal{% if state.org %} (<b>{{ state.org }}</b>){% endif %}: <b>{{ state.n }}</b> properties, {{ fetched }}.</span>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="sync"><button class="btn plain" type="submit">Read again now</button></form></div>
+{% else %}
+  <div class="dr-status bad"><span><b>Could not read the violations portal:</b> {{ state.error or 'not read yet' }}{% if fetched %} · showing what was read {{ fetched }}{% endif %}</span>
+    <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="sync"><button class="btn plain" type="submit">Try again</button></form></div>
+{% endif %}
+{% if email_signin and cf_me %}
+  <p class="dr-note" style="margin-top:-6px">Sign-in by company email is on and working: Cloudflare vouches for this very request as <b>{{ cf_me }}</b>.</p>
+{% elif email_signin and cf_token %}
+  <div class="dr-status bad"><span><b>Sign-in by company email is set up but not working.</b> Your own request carries a Cloudflare token and it did not check out — <code class="dr">CF_ACCESS_AUD</code> must be this application's audience tag and <code class="dr">CF_ACCESS_TEAM_DOMAIN</code> the team's address. Until that is right, approved managers cannot sign in.</span></div>
+{% elif email_signin %}
+  <div class="dr-status warn"><span><b>Sign-in by company email is set up</b>, but this request did not come through Cloudflare, so it cannot be checked from here. Open this page through the public address to see whether it works.</span></div>
+{% endif %}
+{% if not email_signin %}
+  <div class="dr-status warn"><span><b>Sign-in by company email is off.</b> Managers approved here get an account with no password, so they cannot sign in until it is on: set <code class="dr">CF_ACCESS_TEAM_DOMAIN</code> and <code class="dr">CF_ACCESS_AUD</code> in the fleet portal's <code class="dr">.env</code>, and let their email domain through this site's Cloudflare Access policy.</span></div>
+{% endif %}
+
+{% if links %}
+<div class="dr-card">
+  <h2>1 · Which property is which</h2>
+  <p class="sub">Left: a property as the violations portal names it. Right: the property here that it is — several of theirs may be one property here. Where the names agree the match is already chosen for you to check; where only the addresses overlap it is a hint and you choose. Nothing is saved until you press the button.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="links">
+    {% if counts.todo %}
+    <table>
+      <tr><th>To decide ({{ counts.todo }})</th><th>Managers</th><th>Property here</th></tr>
+      {% for x in links if x.group == 'todo' %}{{ linkrow(x) }}{% endfor %}
+    </table>
+    {% endif %}
+    {% if counts.linked %}
+    <details class="dr-more"{% if not counts.todo %} open{% endif %}><summary>{{ counts.linked }} already linked</summary>
+    <table>
+      <tr><th>Linked</th><th>Managers</th><th>Property here</th></tr>
+      {% for x in links if x.group == 'linked' %}{{ linkrow(x) }}{% endfor %}
+    </table></details>
+    {% endif %}
+    {% if counts.rest %}
+    <details class="dr-more"><summary>{{ counts.rest }} more that look like nothing in this portal (no equipment here, most likely)</summary>
+    <table>
+      <tr><th>No match</th><th>Managers</th><th>Property here</th></tr>
+      {% for x in links if x.group == 'rest' %}{{ linkrow(x) }}{% endfor %}
+    </table></details>
+    {% endif %}
+    <button class="btn" type="submit" style="margin-top:8px">Save links</button>
+  </form>
+</div>
+
+<div class="dr-card">
+  <h2>2 · Who would see what</h2>
+  <p class="sub">Every manager and regional manager named on a linked property, with the properties here they would be able to watch. Tick and approve: that creates their account (no password — they sign in with their company email) and shares those properties view-only. {% if domains %}Only addresses at {{ domains|join(', ') }} can be approved.{% endif %}</p>
+  {% if not plan %}<p class="card-sub" style="margin:0">Nobody yet — link a property that has managers listed.</p>{% else %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="approve">
+    <table>
+      <tr><th><input type="checkbox" id="dr-all" title="Tick everyone who can be approved"></th><th>Person</th><th>Role</th><th>Would see</th><th>Now</th></tr>
+      {% for p in plan %}
+      <tr>
+        <td>{% if p.state in ('new', 'add') %}<input type="checkbox" class="dr-pick" name="email" value="{{ p.email }}" aria-label="Approve {{ p.name }}">{% endif %}</td>
+        <td><b>{{ p.name }}</b><div class="card-sub">{{ p.email }}</div></td>
+        <td>{{ p.role_words }}</td>
+        <td>{{ p.sees|join(', ') }}<div class="card-sub">from {{ p.from|join(', ') }}</div></td>
+        <td>{% if p.state == 'new' %}<span class="dr-pill new">no account yet</span>
+            {% elif p.state == 'add' %}<span class="dr-pill warn">has an account</span> <span class="card-sub">would add {{ p.add_names|join(', ') }}</span>
+            {% elif p.state == 'ok' %}<span class="dr-pill ok">has access</span>
+            {% elif p.state == 'archived' %}<span class="dr-pill">account switched off</span> <span class="card-sub">restore it under Users first</span>
+            {% else %}<span class="dr-pill bad">cannot approve</span> <span class="card-sub">{{ p.problem }} — correct it in the violations portal</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% if counts.pending %}<button class="btn" type="submit" style="margin-top:8px">Approve the people ticked</button>
+    {% else %}<p class="card-sub" style="margin:8px 0 0">Nothing to approve — everyone who can be given access already has it.</p>{% endif %}
+  </form>
+  {% endif %}
+</div>
+
+{% if counts.drops %}
+<div class="dr-card">
+  <h2>3 · No longer in the directory</h2>
+  <p class="sub">Properties shared from this page that the violations portal no longer backs — the person is no longer listed as managing them. Nothing is removed unless you tick it. Access you gave by hand under Users is never listed here.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="drop">
+    <table>
+      <tr><th></th><th>Person</th><th>Would lose</th></tr>
+      {% for p in plan if p.drop %}{% for pid in p.drop %}
+      <tr><td><input type="checkbox" name="drop" value="{{ p.user_id }}:{{ pid }}"></td><td>{{ p.name }} <span class="card-sub">{{ p.email }}</span></td><td>{{ p.drop_names[loop.index0] }}</td></tr>
+      {% endfor %}{% endfor %}
+      {% for o in orphans %}{% for pid in o.drop %}
+      <tr><td><input type="checkbox" name="drop" value="{{ o.user_id }}:{{ pid }}"></td><td>{{ o.email }} <span class="card-sub">no longer listed at all</span></td><td>{{ o.drop_names[loop.index0] }}</td></tr>
+      {% endfor %}{% endfor %}
+    </table>
+    <button class="btn danger" type="submit" style="margin-top:8px">Remove what is ticked</button>
+  </form>
+</div>
+{% endif %}
+{% elif configured %}
+  <div class="empty" style="background:var(--panel);border:1px solid var(--border);border-radius:10px">Nothing has been read from the violations portal yet.</div>
+{% endif %}
+
+<script>
+  (function () {
+    var all = document.getElementById("dr-all");
+    if (!all) return;
+    all.addEventListener("change", function () {
+      document.querySelectorAll(".dr-pick").forEach(function (c) { c.checked = all.checked; });
+    });
+  })();
+</script>
+{% endblock %}

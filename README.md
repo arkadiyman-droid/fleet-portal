@@ -234,6 +234,51 @@ a building belongs to the administrator alone, so **file a building in
 Portfolio before sharing its property**. `tests/test_viewer_access_db.py`
 signs in as a view-only person and tries every page and data feed.
 
+### Directory: managers from the violations portal
+
+PATHSCO Violations (a separate application on the same server) already
+records who manages each property, by email. **Directory** (administrator
+only, `app/directory.py`, `routes.directory_page`) turns that into view-only
+access here, in three steps on one page:
+
+1. **Which property is which.** The two systems name properties differently
+   ("Bedell" / "Bedell Terrace"; "Betty" and "Medgar Evers" are one property
+   here). The page suggests the match from the name and the streets; the
+   administrator confirms. Several of theirs may be one property here.
+2. **Who would see what.** Every property manager and regional manager on a
+   linked property, with the properties they would be able to watch. Ticking
+   and approving creates the account and shares those properties as `viewer`.
+   Nobody gets access without that approval. An address outside
+   `DIRECTORY_EMAIL_DOMAINS`, or a mistyped one, cannot be approved.
+3. **No longer in the directory.** When the violations portal stops listing
+   someone for a property, the page offers to remove it — never by itself, and
+   never a grant given by hand under Users (`permissions.source` tells them
+   apart).
+
+The directory is re-read when the page is opened and the last read is over
+six hours old, or on the button. It comes from the violations portal's
+`GET /api/v1/directory` with a read-only token minted on that portal's
+Integrations page:
+
+    DIRECTORY_URL=http://127.0.0.1:8000
+    DIRECTORY_TOKEN=bev_...
+
+**Sign-in by company email** (`app/cf_access.py`, `app/admin_auth.py`). A
+manager approved here has no portal password. Cloudflare Access has already
+verified their email before any request arrives, and says so in a signed
+token; the portal checks that token (signature against the team's published
+keys, this application's audience, issuer, expiry) and signs them in as the
+account with that email. It needs:
+
+    CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
+    CF_ACCESS_AUD=<this application's audience tag>
+
+and the managers' email domain allowed in this site's Access policy. The
+Directory page says whether the token on the administrator's own request
+verifies, so a wrong audience tag shows up before anyone is invited. Log out
+is respected (the next page does not sign the person straight back in), and
+accounts with a password keep working as before.
+
 ---
 
 ## Requirements

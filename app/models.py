@@ -185,6 +185,10 @@ class Permission(db.Model):
     scope_type = db.Column(db.String(20), nullable=False)
     scope_id = db.Column(db.Integer, nullable=False)
     role = db.Column(db.String(20), nullable=False)
+    # 'directory' for a grant the Directory page made from the violations
+    # portal's manager list (app/directory.py); NULL for one made by hand.
+    # Only directory grants are ever offered for removal when that list changes.
+    source = db.Column(db.String(20))
 
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
@@ -974,3 +978,51 @@ class RcDhwStatus(db.Model):
 
     def __repr__(self):
         return f"<RcDhwStatus tower_id={self.tower_id} ok={self.ok}>"
+
+
+class DirectoryProperty(db.Model):
+    """A property as the violations portal (PATHSCO Violations) lists it:
+    who manages it, by email, its buildings, and two headline counts — a copy
+    refreshed by app/directory.py. `property_id` is the administrator's
+    decision that it is THIS portal's property (several rows may point at one:
+    "Betty" and "Medgar Evers" are both "Betty and Medgar" here). Nothing is
+    granted from this table by itself; see routes.directory_page."""
+    __tablename__ = "directory_properties"
+    __table_args__ = (db.UniqueConstraint("ext_id", name="uq_directory_property_ext"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    ext_id = db.Column(db.Integer, nullable=False)                  # the violations portal's own property id
+    name = db.Column(db.String(200), nullable=False)
+    region = db.Column(db.String(100))
+    unit_count = db.Column(db.Integer)
+    pm_name = db.Column(db.String(200))
+    pm_email = db.Column(db.String(255))
+    rpm_name = db.Column(db.String(200))
+    rpm_email = db.Column(db.String(255))
+    site_email = db.Column(db.String(255))
+    buildings = db.Column(JSONB, nullable=False, default=list)      # [{address, city, state, zip, bin}]
+    open_violations = db.Column(db.Integer)
+    overdue_obligations = db.Column(db.Integer)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id", ondelete="SET NULL"), index=True)
+    linked_by = db.Column(db.String(120))
+    linked_at = db.Column(db.DateTime)
+    present = db.Column(db.Boolean, nullable=False, default=True)   # still listed at the last read
+    seen_at = db.Column(db.DateTime, nullable=False)
+
+    property = db.relationship("Property")
+
+    def __repr__(self):
+        return f"<DirectoryProperty {self.ext_id} {self.name!r}>"
+
+
+class DirectoryState(db.Model):
+    """One row (id 1): when the directory was last read, and how it went."""
+    __tablename__ = "directory_state"
+
+    id = db.Column(db.Integer, primary_key=True)
+    attempted_at = db.Column(db.DateTime)
+    fetched_at = db.Column(db.DateTime)                             # the last read that worked
+    ok = db.Column(db.Boolean, nullable=False, default=False)
+    error = db.Column(db.Text)
+    org = db.Column(db.String(200))
+    n = db.Column(db.Integer)

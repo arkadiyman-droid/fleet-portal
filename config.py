@@ -115,6 +115,22 @@ class Config:
         self.RC_DHW_SETTLE_MS = int(os.environ.get("RC_DHW_SETTLE_MS", "1500"))
         self.RC_DHW_CHROMIUM_PATH = os.environ.get("RC_DHW_CHROMIUM_PATH", "/usr/bin/chromium")
 
+        # The manager directory, read from the violations portal (app/directory.py):
+        # its address as this server reaches it, and a read-only API token minted on
+        # that portal's Integrations page. Both empty = the Directory page explains
+        # what to set. DIRECTORY_EMAIL_DOMAINS are the company domains a manager's
+        # address must be in before the page will offer to give them access.
+        self.DIRECTORY_URL = os.environ.get("DIRECTORY_URL", "").strip()
+        self.DIRECTORY_TOKEN = os.environ.get("DIRECTORY_TOKEN", "").strip()
+        self.DIRECTORY_EMAIL_DOMAINS = tuple(
+            d.strip().lower() for d in os.environ.get("DIRECTORY_EMAIL_DOMAINS", "pathsco.com").split(",") if d.strip())
+        # Sign-in by company email (app/cf_access.py): the Cloudflare Access team
+        # domain (e.g. example.cloudflareaccess.com) and THIS application's audience
+        # tag. Both set = a person Cloudflare has already verified is signed in as
+        # the account with that email, no portal password. Either empty = off.
+        self.CF_ACCESS_TEAM_DOMAIN = os.environ.get("CF_ACCESS_TEAM_DOMAIN", "").strip().lower()
+        self.CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

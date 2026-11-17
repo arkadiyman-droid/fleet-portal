@@ -159,7 +159,9 @@ def account_page():
         if user is None:
             abort(403)                               # the administrator's password lives in the server's settings
         cur, new = request.form.get("current", ""), request.form.get("new", "")
-        if not check_password_hash(user.password_hash, cur):
+        if user.password_hash.startswith("!"):
+            flash("This account signs in by company email and has no password.", "error")
+        elif not check_password_hash(user.password_hash, cur):
             flash("The current password is not right. Nothing was changed.", "error")
         elif len(new) < 10:
             flash("Choose a new password of at least 10 characters.", "error")
@@ -177,7 +179,8 @@ def account_page():
         grants = [{"label": _scope_label(p.scope_type, p.scope_id), "role": p.role}
                   for p in Permission.query.filter_by(user_id=user.id)
                   .order_by(Permission.scope_type, Permission.scope_id).all()]
-    return render_template("account.html", title="My account", user=user, grants=grants)
+    return render_template("account.html", title="My account", user=user, grants=grants,
+                           has_password=bool(user) and not user.password_hash.startswith("!"))
 
 
 # ─── Client ──────────────────────────────────────────────────────────────
@@ -2718,6 +2721,207 @@ def revoke_permission(user_id, permission_id):
     db.session.commit()
     flash("Grant revoked.", "success")
     return redirect(url_for("admin.user_permissions", user_id=user_id))
+
+
+# ─── Directory: managers from the violations portal (app/directory.py) ───
+
+def _clip(v, n):
+    v = str(v).strip() if v is not None else ""
+    return v[:n] or None
+
+
+def _directory_state():
+    from app.models import DirectoryState
+    st = db.session.get(DirectoryState, 1)
+    if st is None:
+        st = DirectoryState(id=1, ok=False)
+        db.session.add(st)
+    return st
+
+
+def directory_sync(now=None, fetch=None):
+    """Read the violations portal's directory and store it (DirectoryProperty).
+    Links the administrator has made are kept; a property the directory no
+    longer lists is marked not present, never deleted. Returns (ok, message)."""
+    from app import directory
+    from app.models import DirectoryProperty
+    cfg, now = current_app.config, now or datetime.utcnow()
+    try:
+        data = (fetch or directory.fetch)(cfg.get("DIRECTORY_URL", ""), cfg.get("DIRECTORY_TOKEN", ""))
+    except Exception as e:
+        db.session.rollback()
+        st = _directory_state()
+        st.attempted_at, st.ok, st.error = now, False, str(e)[:500]
+        db.session.commit()
+        return False, st.error
+    have = {d.ext_id: d for d in DirectoryProperty.query.all()}
+    seen = set()
+    for p in data["properties"]:
+        try:
+            ext = int(p["id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        row = have.get(ext) or DirectoryProperty(ext_id=ext)
+        row.name = _clip(p.get("name"), 200) or f"#{ext}"
+        row.region, row.unit_count = _clip(p.get("region"), 100), p.get("unit_count") if isinstance(p.get("unit_count"), int) else None
+        row.pm_name, row.pm_email = _clip(p.get("pm_name"), 200), _clip(p.get("pm_email"), 255)
+        row.rpm_name, row.rpm_email = _clip(p.get("rpm_name"), 200), _clip(p.get("rpm_email"), 255)
+        row.site_email = _clip(p.get("site_email"), 255)
+        row.buildings = [{k: b.get(k) for k in ("address", "city", "state", "zip", "bin")}
+                         for b in (p.get("buildings") or []) if isinstance(b, dict) and b.get("address")]
+        row.open_violations = p.get("open_violations") if isinstance(p.get("open_violations"), int) else None
+        row.overdue_obligations = p.get("overdue_obligations") if isinstance(p.get("overdue_obligations"), int) else None
+        row.present, row.seen_at = True, now
+        db.session.add(row)
+        seen.add(ext)
+    for ext, row in have.items():
+        if ext not in seen:
+            row.present = False
+    st = _directory_state()
+    st.attempted_at, st.fetched_at, st.ok, st.error = now, now, True, None
+    st.org, st.n = _clip(data.get("org"), 200), len(seen)
+    db.session.commit()
+    return True, f"Read {len(seen)} properties from the violations portal."
+
+
+def _directory_view():
+    """Everything the Directory page shows, worked out fresh: the directory's
+    properties with their link (or a suggested one), the managers on linked
+    properties with what approving each would change, and removals on offer."""
+    from sqlalchemy.orm import joinedload
+    from app import directory
+    from app.models import DirectoryProperty
+    domains = current_app.config.get("DIRECTORY_EMAIL_DOMAINS") or ()
+    rows = DirectoryProperty.query.filter_by(present=True).order_by(DirectoryProperty.name).all()
+    props = (Property.query.options(joinedload(Property.client), joinedload(Property.buildings))
+             .filter(Property.is_active.is_(True)).order_by(Property.name).all())
+    pname = {p.id: p.name for p in props}
+    fleet = [{"id": p.id, "name": p.name, "addresses": [b.name for b in p.buildings if b.is_active]} for p in props]
+    suggest = directory.suggest_links(
+        [{"id": r.id, "name": r.name, "addresses": [b.get("address") for b in (r.buildings or [])]}
+         for r in rows if r.property_id not in pname], fleet)
+    links = []
+    for r in rows:
+        linked = r.property_id if r.property_id in pname else None
+        s = suggest.get(r.id)
+        has_mgr = bool(directory.norm_email(r.pm_email) or directory.norm_email(r.rpm_email))
+        links.append({"row": r, "linked": linked, "suggest": s, "suggest_name": pname.get(s["property_id"]) if s else None,
+                      "has_mgr": has_mgr,
+                      # offered ready-chosen only when the NAMES agree; a streets-only match is a hint
+                      "choice": linked or (s["property_id"] if s and s["confidence"] == "name" else None),
+                      # to decide = something here looks like it; the rest have no counterpart in this portal
+                      "group": "linked" if linked else ("todo" if s else "rest")})
+    persons = directory.people(
+        [{"name": r.name, "property_id": r.property_id if r.property_id in pname else None, "pm_name": r.pm_name,
+          "pm_email": r.pm_email, "rpm_name": r.rpm_name, "rpm_email": r.rpm_email, "site_email": r.site_email}
+         for r in rows], domains)
+    users = {u.email.strip().lower(): {"id": u.id, "active": u.is_active} for u in User.query.all()}
+    grants = {}
+    for gr in Permission.query.filter_by(scope_type="property").all():
+        grants.setdefault(gr.user_id, {})[gr.scope_id] = gr.source
+    plan = directory.access_plan(persons, users, grants)
+    for p in plan:
+        p["sees"] = sorted(pname.get(i, f"#{i}") for i in p["property_ids"])
+        p["add_names"] = [pname.get(i, f"#{i}") for i in p["add"]]
+        p["drop_names"] = [pname.get(i, f"#{i}") for i in p["drop"]]
+    orphans = directory.orphans(persons, users, grants)
+    for o in orphans:
+        o["drop_names"] = [pname.get(i, f"#{i}") for i in o["drop"]]
+    return links, plan, orphans, props
+
+
+@admin_bp.route("/directory", methods=["GET", "POST"])
+@superuser_required
+def directory_page():
+    """Managers and properties from the violations portal: line its properties
+    up with this portal's, see who would be able to watch what, and approve.
+    Nothing is granted until the administrator presses Approve; a grant made
+    here is marked so it can be offered for removal if the directory changes."""
+    from app.admin_auth import NO_PASSWORD, cf_email as _cf_email
+    from app.models import DirectoryProperty
+    cfg, now = current_app.config, datetime.utcnow()
+    configured = bool(cfg.get("DIRECTORY_URL") and cfg.get("DIRECTORY_TOKEN"))
+    action = request.form.get("action", "") if request.method == "POST" else ""
+
+    if action == "sync":
+        if not configured:
+            flash("The violations portal's address and token are not set yet.", "error")
+        else:
+            ok, msg = directory_sync(now)
+            flash(msg if ok else f"Could not read the violations portal: {msg}", "success" if ok else "error")
+        return redirect(url_for("admin.directory_page"))
+
+    if action == "links":
+        valid = {p.id for p in Property.query.filter(Property.is_active.is_(True)).all()}
+        changed = 0
+        for r in DirectoryProperty.query.filter_by(present=True).all():
+            key = f"link_{r.id}"
+            if key not in request.form:
+                continue
+            raw = request.form.get(key, "")
+            want = int(raw) if raw.isdigit() and int(raw) in valid else None
+            if want != r.property_id:
+                r.property_id, r.linked_by, r.linked_at = want, (_who() if want else None), (now if want else None)
+                changed += 1
+        db.session.commit()
+        flash(f"Links saved: {changed} changed.", "success")
+        return redirect(url_for("admin.directory_page"))
+
+    if action == "approve":
+        chosen = {e.strip().lower() for e in request.form.getlist("email")}
+        _links, plan, _orphans, _props = _directory_view()
+        made = granted = 0
+        for p in plan:
+            if p["email"] not in chosen or p["state"] not in ("new", "add"):
+                continue
+            user = db.session.get(User, p["user_id"]) if p["user_id"] else None
+            if user is None:
+                login = p["email"][:80]
+                if login == cfg["ADMIN_USERNAME"] or User.query.filter_by(login=login).first() is not None:
+                    import secrets
+                    login = f"{p['email'].split('@')[0][:60]}-{secrets.token_hex(3)}"
+                user = User(name=p["name"][:200], email=p["email"], login=login, password_hash=NO_PASSWORD)
+                db.session.add(user)
+                db.session.flush()
+                made += 1
+            for pid in p["add"]:
+                db.session.add(Permission(user_id=user.id, scope_type="property", scope_id=pid, role="viewer",
+                                          source="directory"))
+                granted += 1
+        db.session.commit()
+        flash(f"Approved: {made} account{'s' if made != 1 else ''} created, {granted} propert{'y' if granted == 1 else 'ies'} shared.",
+              "success")
+        return redirect(url_for("admin.directory_page"))
+
+    if action == "drop":
+        removed = 0
+        for item in request.form.getlist("drop"):
+            uid, _, pid = item.partition(":")
+            if uid.isdigit() and pid.isdigit():
+                removed += Permission.query.filter_by(user_id=int(uid), scope_type="property", scope_id=int(pid),
+                                                      source="directory").delete()
+        db.session.commit()
+        flash(f"Removed {removed} propert{'y' if removed == 1 else 'ies'} that the directory no longer backs.", "success")
+        return redirect(url_for("admin.directory_page"))
+
+    st = _directory_state()
+    if configured and (st.attempted_at is None or now - st.attempted_at > timedelta(hours=6)):
+        directory_sync(now)                              # a local call; keeps the page current without a button
+        st = _directory_state()
+    links, plan, orphans, props = _directory_view()
+    from app import history
+    return render_template(
+        "directory.html", title="Directory", configured=configured, state=st, links=links, plan=plan, orphans=orphans,
+        props=props, domains=cfg.get("DIRECTORY_EMAIL_DOMAINS") or (),
+        fetched=history.local(st.fetched_at).strftime("%b %d, %I:%M %p").replace(" 0", " ") if st.fetched_at else None,
+        email_signin=bool(cfg.get("CF_ACCESS_TEAM_DOMAIN") and cfg.get("CF_ACCESS_AUD")),
+        # a check the administrator can read: does the token on THEIR OWN request verify?
+        cf_token=bool(request.headers.get("Cf-Access-Jwt-Assertion")), cf_me=_cf_email(),
+        counts={"todo": sum(1 for x in links if x["group"] == "todo"), "linked": sum(1 for x in links if x["group"] == "linked"),
+                "rest": sum(1 for x in links if x["group"] == "rest"),
+                "pending": sum(1 for p in plan if p["state"] in ("new", "add")),
+                "blocked": sum(1 for p in plan if p["state"] == "blocked"),
+                "drops": sum(len(p["drop"]) for p in plan) + sum(len(o["drop"]) for o in orphans)})
 
 
 # ─── Billing (Phase 4 — Superuser-only) ──────────────────────────────────
