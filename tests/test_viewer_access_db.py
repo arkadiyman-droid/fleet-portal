@@ -369,3 +369,30 @@ def test_the_users_list_has_a_search_box(root, world):
     users = root.get("/users").get_data(as_text=True)
     assert 'id="el-q"' in users and "Search by name, email or property" in users and 'id="el-table"' in users
     assert 'id="el-q"' not in root.get("/clients").get_data(as_text=True)      # only where it was asked for
+
+
+# ── My properties: readable by someone seeing it for the first time ────────────
+
+def test_my_properties_explains_itself(pat, world, session):
+    import re
+    import app.models as m
+    from app import portfolio
+    now = dt.datetime.utcnow()
+    session.add(m.LegacyStatus(box_id=world["box_mine"], polled_at=now, ok=True, last_ok_at=now,
+                               data={"status": {"callForHeat": "Outsd Sat", "averageTemperature": "74"}, "names": {}}))
+    session.commit()
+    page = pat.get("/home").get_data(as_text=True)
+    assert "How to read this page" in page and ">What to do</th>" in page and "Roof fan status" in page
+    assert "email the person who gave you this access" in page
+    assert "Send your own maintenance person or electrician to that fan first" in page
+    row = re.search(r"<tr>(?:(?!</tr>).)*50 South 9 St.*?</tr>", page, re.S).group(0)
+    assert ">OK</span>" in row and 'title="Normal. The controller is reporting' in row
+    assert "Resting: warm enough outside" in row                              # the box's code, in plain words
+    # a controller that stopped answering says since when, so a short gap and a long one do not look alike
+    st = m.LegacyStatus.query.get(world["box_mine"])
+    st.ok, st.last_ok_at = False, now - dt.timedelta(days=2)
+    session.commit()
+    row = re.search(r"<tr>(?:(?!</tr>).)*50 South 9 St.*?</tr>", pat.get("/home").get_data(as_text=True), re.S).group(0)
+    assert ">Not reporting</span>" in row and "The controller has not answered since " in row
+    assert portfolio._silent(None) == "The controller has never answered"
+    assert portfolio._silent(dt.datetime(2026, 11, 15, 18, 36)) == "The controller has not answered since Nov 15, 1:36 PM"

@@ -147,7 +147,7 @@ def home_page():
                           "prop": p.name, "prop_id": p.id,
                           "entry": portfolio.building_entry(b, now, now_dt, rc_dhw)})
     data = home.assemble(buildings, _fan_rows(now_dt))
-    return render_template("home.html", title="My properties", **data)
+    return render_template("home.html", title="My properties", guide=home.GUIDE, **data)
 
 
 @admin_bp.route("/account", methods=["GET", "POST"])

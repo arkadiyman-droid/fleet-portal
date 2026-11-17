@@ -46,3 +46,34 @@ def test_owners_are_separate_and_nothing_shared_is_empty():
     assert [o["name"] for o in out["owners"]] == ["Owner A", "Owner B"]
     empty = home.assemble([], [_f(1, "x", 1, 1)])
     assert empty["owners"] == [] and empty["summary"]["buildings"] == 0 and empty["summary"]["properties"] == 0
+
+
+# ── "How to read this page": the guide for someone seeing it for the first time ──
+
+def test_the_guide_explains_every_status_the_page_can_show():
+    # every heating tone has a row, in the page's own worst-first order, under the label the pill carries
+    assert [r["key"] for r in home.HEAT_GUIDE] == sorted(home.TONE_LABEL, key=home.TONE_ORDER.get)
+    assert all(r["label"] == home.TONE_LABEL[r["key"]] for r in home.HEAT_GUIDE)
+    for r in home.HEAT_GUIDE + home.FAN_GUIDE:
+        assert r["means"].endswith(".") and r["do"].endswith(".") and r["css"] in ("crit", "warn", "heat", "ok", "dark")
+    # nobody is named in the page: who to tell is "the person who gave you this access"
+    assert all("@" not in r["do"] for r in home.HEAT_GUIDE + home.FAN_GUIDE)
+
+
+def test_a_fan_building_gets_the_worst_thing_true_of_it():
+    assert home.fan_key({"stale": True, "fail": 2, "on": 3}) == "stale"      # not reporting: nothing else is known
+    assert home.fan_key({"fail": 1, "hand": 1, "on": 3}) == "fail"
+    assert home.fan_key({"hand": 1, "on": 3}) == "hand"
+    assert home.fan_key({"on": 3}) == "on" and home.fan_key({"on": 0}) == "off"
+    assert {home.fan_key(f) for f in ({"stale": 1}, {"fail": 1}, {"hand": 1}, {"on": 1}, {})} == {r["key"] for r in home.FAN_GUIDE}
+
+
+def test_every_row_carries_its_pill_and_what_the_pill_means():
+    out = home.assemble([_b(1, "Berry", "50 South 9 St", "heat"), _b(1, "Berry", "440 Berry St", "dark")],
+                        [_f(1, "50 South 9 St", 2, 3, fail=1), _f(1, "440 Berry St", 0, 4)])
+    p = out["owners"][0]["props"][0]
+    heat, dark = p["buildings"]
+    assert heat["tip"].startswith("Normal.") and "cannot reach" in dark["tip"]
+    down, off = p["fans"]
+    assert (down["pill"], down["pill_css"]) == ("Fan down", "crit") and "not running" in down["tip"]
+    assert (off["pill"], off["pill_css"]) == ("Off", "dark")

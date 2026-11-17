@@ -30,12 +30,40 @@ def _hhmm(mins):
 
 # ── per-source entries (all return the same shape) ───────────────────────────
 
-def _blank(name, source, url=None):
+# What a 2010 box is doing, in words for someone who has never met its heat-mode
+# codes (legacy.STATUS keeps the engineer's wording, which a code not listed
+# here falls back to). "Resting" = the heat is off because nothing needs it.
+_LEGACY_DOING = {
+    "Summer": "Heat is off for the summer",
+    "Outsd Sat": "Resting: warm enough outside",
+    "Insd Sat": "Resting: the apartments are warm enough",
+    "DTime Sat": "Resting: this heat cycle has finished",
+    "DTime Rem": "Heating: a heat cycle is running",
+    "Aqua Call": "Boiler is firing to keep its water hot",
+    "Pressure": "Heating: the boiler is building pressure",
+    "Circ Pump": "Heating: the pump is circulating",
+    "Ign Fail": "The boiler tried to light and failed",
+    "Safety": "The boiler is stopped on a safety",
+}
+
+
+def _silent(last_ok):
+    """What a building whose controller is not answering is 'doing': since when
+    (New York time), so a two-minute gap and a two-day one do not look alike."""
+    if not last_ok:
+        return "The controller has never answered"
+    from app import legacy
+    at = last_ok.replace(tzinfo=_dt.timezone.utc).astimezone(legacy.LOCAL)
+    return "The controller has not answered since " + at.strftime("%b %d, %I:%M %p").replace(" 0", " ")
+
+
+def _blank(name, source, url=None, doing=None):
     # avg = the average of the apartment / space sensors; dhw = the hot water
-    # going out to the building (the mixing-valve reading where there is one).
+    # going out to the building (the mixing-valve reading where there is one);
+    # doing = one plain sentence on what the building is doing right now.
     return {"name": name, "source": source, "status": "dark", "out": None, "avg": None, "no_sensors": False,
             "sup": None, "ret": None, "rt": None, "dhw": None, "dhw_src": None, "spt": None, "mode": None,
-            "alarms": [], "url": url}
+            "alarms": [], "doing": doing, "url": url}
 
 
 def _bloom_entry(name, ba):
@@ -43,14 +71,20 @@ def _bloom_entry(name, ba):
     url = f"/skyline/{ba.id}"
     st = ba.status
     if not (st and st.ok and st.data):
-        return _blank(name, "Bloom", url)
+        return _blank(name, "Bloom", url, _silent(st.last_ok_at if st else None))
     c = bloom.card(st.data, ba.view, ba.plant_tag)
+    if c["cold_call"]:
+        doing = "Calling for heat, but no heat is moving"
+    elif c["heating"]:
+        doing = "Heating: heat is moving through the building"
+    else:
+        doing = "Resting: nothing is calling for heat"
     return {"name": name, "source": "Bloom", "status": c["tone"], "out": c["outside_f"],
             "avg": c.get("space_avg_f"), "no_sensors": False,
             "sup": c["supply_f"], "ret": c["return_f"], "rt": _hhmm(c["heat_rt"]),
             "dhw": c["dhw_supply_f"], "dhw_src": "Bloom" if c["dhw_supply_f"] is not None else None,
             "spt": c["setpoint_f"], "mode": c["mode"],
-            "alarms": c["alarms"], "url": url}
+            "alarms": c["alarms"], "doing": doing, "url": url}
 
 
 def _echo_entry(name, ctrl, now, now_dt):
@@ -68,11 +102,16 @@ def _echo_entry(name, ctrl, now, now_dt):
     else:
         tone = "ok"
     alarms = [(a.get("label") or f"alarm {a.get('type')}") for a in (ev.get("alarms") or [])]
+    if tone == "dark":
+        seen = ev.get("seen")
+        doing = "The controller is not answering" + (f" ({seen})" if seen and seen != "never" else "")
+    else:
+        doing = heating.get("reason") or ("Heating" if heating.get("demand") else "Resting: nothing is calling for heat")
     return {"name": name, "source": "EchoTherm", "status": tone, "out": heating.get("outdoor"),
             "avg": heating.get("avgApt"), "no_sensors": bool(heating.get("noSensors")),
             "sup": heating.get("supply"), "ret": heating.get("ret"), "rt": None,
             "dhw": None, "dhw_src": None, "spt": heating.get("target"), "mode": heating.get("mode"),
-            "alarms": alarms, "url": f"/fleet/{ctrl.id}"}
+            "alarms": alarms, "doing": doing, "url": f"/fleet/{ctrl.id}"}
 
 
 def _legacy_entry(name, box, now_dt):
@@ -81,7 +120,7 @@ def _legacy_entry(name, box, now_dt):
     c = legacy.card(st.data, guard_out=True) if st and st.data else None   # live display: drop a railed OAT to "—"
     last_ok = st.last_ok_at if st else None
     if box.identity == "other" or (not last_ok) or (now_dt - last_ok) > legacy.STALE or not c:
-        e = _blank(name, "2010", f"/live/{box.id}")
+        e = _blank(name, "2010", f"/live/{box.id}", _silent(last_ok))
     else:
         tone = {"idle": "ok", "heat": "heat", "ok": "ok", "warn": "warn", "crit": "crit"}.get(c.get("tone"), "ok")
         # The Live wall's "Avg" and "DHW" columns: the box's average of its
@@ -94,8 +133,8 @@ def _legacy_entry(name, box, now_dt):
              "sup": c.get("supp"), "ret": c.get("retn"),
              "rt": legacy.hhmm(c["heat_rt"]) if c.get("heat_rt") is not None else None,
              "dhw": mix, "dhw_src": "mixing valve" if mix is not None else None,
-             "spt": c.get("dit"), "mode": None,
-             "alarms": [], "url": f"/live/{box.id}"}
+             "spt": c.get("dit"), "mode": None, "alarms": [],
+             "doing": _LEGACY_DOING.get(c.get("code")) or c.get("status"), "url": f"/live/{box.id}"}
     e["id"] = box.id
     e["kind"] = "legacy"
     return e
@@ -128,7 +167,8 @@ def building_entry(b, now, now_dt, rc_dhw=None):
             e = _bloom_entry(b.name, ba)
         else:
             lb = LegacyBox.query.filter_by(building_id=b.id, is_active=True, deleted_at=None).first()
-            e = _legacy_entry(b.name, lb, now_dt) if lb else dict(_blank(b.name, "—", None), status="dark")
+            e = _legacy_entry(b.name, lb, now_dt) if lb else _blank(
+                b.name, "—", None, "No controller is connected to this building yet")
     if e.get("dhw") is None and rc_dhw and rc_dhw.get(b.id) is not None:
         e["dhw"], e["dhw_src"] = rc_dhw[b.id], "Reliable Controls"
     e["building_id"] = b.id

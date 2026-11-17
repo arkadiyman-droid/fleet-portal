@@ -30,6 +30,18 @@
   a.hm-name:hover { color:var(--accent); text-decoration:underline; }
   .hm-sub { font-size:13px; font-weight:700; margin:14px 0 6px; display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; }
   .hm-alarm { color:#b91c1c; }
+  .hm-pill[title] { cursor:help; }
+  .hm-guide { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:0 16px; margin:0 0 16px; }
+  .hm-guide > summary { cursor:pointer; padding:12px 0; font-size:15px; font-weight:700; }
+  .hm-guide > summary .card-sub { font-weight:400; margin-left:8px; }
+  .hm-guide-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 430px), 1fr)); gap:6px 28px; }
+  .hm-guide h3 { font-size:13px; margin:2px 0 4px; }
+  .hm-guide table { font-size:13px; border-radius:0; }
+  .hm-guide th { font-size:11px; padding:5px 12px 5px 0; white-space:nowrap; text-align:left; }
+  .hm-guide td { padding:7px 12px 7px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  .hm-guide tr:last-child td { border-bottom:none; }
+  .hm-guide td.do { width:34%; }
+  .hm-guide p { font-size:13px; margin:10px 0 14px; max-width:1100px; }
   @media (max-width: 760px) { .hm-prop { overflow-x:auto; } }
 </style>
 {% endblock %}
@@ -58,6 +70,31 @@
   {% endif %}
 </div>
 
+<details class="hm-guide" id="hm-guide" open>
+  <summary>How to read this page<span class="card-sub">what each status means, and what to do about it</span></summary>
+  <div class="hm-guide-grid">
+    {% for heading, rows in (("Heating status", guide.heat), ("Roof fan status", guide.fans)) %}
+    <div>
+      <h3>{{ heading }}</h3>
+      <table>
+        <tr><th>Status</th><th>What it means</th><th>What to do</th></tr>
+        {% for r in rows %}
+        <tr><td><span class="hm-pill {{ r.css }}">{{ r.label }}</span></td><td>{{ r.means }}</td><td class="do">{{ r.do }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="card-sub"><b>The columns.</b> {% for name, what in guide.columns %}<b>{{ name }}</b>: {{ what }}{{ "; " if not loop.last else ". " }}{% endfor %}A dash means that reading is not available for the building. Hold the mouse over a status to see what it means; click a building for its readings, charts and history.</p>
+</details>
+<script>
+(function () {            // remember, for this browser only, that the guide was closed
+  var d = document.getElementById("hm-guide"), K = "hm-guide-closed";
+  try { if (localStorage.getItem(K) === "1") d.open = false; } catch (e) {}
+  d.addEventListener("toggle", function () { try { localStorage.setItem(K, d.open ? "0" : "1"); } catch (e) {} });
+})();
+</script>
+
 {% for o in owners %}
   {% if owners|length > 1 or g.is_superuser %}<div class="hm-owner">{{ o.name or 'No owner' }}</div>{% endif %}
   {% for p in o.props %}{% set ty = p.tally %}
@@ -68,17 +105,17 @@
     </div>
     <table>
       <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="al"><col class="src"></colgroup>
-      <tr><th>Status</th><th>Building</th><th class="num">Outdoor</th><th class="num" title="Average of the apartment temperature sensors in the building">Average</th><th class="num" title="The inside temperature the building is set to hold">Setpoint</th><th class="num">Supply</th><th class="num">Return</th><th class="num" title="Hot water going out to the building, read at the mixing valve">Hot water</th><th class="num" title="How long the heat has run today, hours:minutes">Heat run</th><th>Alarms</th><th>Read by</th></tr>
+      <tr><th>Status</th><th>Building</th><th class="num">Outdoor</th><th class="num" title="Average of the apartment temperature sensors in the building">Average</th><th class="num" title="The inside temperature the building is set to hold">Setpoint</th><th class="num">Supply</th><th class="num">Return</th><th class="num" title="Hot water going out to the building, read at the mixing valve">Hot water</th><th class="num" title="How long the heat has run today, hours:minutes">Heat run</th><th title="What the building is doing right now, with any open alarm in red">What it is doing</th><th>Read by</th></tr>
       {% for e in p.buildings %}
       <tr>
-        <td><span class="hm-pill {{ e.status }}">{{ e.tone_label }}</span></td>
+        <td><span class="hm-pill {{ e.status }}"{% if e.tip %} title="{{ e.tip }}"{% endif %}>{{ e.tone_label }}</span></td>
         <td>{% if e.url %}<a class="hm-name" href="{{ e.url }}">{{ e.name }}</a>{% else %}<span class="hm-name">{{ e.name }}</span>{% endif %}{% if e.mode %} <span class="card-sub">{{ e.mode }}</span>{% endif %}</td>
         <td class="num">{{ t(e.out) }}</td>
         <td class="num"{% if e.no_sensors %} title="No apartment sensor is reporting in this building, so there is no average to show"{% endif %}>{{ t(e.avg) }}</td><td class="num">{{ t(e.spt) }}</td>
         <td class="num">{{ t(e.sup) }}</td><td class="num">{{ t(e.ret) }}</td>
         <td class="num"{% if e.dhw_src %} title="Read from: {{ e.dhw_src }}"{% endif %}>{{ t(e.dhw) }}</td>
         <td class="num">{% if e.rt %}{{ e.rt }}{% else %}<span class="card-sub">—</span>{% endif %}</td>
-        <td>{% if e.alarms %}<span class="hm-alarm">{{ e.alarms[:3]|join(' · ') }}{% if e.alarms|length > 3 %} · +{{ e.alarms|length - 3 }} more{% endif %}</span>{% else %}<span class="card-sub">none</span>{% endif %}</td>
+        <td>{% if e.alarms %}<span class="hm-alarm">{{ e.alarms[:3]|join(' · ') }}{% if e.alarms|length > 3 %} · +{{ e.alarms|length - 3 }} more{% endif %}</span>{% if e.doing %}<br>{% endif %}{% endif %}{% if e.doing %}<span class="card-sub">{{ e.doing }}</span>{% elif not e.alarms %}<span class="card-sub">—</span>{% endif %}</td>
         <td><span class="card-sub">{{ e.source_label }}</span></td>
       </tr>
       {% endfor %}
@@ -93,12 +130,12 @@
       <tr><th>Status</th><th>Building</th><th class="num">Running</th><th class="num">Down</th><th class="num">Outdoor</th><th>What they are doing</th></tr>
       {% for f in p.fans %}
       <tr>
-        <td><span class="hm-pill {{ 'dark' if f.stale else ('crit' if f.fail else ('warn' if f.hand else ('ok' if f.on else 'dark'))) }}">{{ 'Not reporting' if f.stale else ('Fan down' if f.fail else ('Ignoring stop' if f.hand else ('Running' if f.on else 'Off'))) }}</span></td>
+        <td><span class="hm-pill {{ f.pill_css }}" title="{{ f.tip }}">{{ f.pill }}</span></td>
         <td><a class="hm-name" href="{{ url_for('admin.fans_page', q=f.name) }}">{{ f.name }}</a></td>
         <td class="num">{% if f.stale %}<span class="card-sub">—</span>{% else %}{{ f.on }} of {{ f.total }}{% endif %}</td>
         <td class="num">{% if f.stale or not f.fail %}<span class="card-sub">—</span>{% else %}<b style="color:var(--crit)">{{ f.fail }}</b>{% endif %}</td>
         <td class="num">{{ t(f.outdoor) }}</td>
-        <td style="padding-left:14px"><span class="card-sub">{{ f.status }}{% if f.stale and f.heard %} · last heard {{ f.heard }}{% endif %}</span></td>
+        <td style="padding-left:14px"><span class="card-sub">{{ f.status }}</span></td>
       </tr>
       {% endfor %}
     </table>
@@ -107,6 +144,5 @@
   {% endfor %}
 {% endfor %}
 
-<p class="card-sub" style="max-width:900px">Click a building for its readings, charts and history. <b>Problem</b> is a fault or a building calling for heat with a cold loop; <b>Not reporting</b> means its controller has not answered recently, so nothing is known about it right now.</p>
 {% endif %}
 {% endblock %}
