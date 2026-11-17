@@ -15,8 +15,8 @@
   .hm-prop { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
   .hm-head { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline; margin:0 0 10px; }
   .hm-head h2 { font-size:17px; margin:0; }
-  .hm-prop table { font-size:13px; border-radius:0; table-layout:fixed; min-width:900px; }
-  .hm-prop col.st { width:128px; } .hm-prop col.n { width:92px; } .hm-prop col.src { width:170px; } .hm-prop col.al { width:24%; }
+  .hm-prop table { font-size:13px; border-radius:0; table-layout:fixed; min-width:980px; }
+  .hm-prop col.st { width:128px; } .hm-prop col.n { width:84px; } .hm-prop col.src { width:170px; } .hm-prop col.al { width:24%; }
   .hm-prop td { overflow-wrap:anywhere; }
   .hm-prop th { font-size:11px; padding:5px 10px 5px 0; white-space:nowrap; }
   .hm-prop td { padding:7px 10px 7px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; font-variant-numeric:tabular-nums; }
@@ -67,14 +67,16 @@
       <span class="card-sub">{{ ty.buildings }} building{{ 's' if ty.buildings != 1 }}{% if ty.crit %} · <b style="color:var(--crit)">{{ ty.crit }} problem{{ 's' if ty.crit != 1 }}</b>{% endif %}{% if ty.warn %} · <b style="color:var(--warn)">{{ ty.warn }} warning{{ 's' if ty.warn != 1 }}</b>{% endif %}{% if ty.heat %} · {{ ty.heat }} heating{% endif %}{% if ty.dark %} · {{ ty.dark }} not reporting{% endif %}</span>
     </div>
     <table>
-      <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="al"><col class="src"></colgroup>
-      <tr><th>Status</th><th>Building</th><th class="num">Outdoor</th><th class="num">Supply</th><th class="num">Return</th><th class="num">Hot water</th><th class="num">Setpoint</th><th class="num" title="How long the heat has run today, hours:minutes">Heat run</th><th>Alarms</th><th>Read by</th></tr>
+      <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="n"><col class="al"><col class="src"></colgroup>
+      <tr><th>Status</th><th>Building</th><th class="num">Outdoor</th><th class="num" title="Average of the apartment temperature sensors in the building">Average</th><th class="num" title="The inside temperature the building is set to hold">Setpoint</th><th class="num">Supply</th><th class="num">Return</th><th class="num" title="Hot water going out to the building, read at the mixing valve">Hot water</th><th class="num" title="How long the heat has run today, hours:minutes">Heat run</th><th>Alarms</th><th>Read by</th></tr>
       {% for e in p.buildings %}
       <tr>
         <td><span class="hm-pill {{ e.status }}">{{ e.tone_label }}</span></td>
         <td>{% if e.url %}<a class="hm-name" href="{{ e.url }}">{{ e.name }}</a>{% else %}<span class="hm-name">{{ e.name }}</span>{% endif %}{% if e.mode %} <span class="card-sub">{{ e.mode }}</span>{% endif %}</td>
-        <td class="num">{{ t(e.out) }}</td><td class="num">{{ t(e.sup) }}</td><td class="num">{{ t(e.ret) }}</td>
-        <td class="num">{{ t(e.dhw) }}</td><td class="num">{{ t(e.spt) }}</td>
+        <td class="num">{{ t(e.out) }}</td>
+        <td class="num"{% if e.no_sensors %} title="No apartment sensor is reporting in this building, so there is no average to show"{% endif %}>{{ t(e.avg) }}</td><td class="num">{{ t(e.spt) }}</td>
+        <td class="num">{{ t(e.sup) }}</td><td class="num">{{ t(e.ret) }}</td>
+        <td class="num"{% if e.dhw_src %} title="Read from: {{ e.dhw_src }}"{% endif %}>{{ t(e.dhw) }}</td>
         <td class="num">{% if e.rt %}{{ e.rt }}{% else %}<span class="card-sub">—</span>{% endif %}</td>
         <td>{% if e.alarms %}<span class="hm-alarm">{{ e.alarms[:3]|join(' · ') }}{% if e.alarms|length > 3 %} · +{{ e.alarms|length - 3 }} more{% endif %}</span>{% else %}<span class="card-sub">none</span>{% endif %}</td>
         <td><span class="card-sub">{{ e.source_label }}</span></td>

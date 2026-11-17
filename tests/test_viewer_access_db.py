@@ -327,3 +327,39 @@ def test_only_the_administrator_can_see_as_someone(pat, root, world, session):
     assert root.get("/users").status_code == 200
     assert root.post(f"/view-as/{other.id}", follow_redirects=True).status_code == 200
     assert "seeing the portal exactly as" not in root.get("/home").get_data(as_text=True)
+
+
+# ── My properties: the average and the hot water ───────────────────────────────
+
+def test_my_properties_shows_the_average_and_the_mix_temperature(pat, world, session):
+    import re
+    import app.models as m
+    now = dt.datetime.utcnow()
+
+    def reading(apartments, mix):
+        st = {"callForHeat": "0", "averageTemperature": "71", "targetInsideTemperature": "72",
+              "systemTemperature0": "48", "systemTemperature1": "151", "systemTemperature2": "139",
+              "systemTemperature3": str(mix)}
+        st.update({f"apartmentTemperature{i}": str(v) for i, v in enumerate(apartments)})
+        names = {"systemSensorName0": "OUT", "systemSensorName1": "HWTS", "systemSensorName2": "HWTR",
+                 "systemSensorName3": "MIX"}
+        return {"status": st, "names": names}
+
+    session.add(m.LegacyStatus(box_id=world["box_mine"], polled_at=now, ok=True, last_ok_at=now,
+                               data=reading([70, 72, 71], 124)))
+    session.commit()
+    page = pat.get("/home").get_data(as_text=True)
+    assert ">Average</th>" in page and ">Hot water</th>" in page
+    row = re.search(r"<tr>(?:(?!</tr>).)*50 South 9 St.*?</tr>", page, re.S).group(0)
+    cells = [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r'<td class="num"[^>]*>(.*?)</td>', row, re.S)]
+    assert cells[:6] == ["48°", "71°", "72°", "151°", "139°", "124°"]      # outdoor, average, setpoint, supply, return, hot water
+    assert "Read from: mixing valve" in row
+
+    # every apartment sensor silent: the box's 71 is a placeholder, not an average; a mix of 0 is not hot water
+    st = session.get(m.LegacyStatus, world["box_mine"])
+    st.data = reading([0, 0, 0], 0)
+    session.commit()
+    page = pat.get("/home").get_data(as_text=True)
+    row = re.search(r"<tr>(?:(?!</tr>).)*50 South 9 St.*?</tr>", page, re.S).group(0)
+    cells = [re.sub(r"<[^>]+>", "", c).strip() for c in re.findall(r'<td class="num"[^>]*>(.*?)</td>', row, re.S)]
+    assert cells[1] == "—" and cells[5] == "—" and "No apartment sensor is reporting" in row

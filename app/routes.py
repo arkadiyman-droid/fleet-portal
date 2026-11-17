@@ -138,14 +138,14 @@ def home_page():
     ids = visible_building_ids()
     if ids is not None:
         q = q.filter(Building.id.in_(ids or [-1]))
-    buildings = []
+    buildings, rc_dhw = [], portfolio.rc_dhw_by_building()
     for b in q.all():
         p = b.property
         if p is None or not p.is_active or (p.client is not None and not p.client.is_active):
             continue
         buildings.append({"client": p.client.name if p.client else None, "client_id": p.client_id,
                           "prop": p.name, "prop_id": p.id,
-                          "entry": portfolio.building_entry(b, now, now_dt)})
+                          "entry": portfolio.building_entry(b, now, now_dt, rc_dhw)})
     data = home.assemble(buildings, _fan_rows(now_dt))
     return render_template("home.html", title="My properties", **data)
 
