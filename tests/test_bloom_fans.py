@@ -892,3 +892,57 @@ def test_the_page_follows_the_band_in_force_while_a_move_waits():
     raw["portal"] = {"band": "cold", "out": 37, "n": 4, "prop": "P"}
     w = bf.summary(raw, now=NOW, hour=9, minute=30, pl=PLAN, hyst=2)["want"]
     assert w["band"]["key"] == "cold" and w["held"] and w["release"] == 38 and w["pending"] is None
+
+
+# ── the plan's hours, edited on the Fans page ──────────────────────────────────
+
+LATE_COLD = _span_bits((7, 10), (18, 21))                    # the cold band with one more evening hour
+
+
+def test_the_plan_takes_edited_hours_band_by_band():
+    cold, mild, free = bf.plan(36, 56, hours={"cold": LATE_COLD})
+    assert cold["ranges"] == "7am–10am, 6pm–9pm" and cold["hours_on"] == 6 and cold["edited"]
+    assert cold["bitstr"] == LATE_COLD and cold["label"] == "35° and below"     # the lines are not the hours' business
+    assert mild["bits"] == PLAN[1]["bits"] and free["bits"] == [1] * 24 and not mild["edited"] and not free["edited"]
+    # the built-in hours are what no edit gives, and an edit does not touch them
+    assert not any(b["edited"] for b in PLAN) and bf.plan(36, 56)[0]["ranges"] == "7am–10am, 6pm–8pm"
+    assert bf.plan(36, 56, hours={k: b["bitstr"] for k, b in zip(bf.PLAN_KEYS, PLAN)}) == PLAN
+    # a band can be switched off altogether
+    off = bf.plan(36, 56, hours={"free": "0" * 24})[2]
+    assert off["ranges"] == "off all day" and off["hours_on"] == 0 and off["edited"]
+
+
+def test_hours_that_did_not_arrive_whole_are_never_used():
+    for junk in (None, {}, {"cold": "101"}, {"cold": "x" * 24}, {"cold": "1" * 25}, {"cold": 7}, {"other": "1" * 24}):
+        assert bf.clean_hours(junk) == {}
+    assert bf.clean_hours({"free": "0" * 24, "mild": [1] * 24, "cold": "nope"}) == {"free": [0] * 24, "mild": [1] * 24}
+    assert bf.plan(36, 56, hours={"cold": "junk"}) == PLAN
+
+
+def test_an_edited_plan_leaves_the_loaded_slots_behind_until_they_are_sent():
+    edited = bf.plan(36, 56, hours={"cold": LATE_COLD})
+    stored = bf.trim(_live(LOADED, assign=4))                 # loaded with the built-in hours, groups on slot 4
+    assert bf.summary(stored, now=NOW, hour=14, pl=PLAN)["slot_diff"] == []
+    assert bf.summary(stored, now=NOW, hour=14, pl=edited)["slot_diff"] == [3]
+    # sending is the ordinary previewed load: the one new hour, into the slot that changed
+    p = bf.plan_push(_live(LOADED, assign=4), edited)
+    assert [(x["name"], x["pv"], x["originalPv"]) for x in p["points"]] == [("3::20", 1, 0)] and p["live"] == []
+    # where groups are ON the edited slot it changes how fans run: only as a revision, and flagged
+    assert bf.plan_push(_live(LOADED, assign=3), edited)["blocked"]
+    assert bf.plan_push(_live(LOADED, assign=3), edited, revise=True)["live"] == [3]
+    # automatic switching goes on as before on the slots that still hold the plan,
+    # and waits rather than move a property onto the slot with the old hours
+    assert bf.auto_plan(_live(LOADED, assign=4), _stored(band="mild"), edited, {"Berry"}, False, NOW)[0] == "inplace"
+    assert bf.auto_plan(_live(LOADED, assign=4), _stored(band="cold"), edited, {"Berry"}, False, NOW)[0] == "wait"
+
+
+def test_page_lists_the_properties_with_new_hours_to_send():
+    rows = [_row("1 A St", "Alpha"), _row("2 A St", "Alpha"), _row("3 B St", "Beta"),
+            _row("4 C St", "Gamma", fan_ts="2026-09-12T10:00:00.000Z"), _row("5 D St", None)]
+    for r in rows:
+        r["behind"] = r["name"] != "3 B St"
+    pg = bf.page(rows, show="fault")                          # a filter on the list does not hide what is waiting
+    # Gamma's building is not reporting (it cannot be sent to); the unfiled one has no property page
+    assert pg["summary"]["behind_props"] == [{"name": "Alpha", "n": 2}]
+    assert [(g["name"], g["behind"]) for g in bf.page(rows)["groups"]][:2] == [("Alpha", 2), ("Beta", 0)]
+    assert bf.page([_row("1 A St", "Alpha")])["summary"]["behind_props"] == []

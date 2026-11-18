@@ -898,6 +898,20 @@ class BloomFanAuto(db.Model):
     at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
+class BloomFanPlan(db.Model):
+    """The fan plan's hours as edited on the Fans page (bloom_fans.plan): for
+    each temperature band, the 24 hours of the day the fans run. One row per
+    save and rows are never edited — the newest is the plan in force, the rest
+    is the record of who changed it and when. No row at all means the built-in
+    hours (bloom_fans.DEFAULT_HOURS). Saving a row writes nothing to Bloom."""
+    __tablename__ = "bloom_fan_plan"
+
+    id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    by = db.Column(db.String(120))
+    hours = db.Column(JSONB, nullable=False)          # {"cold": "000000011100…", "mild": …, "free": …}
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are

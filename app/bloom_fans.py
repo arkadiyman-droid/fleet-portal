@@ -151,6 +151,15 @@ def until(bits, hour):
 # So the lines are at 36 and 56 (FAN_PLAN_MILD_FROM_F / FAN_PLAN_FREE_FROM_F):
 # a reading of 35.9 is still "35 and below".
 #
+# Those hours are the BUILT-IN ones (DEFAULT_HOURS). Since 2026-11-18 the
+# operator edits them on the Fans page: clicks an hour of a band on or off and
+# saves. The saved hours (BloomFanPlan, newest row) replace the built-in ones
+# everywhere the plan is used — current_plan(). Saving changes the plan in the
+# portal ONLY. The new hours reach a building when they are sent to its slots
+# the usual, previewed way (plan_push with revise), and until then automatic
+# switching will not point a group at a slot still holding the old hours
+# (plan_assign). The Fans page lists what is waiting to be sent.
+#
 # Hysteresis (FAN_PLAN_HYST_F, 2°): he wants the schedule not to jump in and
 # out when the temperature sits on a line. A building drops to the colder
 # schedule the moment it crosses the line going down, and moves back up only
@@ -171,16 +180,71 @@ def _hours(*spans):
     return bits
 
 
-def plan(mild_from=36.0, free_from=56.0) -> list:
-    """The bands, coldest first. Bounds are lo <= outdoor < hi."""
-    def band(key, lo, hi, bits, label, short):
+PLAN_KEYS = ("cold", "mild", "free")
+DEFAULT_HOURS = {"cold": _hours((7, 10), (18, 20)), "mild": _hours((7, 12), (17, 22)), "free": [1] * 24}
+
+
+def bitstr(bits) -> str:
+    """24 hourly on/off bits as a 24-character string of 0s and 1s."""
+    return "".join("1" if b else "0" for b in bits)
+
+
+def clean_hours(raw) -> dict:
+    """{band key: 24 bits} out of whatever was stored or posted: each band a
+    24-character string of 0s and 1s (how it is stored and posted) or a list
+    of 24 values. A band that is missing or malformed is left out, so the
+    built-in hours stand for it — never half a schedule."""
+    out = {}
+    for k in PLAN_KEYS:
+        v = (raw or {}).get(k)
+        if isinstance(v, str) and len(v) == 24 and set(v) <= {"0", "1"}:
+            out[k] = [int(c) for c in v]
+        elif isinstance(v, (list, tuple)) and len(v) == 24:
+            out[k] = [1 if _on(x) else 0 for x in v]
+    return out
+
+
+def plan(mild_from=36.0, free_from=56.0, hours=None) -> list:
+    """The bands, coldest first. Bounds are lo <= outdoor < hi. `hours` is
+    {band key: 24 bits} for bands whose hours have been edited (clean_hours);
+    a band not in it keeps DEFAULT_HOURS, and `edited` says which differ."""
+    h = {**DEFAULT_HOURS, **clean_hours(hours)}
+
+    def band(key, lo, hi, label, short):
+        bits = list(h[key])
         return {"key": key, "lo": lo, "hi": hi, "bits": bits, "label": label, "short": short,
-                "hours_on": sum(bits), "ranges": ranges(bits)}
-    return [band("cold", None, mild_from, _hours((7, 10), (18, 20)),
-                 f"{mild_from - 1:.0f}° and below", f"≤{mild_from - 1:.0f}°"),
-            band("mild", mild_from, free_from, _hours((7, 12), (17, 22)),
+                "hours_on": sum(bits), "ranges": ranges(bits), "bitstr": bitstr(bits),
+                "edited": bits != DEFAULT_HOURS[key]}
+    return [band("cold", None, mild_from, f"{mild_from - 1:.0f}° and below", f"≤{mild_from - 1:.0f}°"),
+            band("mild", mild_from, free_from,
                  f"{mild_from:.0f}° to {free_from - 1:.0f}°", f"{mild_from:.0f}–{free_from - 1:.0f}°"),
-            band("free", free_from, None, [1] * 24, f"{free_from:.0f}° and above", f"{free_from:.0f}°+")]
+            band("free", free_from, None, f"{free_from:.0f}° and above", f"{free_from:.0f}°+")]
+
+
+def stored_hours() -> dict:
+    """The plan's hours as last saved from the Fans page ({band key: 24 bits}),
+    or {} when nobody has edited them (app context assumed)."""
+    from app.models import BloomFanPlan
+    row = BloomFanPlan.query.order_by(BloomFanPlan.id.desc()).first()
+    return clean_hours(row.hours) if row else {}
+
+
+def current_plan(cfg) -> list:
+    """plan() as it stands now: the configured temperature lines and the hours
+    last saved from the Fans page. Every page and the poller use this one, so
+    they can never disagree about the plan (app context assumed)."""
+    return plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0), hours=stored_hours())
+
+
+def loaded_site_ids() -> set:
+    """portal_loaded() for the whole fleet, asked of the database: the fan
+    sites with an accepted write that set schedule hours (app context assumed)."""
+    from app.extensions import db
+    from app.models import BloomFanWrite
+    q = (db.session.query(BloomFanWrite.site_id)
+         .filter(BloomFanWrite.ok.is_(True), BloomFanWrite.changes.contains([{"type": "gen-sched"}]))
+         .distinct())
+    return {sid for (sid,) in q}
 
 
 def band_of(pl, outdoor):
@@ -627,8 +691,14 @@ def summary(raw: dict, now=None, cold_f=35.0, hour=None, minute=None, pl=None, h
     slot_off = bool(slot_want and always and set(slots_now) <= set(PLAN_SLOTS.values()) and slots_now != [slot_want])
     if slot_off:
         bloom_now["why"] += f" — the plan at {plan_out:.0f}° is schedule {slot_want}"
+    # The plan's slots here whose hours are not the plan's. At a building the
+    # portal has loaded (the caller knows which) that means the plan was edited
+    # since, and the new hours are waiting to be sent.
+    slot_diff = [PLAN_SLOTS[b["key"]] for b in (pl or [])
+                 if PLAN_SLOTS[b["key"]] in scheds and scheds[PLAN_SLOTS[b["key"]]]["bits"] != b["bits"]]
 
     return {
+        "slot_diff": slot_diff,
         "plan_out": plan_out, "plan_shared": shared is not None, "plan_n": portal.get("n"),
         "out_dev": (outdoor - plan_out) if (shared is not None and outdoor is not None) else None,
         "bloom_now": bloom_now, "hand": hand_n,
@@ -726,6 +796,7 @@ def page(rows, show="all", q="", sort="property") -> dict:
                 "hand": sum(1 for r in live if r.get("hand")), "hand_fans": sum(r.get("hand") or 0 for r in live),
                 "bands": {k: sum(1 for r in live if r.get("want") and r["want"]["band"]["key"] == k)
                           for k in ("cold", "mild", "free")},
+                "behind": sum(1 for r in live if r.get("behind")),
                 "held": sum(1 for r in live if r.get("want") and r["want"]["held"]),
                 "fault": sum(1 for r in live if r["fail"]), "dark": sum(r["stale"] for r in rs),
                 "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
@@ -736,6 +807,13 @@ def page(rows, show="all", q="", sort="property") -> dict:
         if r.get("plan_shared") and r.get("want") and r.get("prop"):
             in_band.setdefault(r["want"]["band"]["key"], set()).add(r["prop"])
     summary["band_props"] = {k: sorted(v, key=_natural) for k, v in in_band.items()}
+    # Properties with buildings whose loaded slots are behind an edited plan
+    # (the caller marks those rows `behind`): where the new hours must be sent.
+    waiting = {}
+    for r in rows:
+        if r.get("behind") and not r["stale"] and r.get("prop"):
+            waiting[r["prop"]] = waiting.get(r["prop"], 0) + 1
+    summary["behind_props"] = [{"name": n, "n": waiting[n]} for n in sorted(waiting, key=_natural)]
     keep = {"cold": lambda r: r["tone"] == "cold", "blind": blind,
             "over": lambda r: not r["stale"] and r.get("over"), "under": lambda r: not r["stale"] and r.get("under"),
             "gaps": lambda r: bool(r.get("gaps")),
@@ -984,7 +1062,7 @@ def auto_switch(app, account, session, token, building_list, now) -> int:
     on = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     if not on:
         return 0
-    pl = plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = current_plan(cfg)
     sites = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
     since = now - _dt.timedelta(minutes=AUTO_RETRY_MIN)
     recent = {}
@@ -1233,7 +1311,7 @@ def record(app, account, building_list, now) -> int:
 
     have = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
     cfg = app.config
-    pl = plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = current_plan(cfg)
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     # Which property each building is filed under, for the shared temperature.
     from sqlalchemy.orm import joinedload

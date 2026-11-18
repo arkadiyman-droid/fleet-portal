@@ -1635,18 +1635,64 @@ def fans_page():
     hour = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).hour
     cold_f = current_app.config.get("FAN_COLD_F", 35.0)
     cfg = current_app.config
-    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = bloom_fans.current_plan(cfg)
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     rows = _fan_rows(now)                             # only the buildings this person may see
+    from app.models import BloomFanAuto, BloomFanPlan
+    manage, plan_meta = is_superuser(), None
+    if manage:
+        # The plan's hours can be edited on this page. Where the portal loaded
+        # a building's slots and they no longer hold the plan's hours, the new
+        # hours are waiting to be sent — say so, by property.
+        loaded = bloom_fans.loaded_site_ids()
+        for r in rows:
+            r["behind"] = bool(r["id"] in loaded and not r["stale"] and r["slot_diff"])
+        last = BloomFanPlan.query.order_by(BloomFanPlan.id.desc()).first()
+        if last:
+            plan_meta = {"by": last.by or "someone", "at": last.at.replace(tzinfo=timezone.utc).astimezone(
+                legacy.LOCAL).strftime("%b %d, %I:%M %p").replace(" 0", " ")}
     pg = bloom_fans.page(rows, show=request.args.get("show", "all"), q=request.args.get("q", ""),
                          sort=request.args.get("sort", "property"))
-    from app.models import BloomFanAuto
     auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
-                           hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0),
-                           auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=is_superuser(),
+                           hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0), plan_meta=plan_meta,
+                           auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=manage,
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
+
+
+@admin_bp.route("/fans/plan", methods=["POST"])
+def fans_plan_save():
+    """Save the plan's hours as edited on the Fans page (the hour cells of the
+    three temperature bands), or put the built-in hours back. This changes the
+    plan in the portal — what every building is measured against, and what the
+    next load sends — and writes NOTHING to Bloom: the new hours go to the
+    buildings from /fans/property, previewed and confirmed there."""
+    if not is_superuser():
+        abort(403)
+    from app import bloom_fans
+    from app.models import BloomFanPlan
+    before = {b["key"]: b for b in bloom_fans.current_plan(current_app.config)}
+    if request.form.get("action") == "reset":
+        hours = {k: list(v) for k, v in bloom_fans.DEFAULT_HOURS.items()}
+    else:
+        hours = bloom_fans.clean_hours({k: request.form.get(k) for k in bloom_fans.PLAN_KEYS})
+        if len(hours) != len(bloom_fans.PLAN_KEYS):
+            flash("The plan was not saved: the hours did not arrive complete. Nothing was changed.", "error")
+            return redirect(url_for("admin.fans_page"))
+    changed = [k for k in bloom_fans.PLAN_KEYS if hours[k] != before[k]["bits"]]
+    if not changed:
+        flash("The plan already has those hours. Nothing was changed.", "success")
+        return redirect(url_for("admin.fans_page"))
+    db.session.add(BloomFanPlan(by=_who(), hours={k: bloom_fans.bitstr(hours[k]) for k in bloom_fans.PLAN_KEYS}))
+    db.session.commit()
+
+    def words(bits):
+        return ("on " if 0 < sum(bits) < 24 else "") + bloom_fans.ranges(bits)
+    said = "; ".join(f"{before[k]['label']} is now {words(hours[k])}" for k in changed)
+    flash(f"Plan saved: {said}. Nothing has been sent to Bloom yet. The fans keep the hours they have "
+          f"until the new ones are sent to each property.", "success")
+    return redirect(url_for("admin.fans_page"))
 
 
 def _fan_index():
@@ -1673,7 +1719,7 @@ def _fan_rows(now):
     from app.models import BloomFanSite
     local = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
     cfg = current_app.config
-    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = bloom_fans.current_plan(cfg)
     index, ids = _fan_index(), visible_building_ids()
     rows = []
     for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
@@ -1773,7 +1819,7 @@ def fans_property():
     if not sites:
         abort(404)
     cfg = current_app.config
-    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = bloom_fans.current_plan(cfg)
 
     def local(ts):
         return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
@@ -1921,7 +1967,7 @@ def fans_push(site_id):
     from app.models import BloomFanSite, BloomFanWrite
     site = BloomFanSite.query.get_or_404(site_id)
     cfg = current_app.config
-    pl = bloom_fans.plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    pl = bloom_fans.current_plan(cfg)
 
     def local(ts):
         return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")

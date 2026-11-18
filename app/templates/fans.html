@@ -90,6 +90,21 @@
   .fn-pl .cur { outline:2px solid #1d4ed8; outline-offset:2px; border-radius:3px; }
   .fn-pl .cnt { font-size:12px; color:var(--muted); white-space:nowrap; text-align:right; }
   .fn-gaps { margin:8px 0 0; padding:0 0 0 16px; font-size:12px; color:#92400e; }
+  /* the plan's hours, editable: one button per hour */
+  .fn-pl .strip.edit { height:24px; -webkit-user-select:none; user-select:none; }
+  .fn-pl .strip.edit button { border:0; padding:0; margin:0; min-width:0; background:#e5e7eb; border-radius:2px; cursor:pointer; }
+  .fn-pl .strip.edit button.on { background:#3b82f6; }
+  .fn-pl .strip.edit button:hover { filter:brightness(.88); }
+  .fn-pl .strip.edit button.now { box-shadow:0 0 0 2px #111827; position:relative; z-index:1; }
+  .fn-pl .strip.edit button.chg { outline:3px solid #f59e0b; outline-offset:-3px; }
+  .fn-pl .strip.edit button:focus-visible { outline:2px solid #111827; outline-offset:2px; position:relative; z-index:2; }
+  .fn-save, .fn-behind { margin:10px 0 0; padding:10px 12px; border-radius:8px; background:#fffbeb; border-left:4px solid #f59e0b; font-size:13px; color:#78350f; }
+  .fn-save .what { font-weight:600; margin:0 0 4px; }
+  .fn-save .acts { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
+  .fn-behind a { color:inherit; font-weight:600; }
+  .fn-reset { display:inline; margin:0; }
+  .fn-reset button { border:0; background:none; padding:0; font:inherit; color:var(--accent, #1d4ed8); text-decoration:underline; cursor:pointer; }
+  a.fn-pill { text-decoration:none; }
   .fn-cs b { color:var(--text); font-weight:600; white-space:nowrap; }
   .fn-cs.active b { color:#1d4ed8; }
   .fn-mini { display:grid; grid-template-columns:repeat(24, 1fr); height:14px; border-radius:3px; overflow:hidden; background:#e5e7eb; }
@@ -164,17 +179,33 @@
   <div class="fn-tile"><div class="l">Outdoor now</div><div class="n">{% if summary.out_min is not none %}{{ t(summary.out_min) }}{% if summary.out_max != summary.out_min %}<small> to </small>{{ t(summary.out_max) }}{% endif %}{% else %}—{% endif %}</div></div>
 </div>
 
-<div class="fn-plan">
+<div class="fn-plan" id="fn-plan">
   <h3>The plan · how the fans should run, by outdoor temperature</h3>
   <div class="fn-pl">
     <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
     {% for b in plan %}
     <span class="bl">{{ b.label }}</span>
-    <span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>
-    <span class="card-sub">{% if b.hours_on == 24 %}on around the clock{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
+    {% if manage %}<span class="strip edit" role="group" aria-label="{{ b.label }}: the hours the fans run" data-band="{{ b.key }}" data-label="{{ b.label }}" data-saved="{{ b.bitstr }}">{% for x in b.bits %}<button type="button" class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}" aria-pressed="{{ 'true' if x else 'false' }}"></button>{% endfor %}</span>
+    {% else %}<span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>{% endif %}
+    <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
     <span class="cnt">{% if summary.band_props.get(b.key) %}<b style="color:var(--text)">now: {{ summary.band_props[b.key]|join(', ') }}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
     {% endfor %}
   </div>
+  {% if manage %}
+  <form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-save" id="fn-save" hidden>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for b in plan %}<input type="hidden" name="{{ b.key }}" value="{{ b.bitstr }}">{% endfor %}
+    <div class="what"></div>
+    <div>Not saved yet. Saving changes the plan here in the portal. The fans themselves change when the new hours are sent to Bloom, property by property under "Schedules &amp; switching…", where you see each change before it goes.</div>
+    <div class="acts"><button type="submit" class="btn">Save the plan</button><button type="button" class="btn plain" id="fn-cancel">Cancel</button></div>
+  </form>
+  {% if summary.behind_props %}
+  <div class="fn-behind"><b>New hours are waiting to be sent to Bloom.</b> The plan's hours have changed since they were loaded at {% set nb = summary.behind_props|sum(attribute='n') %}{{ nb }} building{{ 's' if nb != 1 }}. Until you send them, those fans keep running on the old hours, and automatic switching will not move a property onto a schedule that still holds old hours. Send them here: {% for p in summary.behind_props %}<a href="{{ url_for('admin.fans_property', name=p.name) }}">{{ p.name }} ({{ p.n }} building{{ 's' if p.n != 1 }})</a>{{ ' · ' if not loop.last }}{% endfor %}</div>
+  {% endif %}
+  <div class="card-sub" style="margin:8px 0 0">Click an hour to turn the fans on or off in it, or drag across several. Nothing changes until you press Save.{% if plan_meta %} Hours last changed by {{ plan_meta.by }}, {{ plan_meta.at }}.{% endif %}
+    {% if plan|selectattr('edited')|list %}<form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-reset" onsubmit="return confirm('Put the original hours back in the plan?\n\n35 and below: 7am-10am and 6pm-8pm\n36 to 55: 7am-12pm and 5pm-10pm\n56 and above: all day\n\nNothing is sent to Bloom by this.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="reset"><button type="submit">Put the original hours back</button></form>{% endif %}
+  </div>
+  {% endif %}
   {% if hyst %}<p class="card-sub" style="margin:8px 0 0">Hysteresis {{ "%g"|format(hyst) }}°: a building drops to the colder schedule as soon as it crosses a line, and moves back up only once it reads {{ "%g"|format(hyst) }}° above it ({{ "%g"|format(plan[1].lo + hyst) }}° and {{ "%g"|format(plan[2].lo + hyst) }}°), so a temperature sitting on a line does not flip the schedule back and forth.{% if summary.held %} {{ summary.held }} building{{ 's are' if summary.held != 1 else ' is' }} held on the colder schedule that way right now.{% endif %}{% if hold %} And a property changes schedule only after its temperature has stayed in the new range for {{ "%g"|format(hold) }} minutes, so one stray reading does not switch it and switch it back.{% endif %}</p>{% endif %}
   <p class="card-sub" style="margin:8px 0 0">Each property is placed by one outdoor temperature: the middle reading of its buildings' own sensors, so one sensor in the sun cannot put a building on a different schedule from its neighbours.</p>
   {% if summary.gaps %}<p class="card-sub" style="margin:8px 0 0;color:#92400e">Bloom's own schedules would not carry this plan out at <a href="{{ link('gaps') }}" style="color:inherit;font-weight:600">{{ summary.gaps }} of {{ summary.buildings }} buildings</a> — on each row the top strip is the plan and the bottom strip is what Bloom is set to do today; open a building to see what differs.</p>{% endif %}
@@ -207,7 +238,7 @@
     {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}{% if gw.pending %} · changes to the <b>{{ gw.pending.band.label }}</b> schedule in {{ gw.pending.mins }} min if the temperature stays there{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
     <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}{% if grp.hand_fans %} · <b style="color:#b45309">{{ grp.hand_fans }} ignoring stop</b>{% endif %}</span>
-    {% if grp.name != unfiled %}{% if manage %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% endif %}
+    {% if grp.name != unfiled %}{% if manage %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% endif %}{% endif %}
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
   </div>
   {% endif %}
@@ -349,6 +380,100 @@
     try { localStorage.setItem("fn-days", b.dataset.days); } catch (e) {}
     load(box);
   });
+})();
+</script>
+{% endif %}
+{% if manage %}
+<script>
+/* Editing the plan: each hour of a band is a button. Clicking (or dragging
+   across several) changes a draft held in the page; the Save bar appears with
+   what would change, and only Save posts it (routes.fans_plan_save). Saving
+   changes the plan in the portal; nothing is written to Bloom from here. */
+(function () {
+  "use strict";
+  const form = document.getElementById("fn-save");
+  if (!form) return;
+  const strips = Array.from(document.querySelectorAll("#fn-plan .strip.edit"));
+  const what = form.querySelector(".what");
+  const clock = h => { h %= 24; return (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? "am" : "pm"); };
+  function ranges(bits) {                       // the same words as bloom_fans.ranges
+    const n = bits.reduce((a, b) => a + b, 0);
+    if (!n) return "off all day";
+    if (n === 24) return "all day";
+    const out = [];
+    for (let h = 0; h < 24;) {
+      if (!bits[h]) { h++; continue; }
+      const start = h;
+      while (h < 24 && bits[h]) h++;
+      out.push(clock(start) + "–" + clock(h));
+    }
+    return out.join(", ");
+  }
+  function says(bits) {
+    const n = bits.reduce((a, b) => a + b, 0);
+    if (n === 24) return "on around the clock";
+    if (!n) return "off all day";
+    return "on " + ranges(bits) + " · " + n + " h a day, off otherwise";
+  }
+  const cells = s => Array.from(s.querySelectorAll("button"));
+  const bitsOf = s => cells(s).map(b => b.classList.contains("on") ? 1 : 0);
+  let dirty = false, sending = false, paint = null;
+
+  function refresh() {
+    dirty = false;
+    const lines = [];
+    strips.forEach(s => {
+      const saved = s.dataset.saved, bits = bitsOf(s), now = bits.join("");
+      cells(s).forEach((b, h) => {
+        const on = bits[h] === 1, span = clock(h) + "–" + clock(h + 1);
+        b.classList.toggle("chg", saved[h] !== String(bits[h]));
+        b.setAttribute("aria-pressed", on ? "true" : "false");
+        b.setAttribute("aria-label", s.dataset.label + ", " + span + ": fans " + (on ? "on" : "off"));
+        b.title = span + " · fans " + (on ? "ON" : "OFF") + " · click to turn " + (on ? "off" : "on");
+      });
+      form.elements[s.dataset.band].value = now;
+      const say = document.querySelector('#fn-plan [data-says="' + s.dataset.band + '"]');
+      if (say) say.textContent = says(bits);
+      if (now !== saved) {
+        dirty = true;
+        lines.push(s.dataset.label + ": " + ranges(saved.split("").map(Number)) + "  →  " + ranges(bits));
+      }
+    });
+    what.replaceChildren(...lines.map(t => { const d = document.createElement("div"); d.textContent = t; return d; }));
+    form.hidden = !dirty;
+  }
+  const cellAt = ev => ev.target.closest ? ev.target.closest("#fn-plan .strip.edit button") : null;
+
+  document.addEventListener("pointerdown", ev => {
+    const b = cellAt(ev);
+    if (!b || ev.button !== 0) return;
+    const on = !b.classList.contains("on");
+    paint = {strip: b.parentNode, on: on};
+    b.classList.toggle("on", on);
+    try { if (b.hasPointerCapture(ev.pointerId)) b.releasePointerCapture(ev.pointerId); } catch (e) {}
+    refresh();
+  });
+  document.addEventListener("pointerover", ev => {
+    if (!paint) return;
+    const b = cellAt(ev);
+    if (!b || b.parentNode !== paint.strip || b.classList.contains("on") === paint.on) return;
+    b.classList.toggle("on", paint.on);
+    refresh();
+  });
+  ["pointerup", "pointercancel"].forEach(t => document.addEventListener(t, () => { paint = null; }));
+  document.addEventListener("click", ev => {      // a mouse click was handled on pointerdown; this is the keyboard
+    const b = cellAt(ev);
+    if (!b || ev.detail !== 0) return;
+    b.classList.toggle("on");
+    refresh();
+  });
+  document.getElementById("fn-cancel").addEventListener("click", () => {
+    strips.forEach(s => cells(s).forEach((b, h) => b.classList.toggle("on", s.dataset.saved[h] === "1")));
+    refresh();
+  });
+  form.addEventListener("submit", () => { sending = true; });
+  window.addEventListener("beforeunload", ev => { if (dirty && !sending) { ev.preventDefault(); ev.returnValue = ""; } });
+  refresh();
 })();
 </script>
 {% endif %}
