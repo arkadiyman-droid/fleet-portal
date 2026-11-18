@@ -912,6 +912,27 @@ class BloomFanPlan(db.Model):
     hours = db.Column(JSONB, nullable=False)          # {"cold": "000000011100…", "mild": …, "free": …}
 
 
+class FanControl(db.Model):
+    """A person who may run ONE property's roof fans from the portal: open that
+    property's 'Schedules & switching' page and do what it offers — load the
+    plan's schedules, switch the fan groups, put them back, turn automatic
+    switching on or off. Ticked per person and per property on the person's
+    permissions page; separate from the viewer/operator/admin roles, which
+    never reach the fans. It counts only while the person can also see the
+    property (app/permissions.fan_control_names), and it is removed when that
+    view is taken away. The plan's hours, the send-to-several page and the
+    per-building tools stay with the administrator."""
+    __tablename__ = "fan_controls"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    by = db.Column(db.String(120))                    # who ticked it
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "property_id", name="uq_fan_controls_user_property"),)
+
+
 class RcController(db.Model):
     """One Reliable Controls MACH-ProWeb controller we read, view-only, by
     driving its web UI headlessly (app/rc_dhw.py). The DHW values it serves are

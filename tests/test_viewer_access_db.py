@@ -262,7 +262,7 @@ def test_a_new_user_goes_straight_to_choosing_what_they_see(root, world):
                                       "password": "a-first-password"})
     assert r.status_code == 302 and "/permissions" in r.headers["Location"]
     page = root.get(r.headers["Location"]).get_data(as_text=True)
-    assert "Save view access" in page and "Berry" in page and "DCA" in page and "Other" in page
+    assert "Save access" in page and "Berry" in page and "DCA" in page and "Other" in page
     listing = root.get("/users").get_data(as_text=True)
     assert "Berry (view)" in listing and "nothing yet" in listing
 

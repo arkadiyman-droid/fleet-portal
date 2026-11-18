@@ -19,6 +19,13 @@
         {% for gr in grants %}<li class="info">{{ gr.label }} <span class="card-sub">· {{ {'viewer': 'view only', 'operator': 'view and edit', 'admin': 'full'}[gr.role] }}</span></li>{% endfor %}
       </ul>
     {% else %}<div class="card-sub">Nothing has been shared with this account yet.</div>{% endif %}
+    {% if fan_props %}
+    <div style="font-weight:600;margin:14px 0 6px">Fans you can run</div>
+    <ul class="issues" style="margin-bottom:6px">
+      {% for name in fan_props %}<li class="info"><a href="{{ url_for('admin.fans_property', name=name) }}">{{ name }}</a> <span class="card-sub">· fan schedules and switching</span></li>{% endfor %}
+    </ul>
+    <div class="card-sub">At these properties you can load the plan's fan schedules, switch the fan groups between them, and turn automatic switching on or off. Each change shows what it will do before it is sent, and is recorded under your name.</div>
+    {% endif %}
   </div>
 
   {% if not has_password %}

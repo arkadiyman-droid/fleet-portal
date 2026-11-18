@@ -16,12 +16,15 @@ from app.models import (AlertEvent, AlertState, BloomAsset, Building, Client, Co
                         RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
+    can_run_fans,
     can_view_building,
     creatable_building_property_query,
     creatable_controller_building_query,
     creatable_property_client_query,
     current_user,
     effective_role,
+    effective_role_for_property,
+    fan_control_names,
     is_superuser,
     is_view_only,
     require_role,
@@ -117,11 +120,12 @@ def index():
 @admin_bp.app_context_processor
 def _menu_flags():
     """view_only: a signed-in person whose every grant is 'viewer' gets the
-    short menu (My properties, Fans, Alerts)."""
+    short menu (My properties, Fans, Alerts). runs_fans: they have also been
+    given the fans of at least one property to run."""
     try:
-        return {"view_only": is_view_only()}
+        return {"view_only": is_view_only(), "runs_fans": bool(fan_control_names())}
     except Exception:
-        return {"view_only": False}
+        return {"view_only": False, "runs_fans": False}
 
 
 @admin_bp.route("/home")
@@ -147,7 +151,8 @@ def home_page():
                           "prop": p.name, "prop_id": p.id,
                           "entry": portfolio.building_entry(b, now, now_dt, rc_dhw)})
     data = home.assemble(buildings, _fan_rows(now_dt))
-    return render_template("home.html", title="My properties", guide=home.GUIDE, **data)
+    return render_template("home.html", title="My properties", guide=home.GUIDE,
+                           run_props=fan_control_names() or set(), **data)
 
 
 @admin_bp.route("/account", methods=["GET", "POST"])
@@ -180,6 +185,7 @@ def account_page():
                   for p in Permission.query.filter_by(user_id=user.id)
                   .order_by(Permission.scope_type, Permission.scope_id).all()]
     return render_template("account.html", title="My account", user=user, grants=grants,
+                           fan_props=sorted(fan_control_names() or []),
                            has_password=bool(user) and not user.password_hash.startswith("!"))
 
 
@@ -1657,6 +1663,7 @@ def fans_page():
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
                            hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0), plan_meta=plan_meta,
                            auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=manage,
+                           run_props=fan_control_names() or set(),      # properties whose fans this person may run
                            poll_min=round(current_app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60) / 60) or 1,
                            **pg)
 
@@ -1808,13 +1815,17 @@ def fans_property():
     groups at the slot for the property's temperature, and switch on the
     portal doing that second step by itself. Plus the way back (every group to
     Schedule 1). Every step that writes shows what will change first, is sent
-    only if that is still the change, and is logged per building."""
-    if not is_superuser():
-        abort(403)
+    only if that is still the change, and is logged per building.
+
+    Open to the administrator, and to a person the administrator has given
+    this property's fans to run (permissions.can_run_fans) — that property
+    only, and everything they send is logged under their own login."""
     import time as _time
     from app import bloom, bloom_fans, legacy
     from app.models import BloomFanAuto, BloomFanWrite
     name = (request.values.get("name") or "").strip()
+    if not can_run_fans(name):
+        abort(403)
     sites = _fans_property_sites(name) if name else []
     if not sites:
         abort(404)
@@ -2695,8 +2706,28 @@ def _access_summary(user) -> str:
         entity = model.query.get(p.scope_id) if model else None
         by_role.setdefault(p.role, []).append(entity.name if entity else f"#{p.scope_id} (deleted)")
     words = {"viewer": "view", "operator": "operate", "admin": "admin"}
-    return "; ".join(f"{', '.join(sorted(by_role[r]))} ({words[r]})" for r in ("admin", "operator", "viewer")
+    said = "; ".join(f"{', '.join(sorted(by_role[r]))} ({words[r]})" for r in ("admin", "operator", "viewer")
                      if r in by_role) or "nothing yet"
+    from app.models import FanControl
+    fans = sorted(p.name for p in Property.query.join(FanControl, FanControl.property_id == Property.id)
+                  .filter(FanControl.user_id == user.id).all())
+    return said + (f"; runs fans at {', '.join(fans)}" if fans else "")
+
+
+def _prune_fan_controls(user):
+    """Fan control goes with seeing the property: drop every fan tick on a
+    property the person can no longer see, so that giving the view back later
+    does not quietly give the fans back with it. Returns the names dropped.
+    The caller commits."""
+    from app.models import FanControl
+    db.session.flush()
+    gone = []
+    for fc in FanControl.query.filter_by(user_id=user.id).all():
+        prop = Property.query.get(fc.property_id)
+        if prop is None or effective_role_for_property(user.id, prop) is None:
+            gone.append(prop.name if prop else "a deleted property")
+            db.session.delete(fc)
+    return gone
 
 
 def _scope_label(scope_type: str, scope_id: int) -> str:
@@ -2843,12 +2874,17 @@ def user_permissions(user_id):
     clients = Client.query.filter_by(is_active=True).order_by(Client.name).all()
     properties = Property.query.filter_by(is_active=True).order_by(Property.name).all()
     buildings = Building.query.filter_by(is_active=True).order_by(Building.name).all()
-    # The simple way to share: one tick per property (view-only).
+    # The simple way to share: one tick per property (view-only), and where the
+    # property has roof fans a second tick to let the person run them.
+    from app.models import FanControl
     held = {p.scope_id: p.role for p in grants if p.scope_type == "property"}
     by_client = {p.scope_id: p.role for p in grants if p.scope_type == "client"}
+    with_fans = set(_fans_sites_by_property())
+    fan_held = {fc.property_id for fc in FanControl.query.filter_by(user_id=user.id).all()}
     share = []
     for c in clients:
         props = [{"id": p.id, "name": p.name, "role": held.get(p.id), "via_client": by_client.get(c.id),
+                  "fans": p.name in with_fans or p.id in fan_held, "fan_tick": p.id in fan_held,
                   "n": sum(1 for b in p.buildings if b.is_active)}
                  for p in sorted(c.properties, key=lambda x: x.name.lower()) if p.is_active]
         if props:
@@ -2864,7 +2900,13 @@ def user_permissions(user_id):
 def set_user_properties(user_id):
     """Share properties view-only by ticking them: the person's 'viewer'
     grants at property level become exactly the ticked set. Operator and
-    admin grants, and grants on a client or a single building, are not touched."""
+    admin grants, and grants on a client or a single building, are not touched.
+
+    The same form carries the fan ticks (models.FanControl): for every
+    property it offered one on ('fan_offered'), the person runs that
+    property's fans exactly if 'fan_property_id' has it — and only if they can
+    see the property once the view ticks are saved."""
+    from app.models import FanControl
     user = User.query.get_or_404(user_id)
     want = {int(v) for v in request.form.getlist("property_id") if v.isdigit()}
     valid = {p.id for p in Property.query.filter(Property.id.in_(want or [-1])).all()}
@@ -2877,8 +2919,33 @@ def set_user_properties(user_id):
         if pid not in valid and grant.role == "viewer":
             db.session.delete(grant)
             removed += 1
+    db.session.flush()
+
+    offered = {int(v) for v in request.form.getlist("fan_offered") if v.isdigit()}
+    want_f = {int(v) for v in request.form.getlist("fan_property_id") if v.isdigit()} & offered
+    have_f = {fc.property_id: fc for fc in FanControl.query.filter_by(user_id=user.id).all()}
+    fan_on, fan_off, refused = [], [], []
+    for prop in Property.query.filter(Property.id.in_(offered or [-1])).order_by(Property.name).all():
+        if prop.id in want_f and prop.id not in have_f:
+            if effective_role_for_property(user.id, prop) is None:
+                refused.append(prop.name)
+                continue
+            db.session.add(FanControl(user_id=user.id, property_id=prop.id, by=_who()))
+            fan_on.append(prop.name)
+        elif prop.id not in want_f and prop.id in have_f:
+            db.session.delete(have_f[prop.id])
+            fan_off.append(prop.name)
+    fan_off += [n for n in _prune_fan_controls(user) if n not in fan_off]
     db.session.commit()
-    flash(f"View access saved: {added} propert{'y' if added == 1 else 'ies'} added, {removed} removed.", "success")
+    said = f"View access saved: {added} propert{'y' if added == 1 else 'ies'} added, {removed} removed."
+    if fan_on:
+        said += f" {user.name} can now run the fans at {', '.join(fan_on)}."
+    if fan_off:
+        said += f" Fan control taken away at {', '.join(sorted(fan_off))}."
+    flash(said, "success")
+    if refused:
+        flash(f"Fan control was not given at {', '.join(refused)}: {user.name} has to be able to see a property "
+              f"before running its fans. Tick the property as well.", "error")
     return redirect(url_for("admin.user_permissions", user_id=user.id))
 
 
@@ -2910,8 +2977,9 @@ def add_permission(user_id):
 def revoke_permission(user_id, permission_id):
     grant = Permission.query.filter_by(id=permission_id, user_id=user_id).first_or_404()
     db.session.delete(grant)
+    gone = _prune_fan_controls(User.query.get_or_404(user_id))
     db.session.commit()
-    flash("Grant revoked.", "success")
+    flash("Grant revoked." + (f" Fan control at {', '.join(sorted(gone))} went with it." if gone else ""), "success")
     return redirect(url_for("admin.user_permissions", user_id=user_id))
 
 

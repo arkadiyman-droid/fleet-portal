@@ -124,7 +124,8 @@
     {% if p.fans %}
     <div class="hm-sub">Roof exhaust fans
       <span class="card-sub" style="font-weight:400">{{ ty.fans_on }} of {{ ty.fans }} running{% if ty.fans_down %} · <b style="color:var(--crit)">{{ ty.fans_down }} down</b>{% endif %}{% if ty.fan_dark %} · {{ ty.fan_dark }} building{{ 's' if ty.fan_dark != 1 }} not reporting{% endif %}</span>
-      <a href="{{ url_for('admin.fans_page') }}" style="font-weight:400;font-size:13px">Fan details and history →</a></div>
+      <a href="{{ url_for('admin.fans_page') }}" style="font-weight:400;font-size:13px">Fan details and history →</a>{% if p.name in run_props %}
+      <a href="{{ url_for('admin.fans_property', name=p.name) }}" style="font-weight:600;font-size:13px" title="You have been given this property's fans to run: load the plan's schedules, switch the fan groups, turn automatic switching on or off">Fan schedules and switching →</a>{% endif %}</div>
     <table>
       <colgroup><col class="st"><col><col class="n"><col class="n"><col class="n"><col style="width:46%"></colgroup>
       <tr><th>Status</th><th>Building</th><th class="num">Running</th><th class="num">Down</th><th class="num">Outdoor</th><th>What they are doing</th></tr>

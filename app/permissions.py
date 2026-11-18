@@ -30,7 +30,7 @@ from flask import abort, g, session
 from sqlalchemy import and_, or_
 
 from app.extensions import db
-from app.models import Building, Client, Controller, Permission, Property, User
+from app.models import Building, Client, Controller, FanControl, Permission, Property, User
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
 
@@ -276,3 +276,34 @@ def is_view_only() -> bool:
     """A signed-in person (not the administrator) with no grant above
     'viewer' anywhere — they are shown the short menu."""
     return current_user() is not None and not user_has_min_role_anywhere("operator")
+
+
+# ─── fan control: who may run a property's roof fans ─────────────────────
+#
+# The one thing besides watching that the administrator can hand to a person,
+# property by property (models.FanControl). The Fans pages file buildings under
+# a property by its NAME, so that is what these answer in.
+
+def fan_control_names():
+    """None for the administrator (meaning every property); otherwise the names
+    of the properties whose fans this person may run, possibly empty. A tick
+    counts only while the person can see the whole property — a grant on the
+    property itself or on its owner."""
+    if is_superuser():
+        return None
+    user = current_user()
+    if user is None:
+        return set()
+    names = set()
+    for fc in FanControl.query.filter_by(user_id=user.id).all():
+        prop = Property.query.get(fc.property_id)
+        if prop is not None and prop.is_active and effective_role_for_property(user.id, prop) is not None:
+            names.add(prop.name)
+    return names
+
+
+def can_run_fans(prop_name) -> bool:
+    """May this request use the 'Schedules & switching' page of the property
+    with this name?"""
+    names = fan_control_names()
+    return names is None or prop_name in names

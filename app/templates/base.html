@@ -182,7 +182,7 @@
       {% if g.is_superuser %}<a href="{{ url_for('admin.directory_page') }}" title="Managers and properties from the violations portal: who should see what">Directory</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.billing_dashboard') }}">Billing</a>{% endif %}
     </nav>
-    <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}<a href="{{ url_for('admin.account_page') }}" style="color:inherit" title="Your account: what you can see, change your password">{{ g.user.name }}</a>{% if view_only %} · view only{% endif %}{% endif %}</span>
+    <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}<a href="{{ url_for('admin.account_page') }}" style="color:inherit" title="Your account: what you can see, change your password">{{ g.user.name }}</a>{% if view_only %} · {{ 'view, and fan control' if runs_fans else 'view only' }}{% endif %}{% endif %}</span>
     <form method="post" action="{{ url_for('auth.logout') }}">
       <button type="submit">Log out</button>
     </form>
