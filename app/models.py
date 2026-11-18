@@ -910,6 +910,10 @@ class BloomFanPlan(db.Model):
     at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     by = db.Column(db.String(120))
     hours = db.Column(JSONB, nullable=False)          # {"cold": "000000011100…", "mild": …, "free": …}
+    # NULL: the general plan, which every property follows unless it has hours
+    # of its own. A property's name: that property's own hours — or, when
+    # `hours` is {}, the record of it going back to the general plan.
+    prop = db.Column(db.String(200), index=True)
 
 
 class FanControl(db.Model):

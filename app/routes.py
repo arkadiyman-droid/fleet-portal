@@ -1641,7 +1641,8 @@ def fans_page():
     hour = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).hour
     cold_f = current_app.config.get("FAN_COLD_F", 35.0)
     cfg = current_app.config
-    pl = bloom_fans.current_plan(cfg)
+    book = bloom_fans.plan_book(cfg)
+    pl = book.general
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     rows = _fan_rows(now)                             # only the buildings this person may see
     from app.models import BloomFanAuto, BloomFanPlan
@@ -1653,14 +1654,25 @@ def fans_page():
         loaded = bloom_fans.loaded_site_ids()
         for r in rows:
             r["behind"] = bool(r["id"] in loaded and not r["stale"] and r["slot_diff"])
-        last = BloomFanPlan.query.order_by(BloomFanPlan.id.desc()).first()
-        if last:
-            plan_meta = {"by": last.by or "someone", "at": last.at.replace(tzinfo=timezone.utc).astimezone(
-                legacy.LOCAL).strftime("%b %d, %I:%M %p").replace(" 0", " ")}
+    def meta(row):
+        return {"by": row.by or "someone", "at": row.at.replace(tzinfo=timezone.utc).astimezone(
+            legacy.LOCAL).strftime("%b %d, %I:%M %p").replace(" 0", " ")}
+    lasts = {}                                        # the newest saved row: None -> the general plan, else per property
+    for row in BloomFanPlan.query.order_by(BloomFanPlan.id).all():
+        lasts[row.prop] = row
+    if manage and None in lasts:
+        plan_meta = meta(lasts[None])
     pg = bloom_fans.page(rows, show=request.args.get("show", "all"), q=request.args.get("q", ""),
                          sort=request.args.get("sort", "property"))
     auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
+    # Click a property and its own plan opens under it: the hours that property
+    # runs on (its own, or the general ones), editable by the administrator.
+    prop_plans = {g["name"]: {"plan": book.of(g["name"]), "own": g["name"] in book.own,
+                              "meta": meta(lasts[g["name"]]) if g["name"] in book.own else None}
+                  for g in pg["groups"] if g.get("name") and g["name"] != bloom_fans.UNFILED}
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
+                           prop_plans=prop_plans, own_props=sorted(book.own, key=bloom_fans._natural),
+                           open_prop=(request.args.get("open") or "").strip(),
                            hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0), plan_meta=plan_meta,
                            auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=manage,
                            run_props=fan_control_names() or set(),      # properties whose fans this person may run
@@ -1670,36 +1682,67 @@ def fans_page():
 
 @admin_bp.route("/fans/plan", methods=["POST"])
 def fans_plan_save():
-    """Save the plan's hours as edited on the Fans page (the hour cells of the
-    three temperature bands), or put the built-in hours back. This changes the
-    plan in the portal — what every building is measured against, and what the
-    next load sends — and writes NOTHING to Bloom: the new hours go to the
-    buildings from /fans/property, previewed and confirmed there."""
+    """Save fan hours as edited on the Fans page (the hour cells of the three
+    temperature bands). Without `prop` it is the general plan, which every
+    property follows unless it has hours of its own; action=reset puts the
+    built-in hours back. With `prop` it is that property's own hours, and
+    action=reset puts the property back on the general plan.
+
+    Either way this changes the plan in the portal — what the buildings are
+    measured against, and what the next load sends — and writes NOTHING to
+    Bloom: the new hours go to the buildings from /fans/property or
+    /fans/send, previewed and confirmed there."""
     if not is_superuser():
         abort(403)
     from app import bloom_fans
     from app.models import BloomFanPlan
-    before = {b["key"]: b for b in bloom_fans.current_plan(current_app.config)}
-    if request.form.get("action") == "reset":
+    prop = (request.form.get("prop") or "").strip()
+    if prop and prop not in _fans_sites_by_property():
+        abort(404)                                   # not a property with fan buildings
+    back = redirect(url_for("admin.fans_page", open=prop) if prop else url_for("admin.fans_page"))
+    book = bloom_fans.plan_book(current_app.config)
+    before = {b["key"]: b for b in book.of(prop)}
+    unsent = ("Nothing has been sent to Bloom yet. The fans keep the hours they have until the new ones are sent"
+              + (f": use {prop}'s \"Schedules & switching\" page, or \"Send to properties\"." if prop
+                 else " to each property."))
+
+    def words(bits):
+        return ("on " if 0 < sum(bits) < 24 else "") + bloom_fans.ranges(bits)
+
+    reset = request.form.get("action") == "reset"
+    if reset and prop:
+        if prop not in book.own:
+            flash(f"{prop} already follows the general plan. Nothing was changed.", "success")
+            return back
+        db.session.add(BloomFanPlan(prop=prop, by=_who(), hours={}))
+        db.session.commit()
+        said = "; ".join(f"{b['label']} {words(b['bits'])}" for b in book.general)
+        flash(f"{prop} is back on the general plan: {said}. {unsent}", "success")
+        return back
+    if reset:
         hours = {k: list(v) for k, v in bloom_fans.DEFAULT_HOURS.items()}
     else:
         hours = bloom_fans.clean_hours({k: request.form.get(k) for k in bloom_fans.PLAN_KEYS})
         if len(hours) != len(bloom_fans.PLAN_KEYS):
             flash("The plan was not saved: the hours did not arrive complete. Nothing was changed.", "error")
-            return redirect(url_for("admin.fans_page"))
+            return back
     changed = [k for k in bloom_fans.PLAN_KEYS if hours[k] != before[k]["bits"]]
     if not changed:
-        flash("The plan already has those hours. Nothing was changed.", "success")
-        return redirect(url_for("admin.fans_page"))
-    db.session.add(BloomFanPlan(by=_who(), hours={k: bloom_fans.bitstr(hours[k]) for k in bloom_fans.PLAN_KEYS}))
+        flash((f"{prop} already has those hours." if prop else "The plan already has those hours.")
+              + " Nothing was changed.", "success")
+        return back
+    db.session.add(BloomFanPlan(prop=prop or None, by=_who(),
+                                hours={k: bloom_fans.bitstr(hours[k]) for k in bloom_fans.PLAN_KEYS}))
     db.session.commit()
-
-    def words(bits):
-        return ("on " if 0 < sum(bits) < 24 else "") + bloom_fans.ranges(bits)
     said = "; ".join(f"{before[k]['label']} is now {words(hours[k])}" for k in changed)
-    flash(f"Plan saved: {said}. Nothing has been sent to Bloom yet. The fans keep the hours they have "
-          f"until the new ones are sent to each property.", "success")
-    return redirect(url_for("admin.fans_page"))
+    if prop:
+        flash(f"{prop}'s own hours saved: {said}. Only {prop} is affected. {unsent}", "success")
+    else:
+        kept = sorted(book.own, key=bloom_fans._natural)
+        flash(f"Plan saved: {said}. {unsent}"
+              + (f" {', '.join(kept)} {'has' if len(kept) == 1 else 'have'} hours of {'its' if len(kept) == 1 else 'their'}"
+                 f" own and {'is' if len(kept) == 1 else 'are'} not affected." if kept else ""), "success")
+    return back
 
 
 def _fan_index():
@@ -1726,7 +1769,7 @@ def _fan_rows(now):
     from app.models import BloomFanSite
     local = now.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
     cfg = current_app.config
-    pl = bloom_fans.current_plan(cfg)
+    book = bloom_fans.plan_book(cfg)
     index, ids = _fan_index(), visible_building_ids()
     rows = []
     for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
@@ -1737,7 +1780,7 @@ def _fan_rows(now):
             continue
         prop, client, _building_id, prop_id = placed or (None, None, None, None)
         s = bloom_fans.summary(site.data, now=now, cold_f=cfg.get("FAN_COLD_F", 35.0), hour=local.hour,
-                               minute=local.minute, pl=pl, hyst=cfg.get("FAN_PLAN_HYST_F", 2.0))
+                               minute=local.minute, pl=book.of(prop), hyst=cfg.get("FAN_PLAN_HYST_F", 2.0))
         s.update(id=site.id, name=site.name, account=site.account.label, prop=prop, client=client, prop_id=prop_id,
                  heard=bloom_fans.age_words(s["heard_age"]),
                  url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
@@ -1830,7 +1873,8 @@ def fans_property():
     if not sites:
         abort(404)
     cfg = current_app.config
-    pl = bloom_fans.current_plan(cfg)
+    book = bloom_fans.plan_book(cfg)
+    pl = book.of(name)                               # this property's own hours, or the general ones
 
     def local(ts):
         return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
@@ -1962,6 +2006,7 @@ def fans_property():
                            auto_on=bool(auto and auto.enabled), auto_by=auto.by if auto else None,
                            auto_at=local(auto.at) if auto else None,
                            auto_master=bool(cfg.get("FAN_AUTO_ENABLED", True)),
+                           plan=pl, own=name in book.own, manage=is_superuser(),
                            read_at=local(datetime.utcnow()))
 
 
@@ -2020,8 +2065,9 @@ def fans_send():
     import time as _time
     from app import bloom, bloom_fans, legacy
     from app.models import BloomFanWrite
-    pl = bloom_fans.current_plan(current_app.config)
+    book = bloom_fans.plan_book(current_app.config)
     props = _fans_sites_by_property()
+    prop_of = {s.id: name for name, group in props.items() for s in group}     # each building's hours are its property's
     revisable = bloom_fans.loaded_site_ids()
 
     if request.method == "POST":
@@ -2044,7 +2090,7 @@ def fans_send():
             return jsonify(error=f"Could not read Bloom just now, so nothing was sent: {str(e)[:200]}"), 502
         now, written = datetime.utcnow(), []
         for s in sites:
-            r = _fans_send_row(s, accts, pl, revisable, now)
+            r = _fans_send_row(s, accts, book.of(prop_of[s.id]), revisable, now)
             if r["state"] != "send":
                 why = "; ".join(f"slot {x['n']}: {x['blocked']}" for x in (r["push"] or {"slots": []})["slots"] if x["blocked"])
                 results[s.id] = {"state": r["state"], "detail": why}
@@ -2072,7 +2118,8 @@ def fans_send():
                 accts = _fans_live_accounts(sites)
                 for s, w in written:
                     if w.ok:
-                        w.landed = _fans_send_row(s, accts, pl, revisable, datetime.utcnow())["state"] == "inplace"
+                        w.landed = _fans_send_row(s, accts, book.of(prop_of[s.id]), revisable,
+                                                  datetime.utcnow())["state"] == "inplace"
                         results[s.id]["landed"] = w.landed
                 db.session.commit()
             except Exception:
@@ -2084,9 +2131,10 @@ def fans_send():
         accts = _fans_live_accounts([s for group in props.values() for s in group])
         now = datetime.utcnow()
         for name, sites in props.items():
-            rows = [_fans_send_row(s, accts, pl, revisable, now) for s in sites]
+            rows = [_fans_send_row(s, accts, book.of(name), revisable, now) for s in sites]
             todo = [r for r in rows if r["state"] == "send"]
             groups.append({"name": name, "rows": rows, "n": len(todo),
+                           "own": name in book.own, "plan": book.of(name),
                            "changes": sum(r["push"]["n_changes"] for r in todo),
                            "skipped": sum(1 for r in rows if r["state"] in ("stale", "blocked", "gone")),
                            # a load that rewrites hours fan groups are following right now
@@ -2095,7 +2143,7 @@ def fans_send():
         db.session.rollback()
         error, groups = str(e)[:300], []
     read_at = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
-    return render_template("fans_send.html", title="Send fan schedules", plan=pl, slots=bloom_fans.PLAN_SLOTS,
+    return render_template("fans_send.html", title="Send fan schedules", plan=book.general, slots=bloom_fans.PLAN_SLOTS,
                            groups=groups, error=error, chunk=FANS_SEND_CHUNK,
                            note="Fleet portal: send the plan's hours to slots 3-5",
                            read_at=read_at.strftime("%b %d, %I:%M:%S %p").replace(" 0", " "))
@@ -2114,7 +2162,8 @@ def fans_push(site_id):
     from app.models import BloomFanSite, BloomFanWrite
     site = BloomFanSite.query.get_or_404(site_id)
     cfg = current_app.config
-    pl = bloom_fans.current_plan(cfg)
+    prop = next((n for n, group in _fans_sites_by_property().items() if any(x.id == site.id for x in group)), None)
+    pl = bloom_fans.current_plan(cfg, prop)          # the hours of the property this building is filed under
 
     def local(ts):
         return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")

@@ -103,6 +103,10 @@
   .fn-save .acts { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 0; }
   .fn-behind a { color:inherit; font-weight:600; }
   .fn-reset { display:inline; margin:0; }
+  .fn-ptog { border:0; background:none; padding:0; margin:0; font:inherit; color:inherit; cursor:pointer; }
+  .fn-ptog:hover { text-decoration:underline; } .fn-ptog span { color:var(--muted); font-size:12px; }
+  .fn-ptog[aria-expanded="true"] span { display:inline-block; transform:rotate(180deg); }
+  .fn-own { margin:0; border-radius:0; border-width:0 0 1px; background:#f8fafc; }
   .fn-reset button { border:0; background:none; padding:0; font:inherit; color:var(--accent, #1d4ed8); text-decoration:underline; cursor:pointer; }
   a.fn-pill { text-decoration:none; }
   .fn-cs b { color:var(--text); font-weight:600; white-space:nowrap; }
@@ -179,8 +183,8 @@
   <div class="fn-tile"><div class="l">Outdoor now</div><div class="n">{% if summary.out_min is not none %}{{ t(summary.out_min) }}{% if summary.out_max != summary.out_min %}<small> to </small>{{ t(summary.out_max) }}{% endif %}{% else %}—{% endif %}</div></div>
 </div>
 
-<div class="fn-plan" id="fn-plan">
-  <h3>The plan · how the fans should run, by outdoor temperature</h3>
+<div class="fn-plan" id="fn-plan" data-editor>
+  <h3>The plan · how the fans should run, by outdoor temperature{% if own_props %} · the general plan{% endif %}</h3>
   <div class="fn-pl">
     <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
     {% for b in plan %}
@@ -197,12 +201,12 @@
     {% for b in plan %}<input type="hidden" name="{{ b.key }}" value="{{ b.bitstr }}">{% endfor %}
     <div class="what"></div>
     <div>Not saved yet. Saving changes the plan here in the portal. The fans themselves change when the new hours are sent to Bloom: use "Send to properties…" below, where you tick the properties and see each change before it goes.</div>
-    <div class="acts"><button type="submit" class="btn">Save the plan</button><button type="button" class="btn plain" id="fn-cancel">Cancel</button></div>
+    <div class="acts"><button type="submit" class="btn">Save the plan</button><button type="button" class="btn plain fn-cancel" id="fn-cancel">Cancel</button></div>
   </form>
   {% if summary.behind_props %}
   <div class="fn-behind"><b>New hours are waiting to be sent to Bloom.</b> The plan's hours have changed since they were loaded at {% set nb = summary.behind_props|sum(attribute='n') %}{{ nb }} building{{ 's' if nb != 1 }}. Until you send them, those fans keep running on the old hours, and automatic switching will not move a property onto a schedule that still holds old hours. Send them here: {% for p in summary.behind_props %}<a href="{{ url_for('admin.fans_property', name=p.name) }}">{{ p.name }} ({{ p.n }} building{{ 's' if p.n != 1 }})</a>{{ ' · ' if not loop.last }}{% endfor %}. Or <a href="{{ url_for('admin.fans_send') }}">send to several properties at once</a>.</div>
   {% endif %}
-  <div class="card-sub" style="margin:8px 0 0">Click an hour to turn the fans on or off in it, or drag across several. Nothing changes until you press Save. <a href="{{ url_for('admin.fans_send') }}" style="font-weight:600">Send to properties…</a> sends the plan's hours to the properties you tick.{% if plan_meta %} Hours last changed by {{ plan_meta.by }}, {{ plan_meta.at }}.{% endif %}
+  <div class="card-sub" style="margin:8px 0 0">Click an hour to turn the fans on or off in it, or drag across several. Nothing changes until you press Save. <a href="{{ url_for('admin.fans_send') }}" style="font-weight:600">Send to properties…</a> sends the plan's hours to the properties you tick.{% if plan_meta %} Hours last changed by {{ plan_meta.by }}, {{ plan_meta.at }}.{% endif %} To give one property different hours, click its name in the list below.{% if own_props %} <b>{{ own_props|join(', ') }}</b> {{ 'has hours of its own and is' if own_props|length == 1 else 'have hours of their own and are' }} not changed by edits here.{% endif %}
     {% if plan|selectattr('edited')|list %}<form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-reset" onsubmit="return confirm('Put the original hours back in the plan?\n\n35 and below: 7am-10am and 6pm-8pm\n36 to 55: 7am-12pm and 5pm-10pm\n56 and above: all day\n\nNothing is sent to Bloom by this.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="reset"><button type="submit">Put the original hours back</button></form>{% endif %}
   </div>
   {% endif %}
@@ -234,13 +238,44 @@
 <div class="fn-list">
   {% if grp.name %}
   <div class="fn-prop">
-    <h2>{{ grp.name }}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
+    <h2>{% if prop_plans.get(grp.name) %}<button type="button" class="fn-ptog" aria-expanded="{{ 'true' if open_prop == grp.name else 'false' }}" title="Show the plan {{ grp.name }}'s fans run on{% if manage %}, and change its hours{% endif %}">{{ grp.name }} <span aria-hidden="true">▾</span></button>{% else %}{{ grp.name }}{% endif %}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
     {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}{% if gw.pending %} · changes to the <b>{{ gw.pending.band.label }}</b> schedule in {{ gw.pending.mins }} min if the temperature stays there{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
     <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}{% if grp.hand_fans %} · <b style="color:#b45309">{{ grp.hand_fans }} ignoring stop</b>{% endif %}</span>
-    {% if grp.name != unfiled %}{% if manage or grp.name in run_props %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% endif %}{% endif %}
+    {% if grp.name != unfiled %}{% if manage or grp.name in run_props %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if prop_plans.get(grp.name) and prop_plans[grp.name].own %}<span class="fn-pill cmd" title="{{ grp.name }} has fan hours of its own; it does not follow the general plan. Click the property's name to see them">OWN HOURS</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% endif %}{% endif %}
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
   </div>
+  {% set pp = prop_plans.get(grp.name) %}
+  {% if pp %}
+  <div class="fn-plan fn-own" data-editor data-prop="{{ grp.name }}" {{ 'hidden' if open_prop != grp.name }}>
+    <h3>The plan · how the fans should run at {{ grp.name }}, by outdoor temperature{% if pp.own %} · {{ grp.name }}'s own hours{% else %} · the general plan{% endif %}</h3>
+    <div class="fn-pl">
+      <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
+      {% for b in pp.plan %}
+      <span class="bl">{{ b.label }}</span>
+      {% if manage %}<span class="strip edit" role="group" aria-label="{{ grp.name }}, {{ b.label }}: the hours the fans run" data-band="{{ b.key }}" data-label="{{ b.label }}" data-saved="{{ b.bitstr }}">{% for x in b.bits %}<button type="button" class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}" aria-pressed="{{ 'true' if x else 'false' }}"></button>{% endfor %}</span>
+      {% else %}<span class="strip">{{ pstrip(b, hour) }}</span>{% endif %}
+      <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
+      <span class="cnt">{% if grp.want and grp.want.band.key == b.key %}<b style="color:var(--text)">in force now</b>{% endif %}</span>
+      {% endfor %}
+    </div>
+    {% if manage %}
+    <form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-save" hidden>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="prop" value="{{ grp.name }}">
+      {% for b in pp.plan %}<input type="hidden" name="{{ b.key }}" value="{{ b.bitstr }}">{% endfor %}
+      <div class="what"></div>
+      <div>Not saved yet. Saving gives {{ grp.name }} these hours{% if not pp.own %} of its own, in place of the general plan{% endif %}; no other property changes. The fans themselves change when the new hours are sent to Bloom from "Schedules &amp; switching…", where you see each change before it goes.</div>
+      <div class="acts"><button type="submit" class="btn">Save {{ grp.name }}'s hours</button><button type="button" class="btn plain fn-cancel">Cancel</button></div>
+    </form>
+    <div class="card-sub" style="margin:8px 0 0">{% if pp.own %}<b>{{ grp.name }} has hours of its own</b>{% if pp.meta %}, last changed by {{ pp.meta.by }}, {{ pp.meta.at }}{% endif %}. Changes to the general plan at the top do not reach it.
+      <form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-reset" onsubmit="return confirm('Put {{ grp.name|replace("'", "") }} back on the general plan?\n\nIts own hours are dropped and it follows the plan at the top of the page again.\n\nNothing is sent to Bloom by this.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="prop" value="{{ grp.name }}"><input type="hidden" name="action" value="reset"><button type="submit">Go back to the general plan</button></form>
+      {% else %}{{ grp.name }} follows the general plan at the top of the page. Click an hour here (or drag across several) and save to give {{ grp.name }} hours of its own.{% endif %}
+      After saving, send the hours from <a href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600">Schedules &amp; switching…</a></div>
+    {% elif pp.own %}<div class="card-sub" style="margin:8px 0 0">{{ grp.name }} has fan hours of its own, set by the administrator.</div>
+    {% endif %}
+  </div>
+  {% endif %}
   {% endif %}
   <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span title="One square per fan, clustered by fan group">Fans</span><span class="fn-num">On</span>
     <span class="fn-cs" title="Top strip: the plan for this property's temperature. Bottom strip: what Bloom is set to do today. Then what the plan asks for this hour."><span>Plan / set</span><span class="fn-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span>now</span></span>
@@ -383,18 +418,32 @@
 })();
 </script>
 {% endif %}
+<script>
+/* Click a property's name and its own plan opens under it. */
+(function () {
+  "use strict";
+  document.addEventListener("click", ev => {
+    const b = ev.target.closest ? ev.target.closest(".fn-ptog") : null;
+    if (!b) return;
+    const panel = b.closest(".fn-list").querySelector(".fn-own");
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    b.setAttribute("aria-expanded", panel.hidden ? "false" : "true");
+  });
+  const open = document.querySelector(".fn-own:not([hidden])");
+  if (open) open.scrollIntoView({block: "center"});
+})();
+</script>
 {% if manage %}
 <script>
-/* Editing the plan: each hour of a band is a button. Clicking (or dragging
+/* Editing fan hours: each hour of a band is a button. Clicking (or dragging
    across several) changes a draft held in the page; the Save bar appears with
-   what would change, and only Save posts it (routes.fans_plan_save). Saving
+   what would change, and only Save posts it (routes.fans_plan_save). There is
+   one editor for the general plan at the top and one under each property (its
+   own hours); each is a [data-editor] box with its own Save bar. Saving
    changes the plan in the portal; nothing is written to Bloom from here. */
 (function () {
   "use strict";
-  const form = document.getElementById("fn-save");
-  if (!form) return;
-  const strips = Array.from(document.querySelectorAll("#fn-plan .strip.edit"));
-  const what = form.querySelector(".what");
   const clock = h => { h %= 24; return (h % 12 === 0 ? 12 : h % 12) + (h < 12 ? "am" : "pm"); };
   function ranges(bits) {                       // the same words as bloom_fans.ranges
     const n = bits.reduce((a, b) => a + b, 0);
@@ -417,32 +466,49 @@
   }
   const cells = s => Array.from(s.querySelectorAll("button"));
   const bitsOf = s => cells(s).map(b => b.classList.contains("on") ? 1 : 0);
-  let dirty = false, sending = false, paint = null;
+  const editors = new Map();                    // [data-editor] box -> {refresh, dirty}
+  let sending = false, paint = null;
 
-  function refresh() {
-    dirty = false;
-    const lines = [];
-    strips.forEach(s => {
-      const saved = s.dataset.saved, bits = bitsOf(s), now = bits.join("");
-      cells(s).forEach((b, h) => {
-        const on = bits[h] === 1, span = clock(h) + "–" + clock(h + 1);
-        b.classList.toggle("chg", saved[h] !== String(bits[h]));
-        b.setAttribute("aria-pressed", on ? "true" : "false");
-        b.setAttribute("aria-label", s.dataset.label + ", " + span + ": fans " + (on ? "on" : "off"));
-        b.title = span + " · fans " + (on ? "ON" : "OFF") + " · click to turn " + (on ? "off" : "on");
+  document.querySelectorAll("[data-editor]").forEach(root => {
+    const form = root.querySelector("form.fn-save");
+    const strips = Array.from(root.querySelectorAll(".strip.edit"));
+    if (!form || !strips.length) return;
+    const what = form.querySelector(".what"), state = {dirty: false};
+    state.refresh = function () {
+      state.dirty = false;
+      const lines = [];
+      strips.forEach(s => {
+        const saved = s.dataset.saved, bits = bitsOf(s), now = bits.join("");
+        cells(s).forEach((b, h) => {
+          const on = bits[h] === 1, span = clock(h) + "–" + clock(h + 1);
+          b.classList.toggle("chg", saved[h] !== String(bits[h]));
+          b.setAttribute("aria-pressed", on ? "true" : "false");
+          b.setAttribute("aria-label", s.dataset.label + ", " + span + ": fans " + (on ? "on" : "off"));
+          b.title = span + " · fans " + (on ? "ON" : "OFF") + " · click to turn " + (on ? "off" : "on");
+        });
+        form.elements[s.dataset.band].value = now;
+        const say = root.querySelector('[data-says="' + s.dataset.band + '"]');
+        if (say) say.textContent = says(bits);
+        if (now !== saved) {
+          state.dirty = true;
+          lines.push(s.dataset.label + ": " + ranges(saved.split("").map(Number)) + "  →  " + ranges(bits));
+        }
       });
-      form.elements[s.dataset.band].value = now;
-      const say = document.querySelector('#fn-plan [data-says="' + s.dataset.band + '"]');
-      if (say) say.textContent = says(bits);
-      if (now !== saved) {
-        dirty = true;
-        lines.push(s.dataset.label + ": " + ranges(saved.split("").map(Number)) + "  →  " + ranges(bits));
-      }
+      what.replaceChildren(...lines.map(t => { const d = document.createElement("div"); d.textContent = t; return d; }));
+      form.hidden = !state.dirty;
+    };
+    form.querySelector(".fn-cancel").addEventListener("click", () => {
+      strips.forEach(s => cells(s).forEach((b, h) => b.classList.toggle("on", s.dataset.saved[h] === "1")));
+      state.refresh();
     });
-    what.replaceChildren(...lines.map(t => { const d = document.createElement("div"); d.textContent = t; return d; }));
-    form.hidden = !dirty;
-  }
-  const cellAt = ev => ev.target.closest ? ev.target.closest("#fn-plan .strip.edit button") : null;
+    form.addEventListener("submit", () => { sending = true; });
+    editors.set(root, state);
+    state.refresh();
+  });
+  if (!editors.size) return;
+
+  const cellAt = ev => ev.target.closest ? ev.target.closest("[data-editor] .strip.edit button") : null;
+  const refresh = b => { const st = editors.get(b.closest("[data-editor]")); if (st) st.refresh(); };
 
   document.addEventListener("pointerdown", ev => {
     const b = cellAt(ev);
@@ -451,29 +517,26 @@
     paint = {strip: b.parentNode, on: on};
     b.classList.toggle("on", on);
     try { if (b.hasPointerCapture(ev.pointerId)) b.releasePointerCapture(ev.pointerId); } catch (e) {}
-    refresh();
+    refresh(b);
   });
   document.addEventListener("pointerover", ev => {
     if (!paint) return;
     const b = cellAt(ev);
     if (!b || b.parentNode !== paint.strip || b.classList.contains("on") === paint.on) return;
     b.classList.toggle("on", paint.on);
-    refresh();
+    refresh(b);
   });
   ["pointerup", "pointercancel"].forEach(t => document.addEventListener(t, () => { paint = null; }));
   document.addEventListener("click", ev => {      // a mouse click was handled on pointerdown; this is the keyboard
     const b = cellAt(ev);
     if (!b || ev.detail !== 0) return;
     b.classList.toggle("on");
-    refresh();
+    refresh(b);
   });
-  document.getElementById("fn-cancel").addEventListener("click", () => {
-    strips.forEach(s => cells(s).forEach((b, h) => b.classList.toggle("on", s.dataset.saved[h] === "1")));
-    refresh();
+  window.addEventListener("beforeunload", ev => {
+    if (sending || !Array.from(editors.values()).some(st => st.dirty)) return;
+    ev.preventDefault(); ev.returnValue = "";
   });
-  form.addEventListener("submit", () => { sending = true; });
-  window.addEventListener("beforeunload", ev => { if (dirty && !sending) { ev.preventDefault(); ev.returnValue = ""; } });
-  refresh();
 })();
 </script>
 {% endif %}

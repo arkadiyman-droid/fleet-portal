@@ -160,6 +160,15 @@ def until(bits, hour):
 # switching will not point a group at a slot still holding the old hours
 # (plan_assign). The Fans page lists what is waiting to be sent.
 #
+# Those saved hours are the GENERAL plan. Since later that day a property can
+# also have hours of its own: the operator clicks the property on the Fans
+# page and edits the same three strips there. A property with its own hours no
+# longer follows the general ones (until it is put back); everything that
+# needs a building's hours — the page's yardstick, a load, a send, automatic
+# switching — asks for the plan of that building's property (plan_book).
+# The temperature LINES stay one set for everybody, so which band a property
+# is in never depends on whose hours it has.
+#
 # Hysteresis (FAN_PLAN_HYST_F, 2°): he wants the schedule not to jump in and
 # out when the temperature sits on a line. A building drops to the colder
 # schedule the moment it crosses the line going down, and moves back up only
@@ -221,19 +230,51 @@ def plan(mild_from=36.0, free_from=56.0, hours=None) -> list:
             band("free", free_from, None, f"{free_from:.0f}° and above", f"{free_from:.0f}°+")]
 
 
-def stored_hours() -> dict:
-    """The plan's hours as last saved from the Fans page ({band key: 24 bits}),
-    or {} when nobody has edited them (app context assumed)."""
+class PlanBook:
+    """The plan as it stands: `general` (the bands every property follows) and
+    `own` ({property name: bands} for each property with hours of its own)."""
+
+    def __init__(self, general, own):
+        self.general, self.own = general, own
+
+    def of(self, prop) -> list:
+        """The bands for this property (its own, else the general ones)."""
+        return self.own.get(prop) or self.general
+
+
+def stored_hours() -> tuple:
+    """(general, own) as last saved from the Fans page: the general plan's
+    {band key: 24 bits} ({} when nobody has edited it) and {property name:
+    {band key: 24 bits}} for every property with hours of its own. The newest
+    row per property decides; one with incomplete hours means the property is
+    back on the general plan (app context assumed)."""
     from app.models import BloomFanPlan
-    row = BloomFanPlan.query.order_by(BloomFanPlan.id.desc()).first()
-    return clean_hours(row.hours) if row else {}
+    general, own = {}, {}
+    for row in BloomFanPlan.query.order_by(BloomFanPlan.id).all():
+        hours = clean_hours(row.hours)
+        if row.prop is None:
+            general = hours
+        elif len(hours) == len(PLAN_KEYS):
+            own[row.prop] = hours
+        else:
+            own.pop(row.prop, None)
+    return general, own
 
 
-def current_plan(cfg) -> list:
-    """plan() as it stands now: the configured temperature lines and the hours
-    last saved from the Fans page. Every page and the poller use this one, so
-    they can never disagree about the plan (app context assumed)."""
-    return plan(cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0), hours=stored_hours())
+def plan_book(cfg) -> PlanBook:
+    """Every plan in force, read once: the configured temperature lines with
+    the general hours, and with each property's own hours. Every page and the
+    poller use this, so they can never disagree (app context assumed)."""
+    lines = (cfg.get("FAN_PLAN_MILD_FROM_F", 36.0), cfg.get("FAN_PLAN_FREE_FROM_F", 56.0))
+    general, own = stored_hours()
+    return PlanBook(plan(*lines, hours=general), {p: plan(*lines, hours=h) for p, h in own.items()})
+
+
+def current_plan(cfg, prop=None) -> list:
+    """The bands in force for one property, or the general plan when no
+    property is named (app context assumed)."""
+    book = plan_book(cfg)
+    return book.of(prop) if prop else book.general
 
 
 def loaded_site_ids() -> set:
@@ -1062,7 +1103,7 @@ def auto_switch(app, account, session, token, building_list, now) -> int:
     on = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     if not on:
         return 0
-    pl = current_plan(cfg)
+    book = plan_book(cfg)                                # each property's own hours, or the general ones
     sites = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
     since = now - _dt.timedelta(minutes=AUTO_RETRY_MIN)
     recent = {}
@@ -1077,6 +1118,7 @@ def auto_switch(app, account, session, token, building_list, now) -> int:
         portal = (site.data or {}).get("portal") or {}
         prop, band = portal.get("prop"), portal.get("band")
         last = recent.get(site.id)
+        pl = book.of(prop)
         verdict, a = auto_plan(b, site.data, pl, on, last is not None, now)
         if verdict == "inplace" and last is not None and last.ok and last.landed is None:
             last.landed = True                           # the earlier automatic write is now in Bloom's feed
@@ -1311,7 +1353,7 @@ def record(app, account, building_list, now) -> int:
 
     have = {s.asset_key: s for s in BloomFanSite.query.filter_by(account_id=account.id).all()}
     cfg = app.config
-    pl = current_plan(cfg)
+    pl = current_plan(cfg)                               # only its temperature lines are used here; they are everybody's
     hyst = cfg.get("FAN_PLAN_HYST_F", 2.0)
     # Which property each building is filed under, for the shared temperature.
     from sqlalchemy.orm import joinedload

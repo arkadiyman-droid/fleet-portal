@@ -219,3 +219,91 @@ def test_only_the_administrator_can_send(pat, world, bloom_feed):
     assert pat.get("/fans/send").status_code == 403
     assert pat.post("/fans/send", data={"note": "x", "site": [f"{world['fan_mine']}:x"]}).status_code == 403
     assert not bloom_feed["puts"]
+
+
+# ── a property with fan hours of its own ───────────────────────────────────────
+
+def test_a_property_gets_fan_hours_of_its_own(root, pat, world, app):
+    import app.models as m
+    cfg = app.config
+    page = root.get("/fans").get_data(as_text=True)
+    assert "how the fans should run at Berry, by outdoor temperature" in page and 'name="prop" value="Berry"' in page
+    assert "Berry follows the general plan" in page and "OWN HOURS" not in page
+
+    r = root.post("/fans/plan", data={**EDITED, "prop": "Berry"})          # one more evening hour, at Berry only
+    assert r.status_code == 302 and r.headers["Location"].endswith("/fans?open=Berry")
+    row = m.BloomFanPlan.query.one()
+    assert row.prop == "Berry" and row.hours == EDITED
+    assert bf.current_plan(cfg) == PLAN and bf.current_plan(cfg, "DCA") == PLAN          # nobody else moved
+    assert [b["ranges"] for b in bf.current_plan(cfg, "Berry")] == ["7am–10am, 6pm–9pm", PLAN[1]["ranges"], "all day"]
+    page = root.get("/fans?open=Berry").get_data(as_text=True)
+    assert "own hours saved: 35° and below is now on 7am–10am, 6pm–9pm. Only Berry is affected." in page
+    assert "OWN HOURS" in page and "Berry has hours of its own" in page and "Go back to the general plan" in page
+    assert "Put the original hours back" not in page                       # the general plan is still the built-in one
+
+    # the general plan changes: Berry keeps its own hours, everyone else follows
+    off = {**HOURS, "free": "0" * 24}
+    root.post("/fans/plan", data=off)
+    assert "Berry has hours of its own and is not affected" in root.get("/fans").get_data(as_text=True)
+    assert bf.current_plan(cfg, "Berry")[2]["ranges"] == "all day" and bf.current_plan(cfg, "DCA")[2]["ranges"] == "off all day"
+
+    # the same hours again record nothing; hours that did not arrive whole are refused
+    n = m.BloomFanPlan.query.count()
+    root.post("/fans/plan", data={**EDITED, "prop": "Berry"})
+    root.post("/fans/plan", data={"cold": "1" * 24, "prop": "Berry"})
+    root.post("/fans/plan", data={**off, "prop": "DCA"})                   # what DCA already runs on: no hours of its own
+    assert m.BloomFanPlan.query.count() == n and "DCA" not in bf.plan_book(cfg).own
+
+    # back on the general plan
+    root.post("/fans/plan", data={"action": "reset", "prop": "Berry"})
+    assert "Berry is back on the general plan" in root.get("/fans").get_data(as_text=True)
+    assert bf.plan_book(cfg).own == {} and bf.current_plan(cfg, "Berry")[2]["ranges"] == "off all day"
+    assert m.BloomFanPlan.query.count() == n + 1                           # kept as one more recorded change
+    root.post("/fans/plan", data={"action": "reset", "prop": "Berry"})     # already there: nothing recorded
+    assert m.BloomFanPlan.query.count() == n + 1
+
+    # only a property that has fan buildings, and only the administrator
+    assert root.post("/fans/plan", data={**EDITED, "prop": "No Such Place"}).status_code == 404
+    assert pat.post("/fans/plan", data={**EDITED, "prop": "Berry"}).status_code == 403
+    assert m.BloomFanPlan.query.count() == n + 1
+    seen = pat.get("/fans").get_data(as_text=True)                          # a viewer sees the property's plan, read-only
+    assert "how the fans should run at Berry" in seen and 'class="strip edit"' not in seen and 'name="prop"' not in seen
+
+
+def test_sending_uses_each_propertys_own_hours(root, world, bloom_feed):
+    w, puts = world, bloom_feed["puts"]
+    root.post("/fans/plan", data={**EDITED, "prop": "Berry"})
+    page = root.get("/fans/send").get_data(as_text=True)
+    assert "Berry's own hours:" in page and "35° and below on 7am–10am, 6pm–9pm" in page
+    assert f'data-site="{w["fan_mine"]}"' in page and f'data-site="{w["fan_dca"]}"' not in page     # DCA holds its plan
+    res = root.post("/fans/send", data={"note": "Berry runs an hour later",
+                                        "site": [f"{w['fan_mine']}:{_digest(page, w['fan_mine'])}"]}).get_json()["results"]
+    assert res[str(w["fan_mine"])]["state"] == "sent" and res[str(w["fan_mine"])]["landed"] is True
+    assert puts == [("440-Berry-St", [("3::20", 1)], "Berry runs an hour later")]
+    # the property page says whose hours these are, and has nothing left to load
+    prop = root.get("/fans/property?name=Berry").get_data(as_text=True)
+    assert "Berry has fan hours of its own" in prop and "Change Berry's hours" in prop
+    assert "DCA follows the general plan" in root.get("/fans/property?name=DCA").get_data(as_text=True)
+    assert 'data-site="' not in root.get("/fans/send").get_data(as_text=True)
+
+
+def test_automatic_switching_waits_for_a_propertys_own_hours(root, world, bloom_feed, session, app):
+    import app.models as m
+    w, puts, feed = world, bloom_feed["puts"], bloom_feed["feed"]["by"]
+    now = dt.datetime.utcnow()
+    acct = session.get(m.BloomFanSite, w["fan_mine"]).account
+    for key, locid, prop in (("fan_mine", "440-Berry-St", "Berry"), ("fan_dca", "18-Monroe-St", "DCA")):
+        site = session.get(m.BloomFanSite, w[key])                         # both properties are in the cold band
+        site.data = {**bf.trim(feed[locid]), "portal": {"prop": prop, "band": "cold", "out": 30.0, "n": 1}}
+        session.add(m.BloomFanAuto(prop=prop, enabled=True, by="x"))
+    session.commit()
+    root.post("/fans/plan", data={**EDITED, "prop": "Berry"})              # Berry's slot 3 no longer holds ITS plan
+
+    live = [feed["440-Berry-St"], feed["18-Monroe-St"]]
+    assert bf.auto_switch(app, acct, None, "t", live, now) == 1            # DCA moves to slot 3; Berry waits
+    assert [p[0] for p in puts] == ["18-Monroe-St"]
+    page = root.get("/fans/send").get_data(as_text=True)                   # Berry's own hours are sent
+    root.post("/fans/send", data={"note": "x", "site": [f"{w['fan_mine']}:{_digest(page, w['fan_mine'])}"]})
+    assert bf.auto_switch(app, acct, None, "t", live, now) == 1            # and now Berry is switched too
+    assert [p[0] for p in puts] == ["18-Monroe-St", "440-Berry-St", "440-Berry-St"]
+    assert "Berry at 30° → the '35° and below' schedule (slot 3)" in puts[-1][2]

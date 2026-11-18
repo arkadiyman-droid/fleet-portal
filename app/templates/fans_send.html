@@ -45,6 +45,7 @@
     <tr><th>Outdoor</th><th>Slot</th><th>Fans run</th></tr>
     {% for b in plan %}<tr><td>{{ b.label }}</td><td>{{ slots[b.key] }}</td><td>{% if b.hours_on == 24 %}all day{% elif not b.hours_on %}never (off all day){% else %}{{ b.ranges }} · {{ b.hours_on }} h a day{% endif %}</td></tr>{% endfor %}
   </table>
+  {% if groups|selectattr('own')|list %}<p class="sub" style="margin:0">These are the general plan's hours. A property with hours of its own is sent its own hours instead; it says so on the property below.</p>{% endif %}
 </div>
 
 {% if error %}
@@ -62,6 +63,7 @@
       <h2>{{ g.name }}</h2>
       <span class="cnt">{% if g.n %}<b>{{ g.changes }} change{{ 's' if g.changes != 1 }}</b> to send at <b>{{ g.n }}</b> of {{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}{% else %}nothing to send · {{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}{% endif %}{% if g.skipped %} · {{ g.skipped }} cannot be sent to right now{% endif %}</span>
     </label>
+    {% if g.own %}<p class="sub" style="margin:0 0 8px"><b>{{ g.name }}'s own hours:</b> {% for b in g.plan %}{{ b.label }} {% if b.hours_on == 24 %}on all day{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }}{% endif %}{{ '; ' if not loop.last else '.' }}{% endfor %}</p>{% endif %}
     {% if g.live %}<div class="pp-banner warn"><b>This changes how fans run.</b> Fan groups follow {{ 'these schedules' if g.live|length != 1 else 'this schedule' }} right now, so the new hours take effect as soon as each controller takes the change: {% for nm, s in g.live %}{{ nm }} slot {{ s.n }} ({{ s.now_ranges }} → <b>{{ s.new_ranges }}</b>){{ '; ' if not loop.last }}{% endfor %}.</div>{% endif %}
     <details {{ 'open' if g.n }}>
       <summary>{{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}</summary>

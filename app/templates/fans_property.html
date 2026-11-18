@@ -78,6 +78,9 @@
   {% else %}No live outdoor reading on this property, so the portal cannot say which schedule applies and will not switch anything.{% endif %}
   Read live from Bloom at {{ read_at }}.
 </div>
+<p class="pp-note">{% if own %}<b>{{ name }} has fan hours of its own</b>{% else %}{{ name }} follows the general plan{% endif %}:
+  {% for b in plan %}{{ b.label }} {% if b.hours_on == 24 %}on all day{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }}{% endif %}{{ '; ' if not loop.last else '.' }}{% endfor %}
+  {% if manage %}<a href="{{ url_for('admin.fans_page', open=name) }}">Change {{ name }}'s hours</a>{% endif %}</p>
 
 <div class="pp-card">
   <h2>Step 1 · Load the plan's three schedules</h2>
