@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Send fan schedules — Fleet Portal{% endblock %}
+{% block main_class %}full{% endblock %}
+{% block head %}
+<style>
+  .pp-top { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; margin:0 0 4px; }
+  .pp-top h1 { margin:0; }
+  .pp-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:1050px; }
+  .pp-banner { border-radius:8px; padding:10px 14px; font-size:14px; margin:0 0 14px; border-left:4px solid #9ca3af; background:#f1f5f9; }
+  .pp-banner.ok { background:#f0fdf4; border-left-color:#16a34a; color:#14532d; }
+  .pp-banner.bad { background:#fef2f2; border-left-color:#dc2626; color:#7f1d1d; }
+  .pp-banner.warn { background:#fffbeb; border-left-color:#f59e0b; color:#92400e; }
+  .pp-card { background:#fff; border:1px solid var(--border); border-radius:10px; padding:14px 16px; margin:0 0 14px; }
+  .pp-card h2 { font-size:15px; margin:0; }
+  .pp-card table { border-collapse:collapse; font-size:13px; width:100%; margin:8px 0 0; }
+  .pp-card th { text-align:left; font-size:11px; padding:4px 12px 4px 0; border-bottom:1px solid var(--border); white-space:nowrap; }
+  .pp-card td { padding:5px 12px 5px 0; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  .pp-pill { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; background:#e5e7eb; color:#374151; white-space:nowrap; }
+  .pp-pill.ok { background:#dcfce7; color:#166534; } .pp-pill.bad { background:#fee2e2; color:#b91c1c; }
+  .pp-pill.warn { background:#fef3c7; color:#92400e; } .pp-pill.blue { background:#dbeafe; color:#1e40af; }
+  .fs-head { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; cursor:pointer; }
+  .fs-head input { width:18px; height:18px; margin:0; }
+  .fs-head .cnt { font-size:13px; color:var(--muted); }
+  .fs-head .cnt b { color:var(--text); }
+  .fs-prop.none .fs-head { cursor:default; }
+  .fs-prop details { margin:8px 0 0; }
+  .fs-prop summary { font-size:12px; color:var(--muted); cursor:pointer; }
+  .fs-prop .pp-banner { margin:8px 0 0; font-size:13px; }
+  .fs-go textarea { width:min(640px, 100%); min-height:44px; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; display:block; margin:6px 0 10px; }
+  .fs-go button.btn[disabled] { opacity:.5; cursor:not-allowed; }
+  .fs-all { border:0; background:none; padding:0; font:inherit; font-size:13px; color:var(--accent, #1d4ed8); text-decoration:underline; cursor:pointer; }
+  .fs-res { min-width:230px; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="pp-top">
+  <a href="{{ url_for('admin.fans_page') }}">← Fans</a>
+  <h1>Send the plan's hours to properties</h1>
+</div>
+<p class="pp-note">Tick the properties, check what would change, and send. This loads the plan's three schedules into slots 3, 4 and 5 at every reporting building of the properties you tick. It does not move any fan group to another schedule. Where fan groups already follow a schedule whose hours changed, those fans start running on the new hours as soon as their controller takes the change; each such property says so below. Read live from Bloom at {{ read_at }}.</p>
+
+<div class="pp-card">
+  <h2>The hours being sent</h2>
+  <table>
+    <tr><th>Outdoor</th><th>Slot</th><th>Fans run</th></tr>
+    {% for b in plan %}<tr><td>{{ b.label }}</td><td>{{ slots[b.key] }}</td><td>{% if b.hours_on == 24 %}all day{% elif not b.hours_on %}never (off all day){% else %}{{ b.ranges }} · {{ b.hours_on }} h a day{% endif %}</td></tr>{% endfor %}
+  </table>
+</div>
+
+{% if error %}
+  <div class="pp-banner bad">Could not read the buildings from Bloom just now, so nothing can be shown or sent: {{ error }}</div>
+{% elif not groups %}
+  <div class="pp-banner">No fan buildings are filed under a property yet.</div>
+{% else %}
+<form id="fs-form" action="{{ url_for('admin.fans_send') }}" data-chunk="{{ chunk }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <p style="margin:0 0 10px"><button type="button" class="fs-all" id="fs-all">Tick every property with something to send</button></p>
+  {% for g in groups %}
+  <div class="pp-card fs-prop {{ 'none' if not g.n }}">
+    <label class="fs-head">
+      <input type="checkbox" class="fs-pick" data-prop="{{ g.name }}" {{ 'disabled' if not g.n }} aria-label="Send to {{ g.name }}">
+      <h2>{{ g.name }}</h2>
+      <span class="cnt">{% if g.n %}<b>{{ g.changes }} change{{ 's' if g.changes != 1 }}</b> to send at <b>{{ g.n }}</b> of {{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}{% else %}nothing to send · {{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}{% endif %}{% if g.skipped %} · {{ g.skipped }} cannot be sent to right now{% endif %}</span>
+    </label>
+    {% if g.live %}<div class="pp-banner warn"><b>This changes how fans run.</b> Fan groups follow {{ 'these schedules' if g.live|length != 1 else 'this schedule' }} right now, so the new hours take effect as soon as each controller takes the change: {% for nm, s in g.live %}{{ nm }} slot {{ s.n }} ({{ s.now_ranges }} → <b>{{ s.new_ranges }}</b>){{ '; ' if not loop.last }}{% endfor %}.</div>{% endif %}
+    <details {{ 'open' if g.n }}>
+      <summary>{{ g.rows|length }} building{{ 's' if g.rows|length != 1 }}</summary>
+      <table>
+        <tr><th>Building</th><th>Slots 3 · 4 · 5</th><th>To send</th><th>Result</th></tr>
+        {% for r in g.rows %}
+        <tr {% if r.state == 'send' %}data-site="{{ r.site.id }}" data-digest="{{ r.push.digest }}" data-n="{{ r.push.n_changes }}" data-live="{{ 1 if r.push.live else 0 }}"{% endif %}>
+          <td>{{ r.site.name }}</td>
+          {% if r.state == 'gone' %}<td colspan="2"><span class="pp-pill bad">not in Bloom's feed</span></td>
+          {% else %}
+          <td>{% for s in r.push.slots %}<span class="pp-pill {{ 'ok' if s.holds else ('bad' if s.blocked else 'warn') }}" title="{{ s.now_ranges }}{% if not s.holds %} → {{ s.new_ranges }}{% endif %}">slot {{ s.n }} {{ 'ready' if s.holds else ('blocked' if s.blocked else ('in use · hours change' if s.live else 'needs loading')) }}</span> {% endfor %}</td>
+          <td>{% if r.state == 'stale' %}<span class="pp-pill">not reporting</span> <span class="card-sub">skipped until its controller reports again</span>{% elif r.state == 'blocked' %}<span class="pp-pill bad">skipped</span> <span class="card-sub">{% for s in r.push.slots if s.blocked %}slot {{ s.n }}: {{ s.blocked }}{{ '; ' if not loop.last }}{% endfor %}</span>{% elif r.state == 'send' %}{{ r.push.n_changes }} change{{ 's' if r.push.n_changes != 1 }}{% else %}<span class="card-sub">nothing: already holds the plan</span>{% endif %}</td>
+          {% endif %}
+          <td class="fs-res"></td>
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+  </div>
+  {% endfor %}
+
+  <div class="pp-card fs-go">
+    <h2>Send</h2>
+    <label for="fs-note" class="card-sub" style="display:block;margin-top:6px">Reason (Bloom records it with each change)</label>
+    <textarea id="fs-note" name="note" required>{{ note }}</textarea>
+    <button type="submit" class="btn" id="fs-send" disabled>Tick a property to send</button>
+    <div class="pp-banner" id="fs-done" hidden style="margin:12px 0 0"></div>
+  </div>
+</form>
+<script>
+/* Ticking a property selects its buildings that have something to send. Send
+   posts them a few at a time (each request reads Bloom afresh, sends only what
+   was previewed, and reads back), filling in each building's Result cell. */
+(function () {
+  "use strict";
+  const form = document.getElementById("fs-form"), send = document.getElementById("fs-send");
+  const done = document.getElementById("fs-done"), note = document.getElementById("fs-note");
+  const picks = Array.from(form.querySelectorAll(".fs-pick"));
+  const chunk = Math.max(1, parseInt(form.dataset.chunk, 10) || 4);
+  let busy = false, finished = false;
+
+  const rowsOf = p => Array.from(p.closest(".fs-prop").querySelectorAll("tr[data-site]"));
+  const chosen = () => picks.filter(p => p.checked).flatMap(rowsOf);
+  const s = n => (n === 1 ? "" : "s");
+
+  function label() {
+    if (busy || finished) return;
+    const rows = chosen(), props = picks.filter(p => p.checked).length;
+    const changes = rows.reduce((a, r) => a + Number(r.dataset.n), 0);
+    send.disabled = !rows.length;
+    send.textContent = rows.length
+      ? "Send " + changes + " change" + s(changes) + " to " + rows.length + " building" + s(rows.length) + " at " + props + " propert" + (props === 1 ? "y" : "ies")
+      : "Tick a property to send";
+  }
+  picks.forEach(p => p.addEventListener("change", label));
+  document.getElementById("fs-all").addEventListener("click", () => {
+    if (busy || finished) return;
+    picks.forEach(p => { if (!p.disabled) p.checked = true; });
+    label();
+  });
+
+  function show(row, cls, text, detail) {
+    const cell = row.querySelector(".fs-res");
+    const pill = document.createElement("span");
+    pill.className = "pp-pill " + cls;
+    pill.textContent = text;
+    cell.replaceChildren(pill);
+    if (detail) { const d = document.createElement("div"); d.className = "card-sub"; d.textContent = detail; cell.append(d); }
+  }
+  function verdict(row, r) {
+    if (!r) return show(row, "warn", "no answer", "Reload this page to see whether it landed.");
+    if (r.state === "sent") return r.landed ? show(row, "ok", "sent · confirmed") : show(row, "warn", "sent · not confirmed yet", r.detail);
+    if (r.state === "refused") return show(row, "bad", "refused", r.detail || "no reply");
+    if (r.state === "changed") return show(row, "warn", "not sent", "Bloom's values changed after this page was read. Reload and send again.");
+    if (r.state === "inplace") return show(row, "ok", "already in place");
+    if (r.state === "stale") return show(row, "", "not sent", "The building is not reporting.");
+    if (r.state === "blocked") return show(row, "bad", "not sent", r.detail);
+    return show(row, "bad", "not sent", "The building is not in Bloom's feed.");
+  }
+
+  form.addEventListener("submit", async ev => {
+    ev.preventDefault();
+    if (busy || finished) return;
+    const rows = chosen();
+    if (!rows.length) return;
+    if (!note.value.trim()) { note.focus(); return; }
+    const names = picks.filter(p => p.checked).map(p => p.dataset.prop).join(", ");
+    const live = rows.filter(r => r.dataset.live === "1").length;
+    if (!confirm("Send the plan's hours to " + rows.length + " building" + s(rows.length) + " at: " + names + "?" +
+                 (live ? "\n\nAt " + live + " of them fan groups follow a schedule whose hours change, so those fans change how they run right away." : "")))
+      return;
+    busy = true;
+    send.disabled = true;
+    picks.forEach(p => { p.disabled = true; });
+    note.readOnly = true;
+    rows.forEach(r => show(r, "", "waiting"));
+    let ok = 0, sent = 0;
+    for (let i = 0; i < rows.length; i += chunk) {
+      const part = rows.slice(i, i + chunk);
+      part.forEach(r => show(r, "blue", "sending…"));
+      send.textContent = "Sending… " + Math.min(i + chunk, rows.length) + " of " + rows.length + " buildings";
+      const body = new FormData();
+      body.append("csrf_token", form.elements.csrf_token.value);
+      body.append("note", note.value.trim());
+      part.forEach(r => body.append("site", r.dataset.site + ":" + r.dataset.digest));
+      let res = null;
+      try {
+        const reply = await fetch(form.action, {method: "POST", body: body, credentials: "same-origin"});
+        const data = await reply.json();
+        res = data.results || null;
+        if (!res && data.error) part.forEach(r => show(r, "bad", "not sent", data.error));
+      } catch (e) { res = null; part.forEach(r => verdict(r, null)); continue; }
+      if (!res) continue;
+      part.forEach(r => {
+        const one = res[r.dataset.site];
+        verdict(r, one);
+        if (one && one.state === "sent") { sent++; if (one.landed) ok++; }
+      });
+    }
+    busy = false;
+    finished = true;
+    send.textContent = "Done";
+    done.hidden = false;
+    done.className = "pp-banner " + (ok === rows.length ? "ok" : "warn");
+    done.textContent = "Bloom accepted the change at " + sent + " of " + rows.length + " building" + s(rows.length) +
+      "; reading them back shows it in place at " + ok + ". ";
+    const again = document.createElement("a");
+    again.href = form.action;
+    again.textContent = "Read the buildings again";
+    done.append(again, ok === rows.length ? "." : " in a minute to see what is still to send.");
+  });
+  window.addEventListener("beforeunload", ev => { if (busy) { ev.preventDefault(); ev.returnValue = ""; } });
+  label();
+})();
+</script>
+{% endif %}
+{% endblock %}

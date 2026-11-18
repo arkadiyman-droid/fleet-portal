@@ -196,13 +196,13 @@
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {% for b in plan %}<input type="hidden" name="{{ b.key }}" value="{{ b.bitstr }}">{% endfor %}
     <div class="what"></div>
-    <div>Not saved yet. Saving changes the plan here in the portal. The fans themselves change when the new hours are sent to Bloom, property by property under "Schedules &amp; switching…", where you see each change before it goes.</div>
+    <div>Not saved yet. Saving changes the plan here in the portal. The fans themselves change when the new hours are sent to Bloom: use "Send to properties…" below, where you tick the properties and see each change before it goes.</div>
     <div class="acts"><button type="submit" class="btn">Save the plan</button><button type="button" class="btn plain" id="fn-cancel">Cancel</button></div>
   </form>
   {% if summary.behind_props %}
-  <div class="fn-behind"><b>New hours are waiting to be sent to Bloom.</b> The plan's hours have changed since they were loaded at {% set nb = summary.behind_props|sum(attribute='n') %}{{ nb }} building{{ 's' if nb != 1 }}. Until you send them, those fans keep running on the old hours, and automatic switching will not move a property onto a schedule that still holds old hours. Send them here: {% for p in summary.behind_props %}<a href="{{ url_for('admin.fans_property', name=p.name) }}">{{ p.name }} ({{ p.n }} building{{ 's' if p.n != 1 }})</a>{{ ' · ' if not loop.last }}{% endfor %}</div>
+  <div class="fn-behind"><b>New hours are waiting to be sent to Bloom.</b> The plan's hours have changed since they were loaded at {% set nb = summary.behind_props|sum(attribute='n') %}{{ nb }} building{{ 's' if nb != 1 }}. Until you send them, those fans keep running on the old hours, and automatic switching will not move a property onto a schedule that still holds old hours. Send them here: {% for p in summary.behind_props %}<a href="{{ url_for('admin.fans_property', name=p.name) }}">{{ p.name }} ({{ p.n }} building{{ 's' if p.n != 1 }})</a>{{ ' · ' if not loop.last }}{% endfor %}. Or <a href="{{ url_for('admin.fans_send') }}">send to several properties at once</a>.</div>
   {% endif %}
-  <div class="card-sub" style="margin:8px 0 0">Click an hour to turn the fans on or off in it, or drag across several. Nothing changes until you press Save.{% if plan_meta %} Hours last changed by {{ plan_meta.by }}, {{ plan_meta.at }}.{% endif %}
+  <div class="card-sub" style="margin:8px 0 0">Click an hour to turn the fans on or off in it, or drag across several. Nothing changes until you press Save. <a href="{{ url_for('admin.fans_send') }}" style="font-weight:600">Send to properties…</a> sends the plan's hours to the properties you tick.{% if plan_meta %} Hours last changed by {{ plan_meta.by }}, {{ plan_meta.at }}.{% endif %}
     {% if plan|selectattr('edited')|list %}<form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-reset" onsubmit="return confirm('Put the original hours back in the plan?\n\n35 and below: 7am-10am and 6pm-8pm\n36 to 55: 7am-12pm and 5pm-10pm\n56 and above: all day\n\nNothing is sent to Bloom by this.');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="reset"><button type="submit">Put the original hours back</button></form>{% endif %}
   </div>
   {% endif %}

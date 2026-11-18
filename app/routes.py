@@ -1954,6 +1954,142 @@ def fans_property():
                            read_at=local(datetime.utcnow()))
 
 
+FANS_SEND_CHUNK = 4            # buildings per request on /fans/send: keeps each one well inside the worker timeout
+
+
+def _fans_sites_by_property():
+    """Every fan site of an active Bloom login, by the property it is filed
+    under ({property name: [site, ...]}, properties and buildings in street
+    order) — the same name matching the Fans page uses (bloom_fans.place). A
+    site not filed under a property is left out: it has its own push page."""
+    from sqlalchemy.orm import joinedload
+    from app import bloom_fans
+    from app.models import BloomFanSite
+    index = bloom_fans.building_index(
+        (b.name, b.property.name) for b in Building.query.options(joinedload(Building.property)).all() if b.property)
+    by = {}
+    for s in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
+        prop = bloom_fans.place(index, s.name, s.asset_key) if (s.account and s.account.is_active) else None
+        if prop:
+            by.setdefault(prop, []).append(s)
+    return {p: sorted(by[p], key=lambda s: bloom_fans._natural(s.name)) for p in sorted(by, key=bloom_fans._natural)}
+
+
+def _fans_send_row(site, accts, pl, revisable, now):
+    """What sending the plan's hours to one building would do, from the live
+    read: state "send" (push["points"] is what goes), "inplace" (already holds
+    the plan), "blocked" (a slot must not be written), "stale" (not reporting,
+    so it is left alone) or "gone" (not in Bloom's feed)."""
+    from app import bloom_fans
+    b = (accts.get(site.account.id) or {"by": {}})["by"].get(site.asset_key)
+    if b is None:
+        return {"site": site, "state": "gone", "push": None}
+    p = bloom_fans.plan_push(b, pl, revise=site.id in revisable)
+    if bloom_fans.summary(bloom_fans.trim(b), now=now)["stale"]:
+        state = "stale"
+    elif p["blocked"]:
+        state = "blocked"
+    else:
+        state = "send" if p["points"] else "inplace"
+    return {"site": site, "state": state, "push": p}
+
+
+@admin_bp.route("/fans/send", methods=["GET", "POST"])
+def fans_send():
+    """Send the plan's hours to several properties at once. GET reads every
+    fan building live and shows, property by property, exactly what loading
+    the plan into slots 3-5 would change; the person ticks properties and
+    sends. The page then POSTs the ticked buildings a few at a time
+    (FANS_SEND_CHUNK): each request reads Bloom afresh, sends a building only
+    if the change is still the one that was shown (its digest), reads back,
+    logs a BloomFanWrite per building and answers in JSON. Like the property
+    page's step 1 it never moves a fan group to another slot."""
+    if not is_superuser():
+        abort(403)
+    import time as _time
+    from app import bloom, bloom_fans, legacy
+    from app.models import BloomFanWrite
+    pl = bloom_fans.current_plan(current_app.config)
+    props = _fans_sites_by_property()
+    revisable = bloom_fans.loaded_site_ids()
+
+    if request.method == "POST":
+        note = (request.form.get("note") or "").strip()[:500]
+        want = {}
+        for v in request.form.getlist("site"):
+            sid, _, digest = v.partition(":")
+            if sid.isdigit():
+                want[int(sid)] = digest
+        if not note:
+            return jsonify(error="A reason is required. Bloom records it with the change."), 400
+        if not want or len(want) > FANS_SEND_CHUNK:
+            return jsonify(error=f"Send between 1 and {FANS_SEND_CHUNK} buildings in one request."), 400
+        sites = [s for group in props.values() for s in group if s.id in want]
+        results = {sid: {"state": "gone"} for sid in want}
+        try:
+            accts = _fans_live_accounts(sites)
+        except Exception as e:
+            db.session.rollback()
+            return jsonify(error=f"Could not read Bloom just now, so nothing was sent: {str(e)[:200]}"), 502
+        now, written = datetime.utcnow(), []
+        for s in sites:
+            r = _fans_send_row(s, accts, pl, revisable, now)
+            if r["state"] != "send":
+                why = "; ".join(f"slot {x['n']}: {x['blocked']}" for x in (r["push"] or {"slots": []})["slots"] if x["blocked"])
+                results[s.id] = {"state": r["state"], "detail": why}
+                continue
+            if r["push"]["digest"] != want[s.id]:
+                results[s.id] = {"state": "changed"}        # not what the person was shown: send nothing
+                continue
+            acct = accts[s.account.id]
+            w = BloomFanWrite(site_id=s.id, by=_who(), note=note, changes=r["push"]["log"], ok=False)
+            try:
+                data, acct["tok"] = bloom.put_points(s.account, acct["sess"], acct["tok"], s.asset_key,
+                                                     r["push"]["points"], note, timeout=10)
+                w.ok, w.detail = bloom_fans.reply_summary(data)
+            except Exception as e:
+                db.session.rollback()
+                w.detail = str(e)[:500]
+            db.session.add(w)
+            db.session.commit()
+            written.append((s, w))
+            results[s.id] = {"state": "sent" if w.ok else "refused", "n": r["push"]["n_changes"], "landed": None,
+                             "detail": bloom_fans.tidy_detail(w.detail)}
+        if any(w.ok for _, w in written):
+            try:                                     # read everything back: did the values land?
+                _time.sleep(3)
+                accts = _fans_live_accounts(sites)
+                for s, w in written:
+                    if w.ok:
+                        w.landed = _fans_send_row(s, accts, pl, revisable, datetime.utcnow())["state"] == "inplace"
+                        results[s.id]["landed"] = w.landed
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+        return jsonify(results={str(k): v for k, v in results.items()})
+
+    error, groups = None, []
+    try:
+        accts = _fans_live_accounts([s for group in props.values() for s in group])
+        now = datetime.utcnow()
+        for name, sites in props.items():
+            rows = [_fans_send_row(s, accts, pl, revisable, now) for s in sites]
+            todo = [r for r in rows if r["state"] == "send"]
+            groups.append({"name": name, "rows": rows, "n": len(todo),
+                           "changes": sum(r["push"]["n_changes"] for r in todo),
+                           "skipped": sum(1 for r in rows if r["state"] in ("stale", "blocked", "gone")),
+                           # a load that rewrites hours fan groups are following right now
+                           "live": [(r["site"].name, sl) for r in todo for sl in r["push"]["slots"] if sl["live"]]})
+    except Exception as e:
+        db.session.rollback()
+        error, groups = str(e)[:300], []
+    read_at = datetime.utcnow().replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
+    return render_template("fans_send.html", title="Send fan schedules", plan=pl, slots=bloom_fans.PLAN_SLOTS,
+                           groups=groups, error=error, chunk=FANS_SEND_CHUNK,
+                           note="Fleet portal: send the plan's hours to slots 3-5",
+                           read_at=read_at.strftime("%b %d, %I:%M:%S %p").replace(" 0", " "))
+
+
 @admin_bp.route("/fans/<int:site_id>/push", methods=["GET", "POST"])
 def fans_push(site_id):
     """Load the plan's schedules into one building's Bloom schedule slots — the
