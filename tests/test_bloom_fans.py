@@ -946,3 +946,22 @@ def test_page_lists_the_properties_with_new_hours_to_send():
     assert pg["summary"]["behind_props"] == [{"name": "Alpha", "n": 2}]
     assert [(g["name"], g["behind"]) for g in bf.page(rows)["groups"]][:2] == [("Alpha", 2), ("Beta", 0)]
     assert bf.page([_row("1 A St", "Alpha")])["summary"]["behind_props"] == []
+
+
+def test_at_the_fans_says_which_hours_the_buildings_still_hold():
+    # The plan was edited (one more evening hour in the cold band) and not sent:
+    # the loaded buildings still hold the built-in cold hours in slot 3.
+    edited = bf.plan(36, 56, hours={"cold": LATE_COLD})
+    row = bf.summary(bf.trim(_live(LOADED, assign=4)), pl=edited, hour=12)
+    assert row["slot_diff"] == [3]
+    assert bf.at_the_fans([dict(row, behind=False)], edited) == {}          # not the portal's slots to call behind
+    got = bf.at_the_fans([dict(row, behind=True), dict(row, behind=True)], edited)
+    assert got["n"] == 2 and list(got["bands"]) == ["cold"]
+    cold = got["bands"]["cold"]
+    assert cold["ranges"] == "7am–10am, 6pm–8pm" and cold["hours_on"] == 5 and cold["n"] == 2 and not cold["mixed"]
+    # buildings holding different old hours: the commonest is shown and it says so
+    other = bf.summary(bf.trim(_live({3: MILD, 4: MILD, 5: FREE}, assign=4)), pl=edited, hour=12)
+    mixed = bf.at_the_fans([dict(row, behind=True), dict(row, behind=True), dict(other, behind=True)], edited)
+    assert mixed["n"] == 3 and mixed["bands"]["cold"]["mixed"] and mixed["bands"]["cold"]["ranges"] == "7am–10am, 6pm–8pm"
+    # hours that match the plan again leave nothing to show
+    assert bf.at_the_fans([dict(bf.summary(bf.trim(_live(LOADED, assign=4)), pl=PLAN, hour=12), behind=True)], PLAN) == {}

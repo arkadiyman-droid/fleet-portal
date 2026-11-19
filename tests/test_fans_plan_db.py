@@ -307,3 +307,38 @@ def test_automatic_switching_waits_for_a_propertys_own_hours(root, world, bloom_
     assert bf.auto_switch(app, acct, None, "t", live, now) == 1            # and now Berry is switched too
     assert [p[0] for p in puts] == ["18-Monroe-St", "440-Berry-St", "440-Berry-St"]
     assert "Berry at 30° → the '35° and below' schedule (slot 3)" in puts[-1][2]
+
+
+def test_everyone_sees_the_hours_the_fans_still_hold(root, pat, world, session):
+    """Hours saved and not sent: the plan on the page is not what the fans run
+    on. The administrator and a viewer are shown the same thing — the new
+    hours, and under them the hours the buildings still hold."""
+    import app.models as m
+    raw = _reporting(LOADED, 4, "440 Berry St", "440-Berry-St")
+    site = session.get(m.BloomFanSite, world["fan_mine"])
+    site.data = {**bf.trim(raw), "portal": {"prop": "Berry", "band": "mild", "out": 45.0, "n": 1}}
+    session.add(m.BloomFanWrite(site_id=world["fan_mine"], by="x", ok=True,          # the portal loaded it before
+                                changes=[{"type": "gen-sched", "name": "3::7", "old": 0, "new": 1}]))
+    session.commit()
+    closed = 'data-prop="Berry" hidden'
+    for who in (root, pat):                                  # nothing waiting: the panel stays shut, nothing in teal
+        page = who.get("/fans").get_data(as_text=True)
+        assert closed in page and "at the fans now" not in page and "have not been sent to the fans" not in page
+
+    root.post("/fans/plan", data={**EDITED, "prop": "Berry"})                        # one more evening hour, not sent
+    seen = pat.get("/fans").get_data(as_text=True)
+    assert closed not in seen                                # Berry's own hours open by themselves
+    assert "has fan hours of its own, shown under its name" in seen and "Berry (own hours)" in seen
+    assert "These hours have not been sent to the fans." in seen and "1 building at Berry still holds the earlier hours" in seen
+    assert "at the fans now" in seen and "on 7am–10am, 6pm–8pm · 5 h a day</span>" in seen
+    assert "NEW HOURS NOT SENT YET" in seen and "NEW HOURS TO SEND" not in seen
+    assert "Send them from" not in seen and 'class="strip edit"' not in seen
+    assert ">6 h a day</span>" in seen                       # the building's own row shows Berry's hours, not the general ones
+    admin = root.get("/fans").get_data(as_text=True)
+    assert closed not in admin and "These hours have not been sent to the fans." in admin and "at the fans now" in admin
+    assert "NEW HOURS TO SEND" in admin and "Send them from" in admin and ">6 h a day</span>" in admin
+
+    root.post("/fans/plan", data={"action": "reset", "prop": "Berry"})               # back on the general plan: all agree again
+    for who in (root, pat):
+        page = who.get("/fans").get_data(as_text=True)
+        assert closed in page and "at the fans now" not in page and "NEW HOURS" not in page

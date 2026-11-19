@@ -890,6 +890,34 @@ def page(rows, show="all", q="", sort="property") -> dict:
     return {"groups": groups, "summary": summary, "show": show, "sort": sort, "shown": len(rows)}
 
 
+def at_the_fans(rows, pl) -> dict:
+    """Where one property's buildings still hold other hours than its plan.
+
+    Saving hours on the Fans page changes the plan in the portal and nothing
+    in Bloom, so until the new hours are sent the fans keep running on the old
+    ones — and a page that showed only the plan would be showing hours no fan
+    runs on. `rows` are the property's summary() dicts, the ones marked
+    `behind` being those the portal loaded whose slots no longer hold the plan
+    `pl`. Returns {} when none is behind, else {"n": buildings behind,
+    "bands": {band key: {"bits", "ranges", "hours_on", "n", "mixed"}}} with an
+    entry for each band whose slot differs somewhere: the hours held there (the
+    commonest, when the buildings disagree — `mixed`) and at how many buildings."""
+    behind = [r for r in rows if r.get("behind")]
+    bands = {}
+    for b in pl:
+        slot = PLAN_SLOTS[b["key"]]
+        held = []
+        for r in behind:
+            s = next((x for x in r.get("schedules") or [] if x["n"] == slot), None)
+            if s is not None and list(s["bits"]) != list(b["bits"]):
+                held.append(tuple(s["bits"]))
+        if held:
+            bits = list(max(sorted(set(held)), key=held.count))
+            bands[b["key"]] = {"bits": bits, "ranges": ranges(bits), "hours_on": sum(bits),
+                               "n": len(held), "mixed": len(set(held)) > 1}
+    return {"n": len(behind), "bands": bands} if bands else {}
+
+
 # ── pushing the plan's schedules into Bloom ────────────────────────────────────
 #
 # Stage 1 of putting the plan into the boxes (the operator, 2026-11-16): load

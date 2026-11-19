@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timedelta, timezone
 
 from flask import (Blueprint, Response, abort, current_app, flash, g, jsonify, redirect, render_template, request,
@@ -1256,11 +1257,21 @@ def _row_sev(r):
     return "ok"
 
 
+def _address_key(name):
+    """Sort key for a building's address as it is written, each run of digits
+    compared as a number (a plain text sort puts 101-109 ahead of 10-12)."""
+    return [(0, int(p), "") if p.isdigit() else (1, 0, p)
+            for p in re.split(r"(\d+)", (name or "").lower().strip()) if p]
+
+
+# The Live page opens as the table, sorted by address (decided 2026-11-18).
+_LIVE_SORT_DEFAULT = "name"
 _LIVE_SORTS = {
-    "name": lambda r: r["box"].name.lower(),
+    # by address, numbers read as numbers: 10-12 Bedell St comes before 101-109 Lowell St
+    "name": lambda r: _address_key(r["box"].name),
     "problems": lambda r: (not r["critical"], not r["problem"],
                            {"other": 0, "login": 1, "dark": 2, "live": 3}[r["state"]],
-                           _TONE_ORDER.get((r["c"] or {}).get("tone"), 5), r["box"].name.lower()),
+                           _TONE_ORDER.get((r["c"] or {}).get("tone"), 5), _address_key(r["box"].name)),
     "hi_stack": lambda r: -((r["c"] or {}).get("hi_stack") or -1),
     "aqua": lambda r: -((r["c"] or {}).get("aqua") or -1),
     "coil": lambda r: -((r["c"] or {}).get("coil") or -1),
@@ -1443,9 +1454,11 @@ def live_page():
         rows = [r for r in rows if q in r["box"].name.lower()]
     for r in rows:
         r["sev"] = _row_sev(r)
-    sort = request.args.get("sort", "problems")
-    rows.sort(key=_LIVE_SORTS.get(sort, _LIVE_SORTS["problems"]))
-    view = "table" if request.args.get("view") == "table" else "cards"
+    sort = request.args.get("sort")
+    if sort not in _LIVE_SORTS:
+        sort = _LIVE_SORT_DEFAULT
+    rows.sort(key=_LIVE_SORTS[sort])
+    view = "cards" if request.args.get("view") == "cards" else "table"
     from app import heat_overnight, legacy
     # The window the Heat o/n column is reporting ("last night" through the day,
     # frozen until 9pm; "tonight so far" once the new window opens) — shown in the
@@ -1453,7 +1466,7 @@ def live_page():
     _hs, _he, heat_window_label = heat_overnight.window(now)
     return render_template("live.html", title="Live", rows=rows, summary=summary, newest=newest, show=show,
                            source=source, legend=legacy.TINT_LEGEND, heat_window_label=heat_window_label,
-                           q=request.args.get("q", ""), sort=sort if sort in _LIVE_SORTS else "problems", view=view,
+                           q=request.args.get("q", ""), sort=sort, view=view,
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
 
@@ -1647,13 +1660,17 @@ def fans_page():
     rows = _fan_rows(now)                             # only the buildings this person may see
     from app.models import BloomFanAuto, BloomFanPlan
     manage, plan_meta = is_superuser(), None
-    if manage:
-        # The plan's hours can be edited on this page. Where the portal loaded
-        # a building's slots and they no longer hold the plan's hours, the new
-        # hours are waiting to be sent — say so, by property.
-        loaded = bloom_fans.loaded_site_ids()
-        for r in rows:
-            r["behind"] = bool(r["id"] in loaded and not r["stale"] and r["slot_diff"])
+    # The plan's hours can be edited on this page, and saving them sends nothing
+    # to Bloom. Where the portal loaded a building's slots and they no longer
+    # hold the plan's hours, the new hours are waiting to be sent and the fans
+    # still run on the old ones. Everyone who sees the property is shown that,
+    # not only the administrator: otherwise the page shows hours no fan runs on.
+    loaded = bloom_fans.loaded_site_ids()
+    by_prop = {}
+    for r in rows:
+        r["behind"] = bool(r["id"] in loaded and not r["stale"] and r["slot_diff"])
+        if r.get("prop"):
+            by_prop.setdefault(r["prop"], []).append(r)
     def meta(row):
         return {"by": row.by or "someone", "at": row.at.replace(tzinfo=timezone.utc).astimezone(
             legacy.LOCAL).strftime("%b %d, %I:%M %p").replace(" 0", " ")}
@@ -1666,12 +1683,19 @@ def fans_page():
                          sort=request.args.get("sort", "property"))
     auto_props = {a.prop for a in BloomFanAuto.query.filter_by(enabled=True).all()}
     # Click a property and its own plan opens under it: the hours that property
-    # runs on (its own, or the general ones), editable by the administrator.
-    prop_plans = {g["name"]: {"plan": book.of(g["name"]), "own": g["name"] in book.own,
-                              "meta": meta(lasts[g["name"]]) if g["name"] in book.own else None}
-                  for g in pg["groups"] if g.get("name") and g["name"] != bloom_fans.UNFILED}
+    # runs on (its own, or the general ones), editable by the administrator,
+    # with the hours its fans still hold wherever those differ (`fans`). Keyed
+    # by every property this person sees, whatever the filter or the sorting,
+    # because each building's own row shows its property's plan too.
+    prop_plans = {name: {"plan": book.of(name), "own": name in book.own,
+                         "meta": meta(lasts[name]) if name in book.own else None,
+                         "fans": bloom_fans.at_the_fans(rs, book.of(name))}
+                  for name, rs in by_prop.items()}
+    # Properties with hours of their own: all of them for the administrator,
+    # otherwise only the ones this person sees.
+    own_props = sorted((p for p in book.own if manage or p in by_prop), key=bloom_fans._natural)
     return render_template("fans.html", title="Fans", q=request.args.get("q", ""), cold_f=cold_f, hour=hour, plan=pl, hyst=hyst,
-                           prop_plans=prop_plans, own_props=sorted(book.own, key=bloom_fans._natural),
+                           prop_plans=prop_plans, own_props=own_props,
                            open_prop=(request.args.get("open") or "").strip(),
                            hold=cfg.get("FAN_PLAN_HOLD_MIN", 30.0), plan_meta=plan_meta,
                            auto_props=auto_props, unfiled=bloom_fans.UNFILED, manage=manage,

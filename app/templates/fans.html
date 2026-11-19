@@ -107,6 +107,12 @@
   .fn-ptog:hover { text-decoration:underline; } .fn-ptog span { color:var(--muted); font-size:12px; }
   .fn-ptog[aria-expanded="true"] span { display:inline-block; transform:rotate(180deg); }
   .fn-own { margin:0; border-radius:0; border-width:0 0 1px; background:#f8fafc; }
+  /* under a plan band: the hours the fans still hold, where they differ */
+  .fn-pl .strip.set { height:10px; }
+  .fn-pl .strip.set span.on { background:#0d9488; }
+  .fn-pl .held, .fn-pl .held b { color:#0f766e; }
+  .fn-pl .bl.held { font-weight:400; font-size:12px; }
+  .fn-own .fn-behind { margin:0 0 10px; }
   .fn-reset button { border:0; background:none; padding:0; font:inherit; color:var(--accent, #1d4ed8); text-decoration:underline; cursor:pointer; }
   a.fn-pill { text-decoration:none; }
   .fn-cs b { color:var(--text); font-weight:600; white-space:nowrap; }
@@ -192,9 +198,10 @@
     {% if manage %}<span class="strip edit" role="group" aria-label="{{ b.label }}: the hours the fans run" data-band="{{ b.key }}" data-label="{{ b.label }}" data-saved="{{ b.bitstr }}">{% for x in b.bits %}<button type="button" class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}" aria-pressed="{{ 'true' if x else 'false' }}"></button>{% endfor %}</span>
     {% else %}<span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>{% endif %}
     <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
-    <span class="cnt">{% if summary.band_props.get(b.key) %}<b style="color:var(--text)">now: {{ summary.band_props[b.key]|join(', ') }}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
+    <span class="cnt">{% if summary.band_props.get(b.key) %}<b style="color:var(--text)">now: {% for p in summary.band_props[b.key] %}{{ p }}{% if p in own_props %} (own hours){% endif %}{{ ', ' if not loop.last }}{% endfor %}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
     {% endfor %}
   </div>
+  {% if own_props and not manage %}<p class="card-sub" style="margin:8px 0 0"><b style="color:var(--text)">{{ own_props|join(', ') }}</b> {{ 'has fan hours of its own, shown under its name' if own_props|length == 1 else 'have fan hours of their own, shown under their names' }} in the list below. The hours above are the general plan, which the other properties follow.</p>{% endif %}
   {% if manage %}
   <form method="post" action="{{ url_for('admin.fans_plan_save') }}" class="fn-save" id="fn-save" hidden>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -227,7 +234,7 @@
 </div>
 <div class="fn-key">
   <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-hand"></i>running while commanded off</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
-  <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today</span><span><i class="grey"></i>off</span><span>outlined = this hour</span>
+  <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today (the hours the fans hold)</span><span><i class="grey"></i>off</span><span>outlined = this hour</span>
   <span>· Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min</span>
 </div>
 
@@ -237,18 +244,23 @@
 {% for grp in groups %}
 <div class="fn-list">
   {% if grp.name %}
+  {# the property's plan panel: open when asked for, and by itself wherever it says something the general plan does not #}
+  {% set pp = prop_plans.get(grp.name) %}
+  {% set pp_open = pp and (open_prop == grp.name or pp.own or pp.fans) %}
   <div class="fn-prop">
-    <h2>{% if prop_plans.get(grp.name) %}<button type="button" class="fn-ptog" aria-expanded="{{ 'true' if open_prop == grp.name else 'false' }}" title="Show the plan {{ grp.name }}'s fans run on{% if manage %}, and change its hours{% endif %}">{{ grp.name }} <span aria-hidden="true">▾</span></button>{% else %}{{ grp.name }}{% endif %}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
+    <h2>{% if pp %}<button type="button" class="fn-ptog" aria-expanded="{{ 'true' if pp_open else 'false' }}" title="Show the plan {{ grp.name }}'s fans run on{% if manage %}, and change its hours{% endif %}">{{ grp.name }} <span aria-hidden="true">▾</span></button>{% else %}{{ grp.name }}{% endif %}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
     {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}{% if gw.pending %} · changes to the <b>{{ gw.pending.band.label }}</b> schedule in {{ gw.pending.mins }} min if the temperature stays there{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
     <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}{% if grp.hand_fans %} · <b style="color:#b45309">{{ grp.hand_fans }} ignoring stop</b>{% endif %}</span>
-    {% if grp.name != unfiled %}{% if manage or grp.name in run_props %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if prop_plans.get(grp.name) and prop_plans[grp.name].own %}<span class="fn-pill cmd" title="{{ grp.name }} has fan hours of its own; it does not follow the general plan. Click the property's name to see them">OWN HOURS</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% endif %}{% endif %}
+    {% if grp.name != unfiled %}{% if manage or grp.name in run_props %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if prop_plans.get(grp.name) and prop_plans[grp.name].own %}<span class="fn-pill cmd" title="{{ grp.name }} has fan hours of its own; it does not follow the general plan. Click the property's name to see them">OWN HOURS</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% elif grp.behind %}<span class="fn-pill warn" title="New hours have been set for {{ grp.name }} and have not been sent to the fans yet. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still run{{ 's' if grp.behind == 1 }} on the earlier hours; click the property's name to see both">NEW HOURS NOT SENT YET</span>{% endif %}{% endif %}
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
   </div>
-  {% set pp = prop_plans.get(grp.name) %}
   {% if pp %}
-  <div class="fn-plan fn-own" data-editor data-prop="{{ grp.name }}" {{ 'hidden' if open_prop != grp.name }}>
+  <div class="fn-plan fn-own" data-editor data-prop="{{ grp.name }}" {{ 'hidden' if not pp_open }}>
     <h3>The plan · how the fans should run at {{ grp.name }}, by outdoor temperature{% if pp.own %} · {{ grp.name }}'s own hours{% else %} · the general plan{% endif %}</h3>
+    {% if pp.fans %}{% set nb = pp.fans.n %}
+    <div class="fn-behind"><b>These hours have not been sent to the fans.</b> {{ nb }} building{{ 's' if nb != 1 }} at {{ grp.name }} still hold{{ 's' if nb == 1 }} the earlier hours, shown in teal under each schedule that differs, and {{ 'its' if nb == 1 else 'their' }} fans run on those until the new hours are sent.{% if grp.name in auto_props %} Until then automatic switching will not move {{ grp.name }} onto a schedule that still holds the earlier hours, so it stays on the schedule it is on now.{% endif %}{% if manage %} Send them from <a href="{{ url_for('admin.fans_property', name=grp.name) }}">Schedules &amp; switching…</a>{% endif %}</div>
+    {% endif %}
     <div class="fn-pl">
       <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
       {% for b in pp.plan %}
@@ -257,6 +269,13 @@
       {% else %}<span class="strip">{{ pstrip(b, hour) }}</span>{% endif %}
       <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
       <span class="cnt">{% if grp.want and grp.want.band.key == b.key %}<b style="color:var(--text)">in force now</b>{% endif %}</span>
+      {% set af = pp.fans.bands.get(b.key) if pp.fans else none %}
+      {% if af %}
+      <span class="bl held">at the fans now</span>
+      <span class="strip set" title="The hours Bloom still holds for this schedule at {{ grp.name }}">{{ strip(af.bits, hour) }}</span>
+      <span class="card-sub held">{% if af.hours_on == 24 %}on around the clock{% elif not af.hours_on %}off all day{% else %}on {{ af.ranges }} · {{ af.hours_on }} h a day{% endif %}{% if af.mixed %} · the buildings differ, open one to see its own{% endif %}</span>
+      <span class="cnt held">{{ af.n }} bldg{{ 's' if af.n != 1 }}</span>
+      {% endif %}
       {% endfor %}
     </div>
     {% if manage %}
@@ -330,8 +349,10 @@
         {% elif not r.want %}<div class="fn-banner blind">No live outdoor reading on this property, so this building cannot be placed in the plan.</div>
         {% else %}{% set w = r.want %}
         <div class="fn-banner {{ 'over' if r.over else ('under' if r.under else 'fine') }}">{{ t(r.plan_out) }} outside{% if r.plan_shared %} (the property's reading{% if r.outdoor is not none and r.out_dev is not none and (r.out_dev >= 1 or r.out_dev <= -1) %}; this building's own sensor says {{ t(r.outdoor) }}{% elif r.outdoor is none %}; this building has no live sensor of its own{% endif %}){% endif %} — the {{ w.band.label|lower }} plan: fans should be <b>{{ 'ON' if w.on else 'OFF' }}</b>{% if w.until %} until {{ w.until }}{% endif %}. {% if r.over %}{{ r.over }} {{ 'is' if r.over == 1 else 'are' }} running.{% elif r.under %}{{ r.under }} {{ 'is' if r.under == 1 else 'are' }} held off by command.{% elif w.settling %}The plan just changed; giving the building ten minutes to follow.{% else %}That is what they are doing.{% endif %}{% if w.held %} It stays on this colder schedule until it reads {{ t(w.release) }} (hysteresis).{% endif %}{% if w.pending %} The temperature is now in the {{ w.pending.band.label|lower }} range; the schedule changes in {{ w.pending.mins }} min if it stays there.{% endif %}</div>
+        {# this building's property's plan: its own hours where it has them, never the general ones in their place #}
+        {% set rp = prop_plans.get(r.prop) %}
         <div class="fn-pl" style="grid-template-columns:96px minmax(0, 1fr) auto;margin-bottom:14px">
-          {% for b in plan %}
+          {% for b in (rp.plan if rp else plan) %}
           <span class="bl {{ 'cur' if b.key == w.band.key }}" style="font-size:12px">{{ b.label }}</span>
           <span class="strip {{ 'na' if not b.bits }}" style="{{ '' if b.key == w.band.key else 'opacity:.4' }}">{{ pstrip(b, r.hour) }}</span>
           <span class="card-sub" style="{{ '' if b.key == w.band.key else 'opacity:.55' }}">{% if b.hours_on == 24 %}always on{% else %}{{ b.hours_on }} h a day{% endif %}</span>
