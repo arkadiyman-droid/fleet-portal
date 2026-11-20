@@ -79,7 +79,12 @@
   .fn-prop .now.off b.st { color:#6b7280; } .fn-prop .now.on b.st { color:#1d4ed8; }
   .fn-plan { background:#fff; border:1px solid var(--border); border-radius:10px; padding:10px 14px; margin:0 0 12px; }
   .fn-plan h3 { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 6px; }
-  .fn-pl { display:grid; grid-template-columns:110px minmax(240px, 520px) minmax(180px, 1fr) auto; gap:4px 12px; align-items:center; font-size:13px; }
+  .fn-pl { display:grid; grid-template-columns:110px minmax(240px, 520px) minmax(180px, 1fr) auto; gap:6px 12px; align-items:center; font-size:13px; position:relative; z-index:0; }
+  /* the temperature band in use right now: its whole row is shaded. The shade
+     is laid over the band's grid row(s) and takes no cell of its own. */
+  .fn-pl .inuse { position:absolute; grid-column:1 / -1; top:-2px; bottom:-2px; left:-8px; right:-8px; z-index:-1; background:#dbeafe; border-left:3px solid #1d4ed8; border-radius:4px; pointer-events:none; }
+  .fn-pl .bl.use, .fn-pl .cnt .use { color:#1e40af; font-weight:700; }
+  .fn-key i.use { background:#dbeafe; box-shadow:inset 3px 0 0 #1d4ed8; }
   .fn-pl .strip { display:grid; grid-template-columns:repeat(24, 1fr); gap:1px; height:16px; }
   .fn-pl .strip span { background:#e5e7eb; border-radius:2px; }
   .fn-pl .strip span.on { background:#3b82f6; }
@@ -194,11 +199,14 @@
   <div class="fn-pl">
     <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
     {% for b in plan %}
-    <span class="bl">{{ b.label }}</span>
+    {# shaded: a temperature band some building is in right now #}
+    {% set used = summary.bands[b.key] %}
+    {% if used %}<span class="inuse" aria-hidden="true" style="grid-row:{{ loop.index + 1 }} / span 1"></span>{% endif %}
+    <span class="bl {{ 'use' if used }}"{% if used %} title="A temperature band in use right now"{% endif %}>{{ b.label }}</span>
     {% if manage %}<span class="strip edit" role="group" aria-label="{{ b.label }}: the hours the fans run" data-band="{{ b.key }}" data-label="{{ b.label }}" data-saved="{{ b.bitstr }}">{% for x in b.bits %}<button type="button" class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}" aria-pressed="{{ 'true' if x else 'false' }}"></button>{% endfor %}</span>
     {% else %}<span class="strip {{ 'na' if not b.bits }}">{{ pstrip(b, hour) }}</span>{% endif %}
     <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
-    <span class="cnt">{% if summary.band_props.get(b.key) %}<b style="color:var(--text)">now: {% for p in summary.band_props[b.key] %}{{ p }}{% if p in own_props %} (own hours){% endif %}{{ ', ' if not loop.last }}{% endfor %}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
+    <span class="cnt">{% if summary.band_props.get(b.key) %}<b class="use">now: {% for p in summary.band_props[b.key] %}{{ p }}{% if p in own_props %} (own hours){% endif %}{{ ', ' if not loop.last }}{% endfor %}</b> · {% endif %}{{ summary.bands[b.key] }} bldg{{ 's' if summary.bands[b.key] != 1 }}</span>
     {% endfor %}
   </div>
   {% if own_props and not manage %}<p class="card-sub" style="margin:8px 0 0"><b style="color:var(--text)">{{ own_props|join(', ') }}</b> {{ 'has fan hours of its own, shown under its name' if own_props|length == 1 else 'have fan hours of their own, shown under their names' }} in the list below. The hours above are the general plan, which the other properties follow.</p>{% endif %}
@@ -234,7 +242,7 @@
 </div>
 <div class="fn-key">
   <span><i class="fn-on"></i>running</span><span><i class="fn-down"></i>down (off while commanded on)</span><span><i class="fn-hand"></i>running while commanded off</span><span><i class="fn-off"></i>off</span><span><i class="fn-dark"></i>not reporting</span>
-  <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today (the hours the fans hold)</span><span><i class="grey"></i>off</span><span>outlined = this hour</span>
+  <span>·</span><span><i class="blue"></i>top strip: hours the plan runs the fans today</span><span><i class="teal"></i>bottom strip: hours Bloom is set to run them today (the hours the fans hold)</span><span><i class="grey"></i>off</span><span>outlined = this hour</span><span><i class="use"></i>shaded row in a plan: the temperature band in use now</span>
   <span>· Bloom / Empowered Buildings, read view-only, every {{ poll_min }} min</span>
 </div>
 
@@ -263,13 +271,18 @@
     {% endif %}
     <div class="fn-pl">
       <span></span><span class="hrs">{% for l in ['12a', '3a', '6a', '9a', '12p', '3p', '6p', '9p'] %}<span>{{ l }}</span>{% endfor %}</span><span></span><span></span>
+      {% set at = namespace(row=2) %}
       {% for b in pp.plan %}
-      <span class="bl">{{ b.label }}</span>
+      {# shaded: the temperature band this property is in right now, with the hours its fans still hold under it #}
+      {% set af = pp.fans.bands.get(b.key) if pp.fans else none %}
+      {% set used = grp.want and grp.want.band.key == b.key %}
+      {% if used %}<span class="inuse" aria-hidden="true" style="grid-row:{{ at.row }} / span {{ 2 if af else 1 }}"></span>{% endif %}
+      {% set at.row = at.row + (2 if af else 1) %}
+      <span class="bl {{ 'use' if used }}"{% if used %} title="The temperature band {{ grp.name }} is in right now"{% endif %}>{{ b.label }}</span>
       {% if manage %}<span class="strip edit" role="group" aria-label="{{ grp.name }}, {{ b.label }}: the hours the fans run" data-band="{{ b.key }}" data-label="{{ b.label }}" data-saved="{{ b.bitstr }}">{% for x in b.bits %}<button type="button" class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}" aria-pressed="{{ 'true' if x else 'false' }}"></button>{% endfor %}</span>
       {% else %}<span class="strip">{{ pstrip(b, hour) }}</span>{% endif %}
       <span class="card-sub" data-says="{{ b.key }}">{% if b.hours_on == 24 %}on around the clock{% elif not b.hours_on %}off all day{% else %}on {{ b.ranges }} · {{ b.hours_on }} h a day, off otherwise{% endif %}</span>
-      <span class="cnt">{% if grp.want and grp.want.band.key == b.key %}<b style="color:var(--text)">in force now</b>{% endif %}</span>
-      {% set af = pp.fans.bands.get(b.key) if pp.fans else none %}
+      <span class="cnt">{% if used %}<b class="use">in force now</b>{% endif %}</span>
       {% if af %}
       <span class="bl held">at the fans now</span>
       <span class="strip set" title="The hours Bloom still holds for this schedule at {{ grp.name }}">{{ strip(af.bits, hour) }}</span>

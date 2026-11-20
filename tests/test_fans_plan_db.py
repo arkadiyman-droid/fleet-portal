@@ -342,3 +342,37 @@ def test_everyone_sees_the_hours_the_fans_still_hold(root, pat, world, session):
     for who in (root, pat):
         page = who.get("/fans").get_data(as_text=True)
         assert closed in page and "at the fans now" not in page and "NEW HOURS" not in page
+
+
+def test_the_plan_shades_the_temperature_band_in_use(root, pat, world, session):
+    """Beside the outlined hour, the plan shows which temperature band is in
+    use right now: its row is shaded, in the plan at the top and in the
+    property's own panel. The shade is laid over the band's grid row, and under
+    it over the row of hours the fans still hold, so its row number matters."""
+    import app.models as m
+    raw = _reporting(LOADED, 4, "440 Berry St", "440-Berry-St")
+    site = session.get(m.BloomFanSite, world["fan_mine"])
+    site.data = {**bf.trim(raw), "portal": {"prop": "Berry", "band": "mild", "out": 45.0, "n": 1}}
+    session.add(m.BloomFanWrite(site_id=world["fan_mine"], by="x", ok=True,
+                                changes=[{"type": "gen-sched", "name": "3::7", "old": 0, "new": 1}]))
+    session.commit()
+    top, own = 'class="inuse" aria-hidden="true" style="grid-row:3 / span 1"', 'title="The temperature band Berry is in right now"'
+    for who in (root, pat):                                  # 36° to 55° is the second band: row 3, under the hour labels
+        page = who.get("/fans").get_data(as_text=True)
+        assert page.count(top) == 2 and page.count('class="inuse"') == 2          # the plan at the top, and Berry's panel
+        assert page.count('class="bl use"') == 2 and own in page and '<b class="use">in force now</b>' in page
+        assert '<b class="use">now: Berry' in page
+
+    # Berry's cold hours change and are not sent: a row of held hours opens above, and the shade moves down with its band
+    root.post("/fans/plan", data={**EDITED, "prop": "Berry"})
+    page = pat.get("/fans").get_data(as_text=True)
+    assert "at the fans now" in page and 'style="grid-row:4 / span 1"' in page and page.count(top) == 1
+    # the band in use is the one that changes: the shade takes in the hours the fans still hold
+    root.post("/fans/plan", data={**HOURS, "mild": "1" * 24, "prop": "Berry"})
+    page = pat.get("/fans").get_data(as_text=True)
+    assert 'style="grid-row:3 / span 2"' in page and page.count(top) == 1 and page.count('class="inuse"') == 2
+
+    site.data = {**bf.trim(raw), "portal": {"prop": "Berry", "band": "free", "out": 60.0, "n": 1}}      # it warms up
+    session.commit()
+    page = pat.get("/fans").get_data(as_text=True)
+    assert page.count('style="grid-row:4 / span 1"') == 1 and 'style="grid-row:5 / span 1"' in page and top not in page
