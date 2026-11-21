@@ -276,7 +276,8 @@ it is read back, and the ledger records who and why.
   source and Windows client: a `PUT` of only the changed items, by name, no
   wrapper. Because the box clamps silently and rewrites whole blocks of its
   memory from the gateway's copy, the page checks every value against the
-  box's own range first, refuses to write to a box that started minutes ago or
+  box's own range first, closes every connection at once (the gateway serves
+  one at a time and drops the next while one is open), refuses to write to a box that started minutes ago or
   whose settings read back as nonsense, holds the poller's lock so nothing
   else talks to the box meanwhile, requires the box's reply to carry exactly
   what was sent, and reads back afterwards (also reporting any *other*
@@ -284,7 +285,13 @@ it is read back, and the ledger records who and why.
   guard exists.
 
 **Who may** — the administrator, and any person given the **may change heating
-settings here** tick for the building's property on their permissions page
+settings here** tick for the building's property. The tick is offered on every
+property, and can be set from either side: on a person's own permissions page
+(all their properties), or on a property's **People** page (Properties →
+People: everyone under that property — through a grant on it, on its client,
+or on one of its buildings — each with *sees the property*, *runs the fans*
+and *changes heating settings*; a person can be added from there too). It is
+the same tick on both pages
 (`models.SettingControl`, `permissions.can_change_settings`). The tick sits
 beside the fan tick, works the same way (it needs the view of the property and
 goes when the view goes), and every change is recorded under that person's
