@@ -45,6 +45,24 @@ def test_a_list_is_spread_out_so_one_changed_entry_is_one_row():
     assert sa_.echotherm_snapshot(None) == {} and sa_.echotherm_snapshot({}) == {}
 
 
+def test_a_credential_the_controller_let_through_is_still_never_kept():
+    raw = {"lorawan.devices": [{"slot": 8, "name": "Apt 8", "app_key": "00112233445566778899AABBCCDDEEFF"}],
+           "lorawan.api_key": "eyJ-chirpstack-token", "wifi.psk": "", "some.session_secret": "abc",
+           "api_keys": [{"name": "bms", "key_hash": "set"}], "backup.bundle_recipient": "age1publickey",
+           "keypad_lock": True, "monkey_count": 3}
+    snap = sa_.echotherm_snapshot(raw)
+    assert snap["lorawan.devices[slot 8].app_key"] == "set" and snap["lorawan.api_key"] == "set"
+    assert snap["wifi.psk"] == "not set" and snap["some.session_secret"] == "set"
+    assert snap["api_keys[bms].key_hash"] == "set"           # already reduced by the controller: left as it is
+    assert snap["backup.bundle_recipient"] == "age1publickey" and snap["lorawan.devices[slot 8].name"] == "Apt 8"
+    assert snap["keypad_lock"] is True and snap["monkey_count"] == 3      # "key" inside another word is not a key
+    assert "00112233445566778899AABBCCDDEEFF" not in str(snap) and "eyJ-chirpstack-token" not in str(snap)
+    for name in ("app_key", "nwk_key", "x.api_keys", "auth_token", "password_hash", "pre-shared-key"):
+        assert sa_.secret_name(name), name
+    for name in ("keypad_lock", "monkey", "setpoints.inside_day", "bundle_recipient", "bypass_on"):
+        assert not sa_.secret_name(name), name
+
+
 def test_controller_settings_read_in_words():
     d = sa_.echotherm_describe
     assert d("setpoints.inside_day", 72) == ("Setpoints › inside day", "72")

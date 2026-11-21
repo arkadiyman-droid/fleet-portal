@@ -48,6 +48,7 @@ The snapshot/diff half is pure; observe()/record_portal()/recent() touch the
 database and assume an app context.
 """
 import datetime as _dt
+import re
 
 from app import bloom_settings
 
@@ -421,6 +422,27 @@ def legacy_describe(key, value, snapshot=None) -> tuple:
 
 # ── EchoTherm controllers ────────────────────────────────────────────────────
 
+# The controller already reduces credentials to "set" / "not set" before they
+# leave it. The portal applies the same rule to whatever arrives, by NAME, so
+# a credential a controller's software failed to recognise is still never
+# stored here (2026-11-21: a LoRaWAN `app_key` got past a rule that knew
+# api_key and auth_key but not "key" as a word).
+_SECRET_PARTS = ("password", "passwd", "secret", "token", "hash", "digest", "psk", "passphrase")
+_SECRET_WORDS = {"key", "keys"}
+
+
+def secret_name(key) -> bool:
+    """Does this setting's name say it holds a credential?"""
+    last = re.sub(r"\[[^\]]*\]", "", str(key)).rsplit(".", 1)[-1].lower()
+    return any(p in last for p in _SECRET_PARTS) or bool(_SECRET_WORDS & set(re.split(r"[^a-z0-9]+", last)))
+
+
+def _no_secret(key, value):
+    if secret_name(key) and value not in ("set", "not set"):
+        return "set" if value not in (None, "", 0, False) else "not set"
+    return value
+
+
 def echotherm_snapshot(settings: dict) -> dict:
     """The flat {key: value} the ledger compares, from a controller's
     GET /api/fleet/settings 'settings' (already flat, but a list is still a
@@ -432,7 +454,7 @@ def echotherm_snapshot(settings: dict) -> dict:
     for key, value in (settings or {}).items():
         if not isinstance(value, list):
             if not isinstance(value, dict):
-                out[key] = value
+                out[key] = _no_secret(key, value)
             continue
         out[f"{key}.count"] = len(value)
         for i, item in enumerate(value):
@@ -440,9 +462,9 @@ def echotherm_snapshot(settings: dict) -> dict:
                 tag = f"slot {item['slot']}" if "slot" in item else str(item.get("name") or item.get("user") or i)
                 for f, v in item.items():
                     if not isinstance(v, (dict, list)):
-                        out[f"{key}[{tag}].{f}"] = v
+                        out[f"{key}[{tag}].{f}"] = _no_secret(f, v)
             elif not isinstance(item, list):
-                out[f"{key}[{i}]"] = item
+                out[f"{key}[{i}]"] = _no_secret(key, item)
     return out
 
 
