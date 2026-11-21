@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <a class="btn plain" href="{{ url_for('admin.list_properties') }}">Back to Properties</a>
+  </div>
+  <p class="card-sub" style="margin:0 0 14px;max-width:860px">Everyone under {{ prop.name }} ({{ prop.client.name }}) and what each of them may do here.
+    <b>Sees the property</b>: every building in it, read-only. <b>Runs the fans</b>: the roof-fan schedules and switching for {{ prop.name }}.
+    <b>Changes heating settings</b>: the settings of its buildings, under their own name — every change is recorded on the Changes page.
+    The last two need the first, and go when it goes. Each person's own page (Users → Permissions) shows the same ticks for all their properties.</p>
+
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% if rows %}
+    <table style="margin-bottom:16px">
+      <thead><tr><th>Person</th><th>Sees the property</th>{% if with_fans %}<th>Runs the fans</th>{% endif %}<th>Changes heating settings</th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td><input type="hidden" name="listed" value="{{ r.user.id }}">
+            <a href="{{ url_for('admin.user_permissions', user_id=r.user.id) }}">{{ r.user.name }}</a>
+            <span class="card-sub">· {{ r.user.login }}{% if not r.user.is_active %} · account switched off{% endif %}</span>
+            {% if not r.sees and r.buildings %}<div class="card-sub">sees only {{ r.buildings|join(', ') }}</div>{% endif %}</td>
+          <td><label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400">
+            <input type="checkbox" name="view_{{ r.user.id }}" value="1" style="width:auto;margin:0" data-who="{{ r.user.id }}" class="pv"{{ ' checked' if r.sees }}{{ ' disabled' if not r.view_editable }}>
+            {% if r.via_client %}<span class="card-sub">through {{ prop.client.name }} ({{ r.role }})</span>
+            {% elif r.role and r.role != 'viewer' %}<span class="card-sub">{{ r.role }} grant, change it on their page</span>{% endif %}</label>
+            {% if not r.view_editable and r.sees %}<input type="hidden" name="view_{{ r.user.id }}" value="1">{% endif %}</td>
+          {% if with_fans %}<td><input type="checkbox" name="fans_{{ r.user.id }}" value="1" class="pr" data-who="{{ r.user.id }}" style="width:auto;margin:0"{{ ' checked' if r.fans }}></td>{% endif %}
+          <td><input type="checkbox" name="sets_{{ r.user.id }}" value="1" class="pr" data-who="{{ r.user.id }}" style="width:auto;margin:0"{{ ' checked' if r.sets }}></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<div class="empty" style="margin-bottom:16px">Nobody has been given {{ prop.name }} yet.</div>{% endif %}
+
+    {% if others %}
+    <div style="display:flex;gap:10px;align-items:center;margin:0 0 16px;max-width:620px">
+      <label for="add_user" style="margin:0;white-space:nowrap">Add a person</label>
+      <select name="add_user" id="add_user" style="margin:0">
+        <option value="">—</option>
+        {% for u in others %}<option value="{{ u.id }}">{{ u.name }} ({{ u.login }})</option>{% endfor %}
+      </select>
+    </div>
+    <p class="card-sub" style="margin:-8px 0 16px">An added person sees the property; give them more on the next save.</p>
+    {% endif %}
+    <button type="submit" class="btn">Save</button>
+  </form>
+  <script>
+  // A right needs the view: ticking a right ticks the view, unticking the view unticks the rights.
+  document.querySelectorAll('input.pr').forEach(function (r) {
+    var v = document.querySelector('input.pv[data-who="' + r.dataset.who + '"]');
+    if (!v || v.disabled) return;
+    r.addEventListener('change', function () { if (r.checked) v.checked = true; });
+    v.addEventListener('change', function () {
+      if (!v.checked) document.querySelectorAll('input.pr[data-who="' + r.dataset.who + '"]').forEach(function (x) { x.checked = false; });
+    });
+  });
+  </script>
+{% endblock %}

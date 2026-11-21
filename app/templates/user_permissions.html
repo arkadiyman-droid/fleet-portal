@@ -15,6 +15,7 @@
   <h2 style="font-size:14px;margin:0 0 4px">Properties {{ user.name }} can watch</h2>
   <p class="card-sub" style="margin:0 0 10px;max-width:820px">Tick a property to share it view-only: the person sees every building in it — heating, roof fans, alerts and history — and can change nothing. Untick to take it away. This is the usual way to give access; the grants below are for anything finer.</p>
   <p class="card-sub" style="margin:0 0 10px;max-width:820px"><b>Running the fans.</b> Where a property has roof fans, a second tick lets {{ user.name }} run them for that property only: load the plan's schedules, switch the fan groups between them, put them back, and turn automatic switching on or off. Every change they send is recorded under their name. The plan's hours, and sending to several properties at once, stay with you.</p>
+  <p class="card-sub" style="margin:0 0 10px;max-width:820px"><b>Changing heating settings.</b> On every property a third tick lets {{ user.name }} change the heating settings of that property's buildings — a Bloom building, an EchoTherm controller (where its site allows it) or a 2010 box — under their own name: every change is recorded on the Changes page. It needs the view of the property, and goes when the view goes. A property's own <b>People</b> page (Properties) shows the same ticks for everyone under it.</p>
   {% if share %}
   <form method="post" action="{{ url_for('admin.set_user_properties', user_id=user.id) }}" style="margin:0 0 28px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

@@ -173,9 +173,24 @@ def body(changes: dict) -> bytes:
 
 
 def session(user, password):
+    """A Digest session that closes its connection after every request: the
+    gateway serves ONE connection at a time, so a connection left open (kept
+    alive) makes it drop the next one that arrives within its 16-second
+    timeout — seen live 2026-11-21 on the second page load at a DCA box."""
     s = requests.Session()
     s.auth = HTTPDigestAuth(user, password)
+    s.headers["Connection"] = "close"
     return s
+
+
+def _get(s, url, sleep=time.sleep):
+    """GET, retried once after a pause if the box drops the connection. Only
+    reads are retried — a write never is."""
+    try:
+        return s.get(url, timeout=TIMEOUT)
+    except requests.ConnectionError:
+        sleep(3)
+        return s.get(url, timeout=TIMEOUT)
 
 
 def read(s, url, objs=("emsSettings", "DITs"), pause=2.0, sleep=time.sleep) -> dict:
@@ -185,7 +200,7 @@ def read(s, url, objs=("emsSettings", "DITs"), pause=2.0, sleep=time.sleep) -> d
     for i, obj in enumerate(objs):
         if i:
             sleep(pause)
-        r = s.get(f"{url}/obix/{obj}", timeout=TIMEOUT)
+        r = _get(s, f"{url}/obix/{obj}", sleep)
         if r.status_code != 200:
             raise RuntimeError(f"the box answered HTTP {r.status_code} for {obj}")
         out[obj] = parse(r.text)
@@ -196,7 +211,7 @@ def about(s, url) -> dict:
     """{'level': the login's access level at this box, 'up_min': minutes since
     the box started (None if it does not say)} from obix/about."""
     import datetime as dt
-    r = s.get(f"{url}/obix/about", timeout=TIMEOUT)
+    r = _get(s, f"{url}/obix/about")
     if r.status_code != 200:
         raise RuntimeError(f"the box answered HTTP {r.status_code}")
     items = parse(r.text)["items"]
@@ -228,7 +243,7 @@ def write(s, url, obj, changes, expect, sleep=time.sleep) -> dict:
     The session must be one that has just read from this box (read()), so the
     PUT carries its Digest login on the first try."""
     out = {"ok": False, "sent": False, "confirmed": False, "detail": "", "drift": []}
-    r = s.get(f"{url}/obix/{obj}", timeout=TIMEOUT)
+    r = _get(s, f"{url}/obix/{obj}", sleep)
     if r.status_code != 200:
         out["detail"] = f"the box answered HTTP {r.status_code} when read"
         return out

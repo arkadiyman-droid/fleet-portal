@@ -183,6 +183,35 @@ def test_every_way_a_write_can_go_wrong_is_caught_and_said():
     assert o["ok"] and o["confirmed"] and o["drift"] == ["mixHighTempSetpoint"]
 
 
+def test_each_request_closes_its_connection_and_a_dropped_read_is_tried_once_more():
+    import requests
+    assert ls.session("u", "p").headers["Connection"] == "close"
+
+    class Drops(Box):
+        __test__ = False
+
+        def __init__(self, drops):
+            super().__init__()
+            self.drops = drops
+
+        def get(self, url, timeout=None):
+            if self.drops:
+                self.drops -= 1
+                raise requests.ConnectionError("Remote end closed connection without response")
+            return super().get(url, timeout)
+
+        def put(self, url, data=None, headers=None, timeout=None):
+            raise requests.ConnectionError("dropped")
+
+    assert ls.read(Drops(1), "http://box", sleep=NOSLEEP)["emsSettings"]["root"] == "obj"
+    with pytest.raises(requests.ConnectionError):
+        ls.read(Drops(2), "http://box", sleep=NOSLEEP)              # twice in a row: give up, say so
+    box = Drops(0)
+    with pytest.raises(requests.ConnectionError):                   # a write is never retried
+        ls.write(box, "http://box", "emsSettings", {"outsideDaySetpoint": 56}, {"outsideDaySetpoint": 55}, sleep=NOSLEEP)
+    assert box.calls == [("GET", "emsSettings")]
+
+
 def test_the_login_level_and_how_long_the_box_has_been_up():
     assert ls.about(Box(level="Admin", up_min=45), "http://box") == {"level": "Admin", "up_min": 45.0}
     assert ls.about(Box(level="User", up_min=1.5), "http://box") == {"level": "User", "up_min": 1.5}

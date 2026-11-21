@@ -316,6 +316,8 @@ def list_properties():
             "cells": [p.name, p.client.name, p.address or "—"],
             "can_edit": _can_edit(p),
             "can_archive": _can_archive(p),
+            "extra_url": url_for("admin.property_people", property_id=p.id) if is_superuser() else None,
+            "extra_label": "People",
         }
         for p in properties
     ]
@@ -917,6 +919,11 @@ def live_box_settings(box_id):
             notes.append({"cls": "info", "head": "Outdoor adjustment is on at this box.",
                           "text": "It nudges the hourly target by a couple of degrees when it is mild or cold outside, so "
                                   "the building may be held slightly off the numbers below."})
+    if sess is not None:
+        try:
+            sess.close()                                 # free the box's one connection at once
+        except Exception:
+            pass
     log = _change_rows(setting_audit.recent(source="legacy", source_id=b.id, limit=12))
     return render_template(
         "box_settings.html", title=f"{b.name} — settings", box_name=b.name, kind_label="2010 box", kind_word="box",
@@ -3305,21 +3312,6 @@ def _prune_setting_controls(user):
     return gone
 
 
-def _settable_property_ids():
-    """Properties with a building whose settings the portal can change today
-    (a Bloom heating building, an EchoTherm controller or a 2010 box on it)."""
-    bloom = {pid for (pid,) in db.session.query(Building.property_id)
-             .join(BloomAsset, BloomAsset.building_id == Building.id)
-             .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
-    echo = {pid for (pid,) in db.session.query(Building.property_id)
-            .join(Controller, Controller.building_id == Building.id)
-            .filter(Controller.is_active.is_(True), Building.is_active.is_(True)).distinct()}
-    boxes = {pid for (pid,) in db.session.query(Building.property_id)
-             .join(LegacyBox, LegacyBox.building_id == Building.id)
-             .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
-    return bloom | echo | boxes
-
-
 def _prune_fan_controls(user):
     """Fan control goes with seeing the property: drop every fan tick on a
     property the person can no longer see, so that giving the view back later
@@ -3487,13 +3479,12 @@ def user_permissions(user_id):
     by_client = {p.scope_id: p.role for p in grants if p.scope_type == "client"}
     with_fans = set(_fans_sites_by_property())
     fan_held = {fc.property_id for fc in FanControl.query.filter_by(user_id=user.id).all()}
-    settable = _settable_property_ids()
     set_held = {sc.property_id for sc in SettingControl.query.filter_by(user_id=user.id).all()}
     share = []
     for c in clients:
         props = [{"id": p.id, "name": p.name, "role": held.get(p.id), "via_client": by_client.get(c.id),
                   "fans": p.name in with_fans or p.id in fan_held, "fan_tick": p.id in fan_held,
-                  "settings": p.id in settable or p.id in set_held, "set_tick": p.id in set_held,
+                  "settings": True, "set_tick": p.id in set_held,
                   "n": sum(1 for b in p.buildings if b.is_active)}
                  for p in sorted(c.properties, key=lambda x: x.name.lower()) if p.is_active]
         if props:
@@ -3581,6 +3572,106 @@ def set_user_properties(user_id):
         flash(f"Changing settings was not given at {', '.join(refused_s)}: {user.name} has to be able to see a "
               f"property before changing its settings. Tick the property as well.", "error")
     return redirect(url_for("admin.user_permissions", user_id=user.id))
+
+
+@admin_bp.route("/properties/<int:property_id>/people", methods=["GET", "POST"])
+@superuser_required
+def property_people(property_id):
+    """Everyone under one property and what each of them may do there: see
+    it, run its roof fans, change its heating settings. The same grants and
+    ticks as a person's own permissions page, seen from the property's side,
+    so a property's people are set in one place. Rights other than seeing
+    need the view of the whole property and go when it goes."""
+    from sqlalchemy import and_
+    from app.models import FanControl, SettingControl
+    prop = Property.query.get_or_404(property_id)
+    with_fans = prop.name in set(_fans_sites_by_property())
+    b_ids = [b.id for b in prop.buildings]
+
+    def people():
+        grants = Permission.query.filter(or_(
+            and_(Permission.scope_type == "property", Permission.scope_id == prop.id),
+            and_(Permission.scope_type == "client", Permission.scope_id == prop.client_id),
+            and_(Permission.scope_type == "building", Permission.scope_id.in_(b_ids or [-1])))).all()
+        fans = {fc.user_id for fc in FanControl.query.filter_by(property_id=prop.id).all()}
+        sets = {sc.user_id for sc in SettingControl.query.filter_by(property_id=prop.id).all()}
+        by = {}
+        for g_ in grants:
+            r = by.setdefault(g_.user_id, {"prop": None, "client": None, "buildings": []})
+            if g_.scope_type == "property":
+                r["prop"] = g_
+            elif g_.scope_type == "client":
+                r["client"] = g_.role
+            else:
+                b = Building.query.get(g_.scope_id)
+                r["buildings"].append(b.name if b else f"#{g_.scope_id}")
+        for uid in fans | sets:
+            by.setdefault(uid, {"prop": None, "client": None, "buildings": []})
+        rows = []
+        for u in User.query.filter(User.id.in_(list(by) or [-1])).order_by(User.name).all():
+            r = by[u.id]
+            sees = bool(r["prop"] or r["client"])
+            rows.append({
+                "user": u, "sees": sees, "role": (r["prop"].role if r["prop"] else None) or r["client"],
+                "via_client": r["client"] is not None and r["prop"] is None,
+                "view_editable": not r["client"] and (r["prop"] is None or r["prop"].role == "viewer"),
+                "buildings": sorted(r["buildings"]), "fans": u.id in fans, "sets": u.id in sets,
+            })
+        return rows
+
+    if request.method == "POST":
+        listed = {int(v) for v in request.form.getlist("listed") if v.isdigit()}
+        changed, refused = [], []
+        for uid in sorted(listed):
+            u = User.query.get(uid)
+            if u is None:
+                continue
+            g_ = Permission.query.filter_by(user_id=uid, scope_type="property", scope_id=prop.id).first()
+            client_g = Permission.query.filter_by(user_id=uid, scope_type="client", scope_id=prop.client_id).first()
+            want_view = request.form.get(f"view_{uid}") == "1"
+            if not client_g and (g_ is None or g_.role == "viewer"):
+                if want_view and g_ is None:
+                    db.session.add(Permission(user_id=uid, scope_type="property", scope_id=prop.id, role="viewer"))
+                    changed.append(f"{u.name} can now see {prop.name}")
+                elif not want_view and g_ is not None:
+                    db.session.delete(g_)
+                    changed.append(f"{u.name} no longer sees {prop.name}")
+            db.session.flush()
+            sees = effective_role_for_property(uid, prop) is not None
+            for model, field, word in ((FanControl, "fans", "run the fans"), (SettingControl, "sets", "change heating settings")):
+                if field == "fans" and not with_fans:
+                    continue
+                have = model.query.filter_by(user_id=uid, property_id=prop.id).first()
+                want = request.form.get(f"{field}_{uid}") == "1"
+                if want and have is None:
+                    if not sees:
+                        refused.append(f"{u.name} ({word})")
+                        continue
+                    db.session.add(model(user_id=uid, property_id=prop.id, by=_who()))
+                    changed.append(f"{u.name} may now {word}")
+                elif not want and have is not None:
+                    db.session.delete(have)
+                    changed.append(f"{u.name} may no longer {word}")
+            _prune_fan_controls(u)
+            _prune_setting_controls(u)
+        add = _parse_int(request.form.get("add_user", ""))
+        if add:
+            u = User.query.get(add)
+            if u is not None and effective_role_for_property(u.id, prop) is None:
+                db.session.add(Permission(user_id=u.id, scope_type="property", scope_id=prop.id, role="viewer"))
+                changed.append(f"{u.name} added: can see {prop.name}")
+        db.session.commit()
+        flash(("Saved: " + "; ".join(changed) + ".") if changed else "Nothing changed.", "success")
+        if refused:
+            flash(f"Not given, because the person does not see the whole property: {', '.join(refused)}. "
+                  "Tick 'sees the property' as well.", "error")
+        return redirect(url_for("admin.property_people", property_id=prop.id))
+
+    rows = people()
+    on = {r["user"].id for r in rows}
+    others = User.query.filter(User.is_active.is_(True), ~User.id.in_(list(on) or [-1])).order_by(User.name).all()
+    return render_template("property_people.html", title=f"People — {prop.name}", prop=prop, rows=rows, others=others,
+                           with_fans=with_fans)
 
 
 @admin_bp.route("/users/<int:user_id>/permissions", methods=["POST"])
