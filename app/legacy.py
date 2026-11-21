@@ -22,6 +22,7 @@ the first poll and daily. Pure HTTP happens in worker threads; the database
 is written afterwards, in the poller's thread.
 """
 import datetime as _dt
+import itertools
 import logging
 import re
 import threading
@@ -78,6 +79,13 @@ ROLES = [("out", ("out",)), ("aqua", ("aqu",)), ("coil", ("coi",)), ("mix", ("mi
 # boilers it really has and its fuel. Boxes report run minutes for boilers
 # they do not have (217 Howard Ave, one boiler, showed 830 heat minutes on
 # "boiler 2"): Anagha sums only numBoilers, and so do we (2026-10-15).
+_cycles = itertools.count()                          # poll cycles run by this process (whose turn it is)
+
+# A box's settings live in these oBIX objects (the 2010 gateway's own tables;
+# every field of them except its clock stamp is a setting). Read now and then,
+# never every poll — see poll_one's `settings_due` and app/setting_audit.py.
+SETTINGS_PATHS = ("emsSettings", "emsConfig", "DITs", "DTs", "hotWaterHeat", "vacuumSteam", "aquastat", "cfhtable")
+
 CONFIG_KEYS = ("numBoilers", "fuelType", "heatControlType", "installationType", "numWaterMeters", "numFuelMeters",
                "numGasMeters", "emsControlsBoiler1", "emsControlsHotWater1", "emsControlsBoiler2", "emsControlsHotWater2")
 
@@ -552,6 +560,23 @@ def poll_one(box: dict, now=None) -> dict:
             out.update(ok=True, data=data, partial=True)
         return out
     out.update(ok=True, data=data, response_ms=int((time.monotonic() - t0) * 1000))
+    if box.get("settings_due"):
+        # The reading above is already safe; whatever goes wrong from here only
+        # means the settings are compared next time. A refusal here is never
+        # treated as a refused login.
+        got = {}
+        try:
+            for name in SETTINGS_PATHS:
+                time.sleep(PAUSE)
+                r = s.get(f"{box['url']}/obix/{name}", timeout=TIMEOUT)
+                if r.status_code != 200:
+                    break
+                got[name] = values(r.text)
+        except requests.RequestException:
+            with _sessions_lock:
+                _sessions.pop(box["id"], None)
+        if got:
+            out["settings"] = got
     return out
 
 
@@ -563,6 +588,10 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
     boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None),
                                    LegacyBox.identity != "other").all()
     jobs = []
+    from app import setting_audit
+    every = app.config.get("LEGACY_SETTINGS_EVERY_MIN", 60)
+    interval = app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300)
+    cycle = next(_cycles)                              # which poll cycle of this process this is
     for b in boxes:
         if b.login is None:
             continue
@@ -570,7 +599,8 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
         jobs.append({"id": b.id, "url": b.url, "user": b.login.username, "password": b.login.password,
                      "verified": b.identity in ("gateway", "open"),
                      "names_due": not (st and st.names_at and now - st.names_at < NAMES_EVERY),
-                     "config_due": not (st and st.data and st.data.get("config"))})
+                     "config_due": not (st and st.data and st.data.get("config")),
+                     "settings_due": setting_audit.turn(b.id, cycle, every, interval)})
     # Boxes read side by side (LEGACY_POLL_WORKERS, default 16: a cycle of
     # ~186 boxes took ~2 min at 8, 2026-10-15). Pacing stays per box.
     with ThreadPoolExecutor(max_workers=workers or app.config.get("LEGACY_POLL_WORKERS", 16)) as pool:
@@ -602,6 +632,19 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
         events += history.changes(b.id, res["polled_at"], prev_data, res.get("ok"), row.data, res.get("error"))
         db.session.add(row)
     db.session.commit()
+    # The settings ledger: a box whose settings were read this cycle is compared
+    # with what it held last time (app/setting_audit.py).
+    try:
+        for res in results:
+            if res.get("settings"):
+                b = db.session.get(LegacyBox, res["id"])
+                setting_audit.track("legacy", b.id, b.building_id, b.name,
+                                    setting_audit.legacy_snapshot(res["settings"]),
+                                    setting_audit.legacy_describe, res["polled_at"])
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        log.warning("Settings audit of the 2010 boxes failed: %s", e)
     if app.config.get("LEGACY_HISTORY_ENABLED", True):
         try:
             history.save(readings, events, now)

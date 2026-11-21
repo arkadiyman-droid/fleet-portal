@@ -4,7 +4,9 @@ app/bloom.py — Bloom / Empowered Buildings buildings, read view-only
 A third monitored source beside the EchoTherm controllers (app/fleet_poller.py)
 and the 2010 oBIX boxes (app/legacy.py): buildings on a different vendor's
 controller, read through Bloom's private JSON API at my.empoweredbuildings.com.
-Added for Skyline Terrace (Canton OH). Nothing here writes to Bloom.
+Added for Skyline Terrace (Canton OH). Reading only, except put_points() — the
+one function that changes anything in Bloom, called only after a person has
+confirmed a previewed change (the fan pages; a building's settings page).
 
 The API (confirmed 2026-10-29 against the live account):
   * POST {base}/login            {email, password}  -> a bearer token (JWT).
@@ -164,19 +166,26 @@ def fetch_json(account, session, token, path, timeout=20):
     return (r.json() if r.content else None), token
 
 
-def put_points(account, session, token, locid, points, note, timeout=20):
+def put_points(account, session, token, locid, points, note, timeout=20, bacnet=True):
     """WRITE to Bloom: change points on one building, the way Bloom's own edit
     screens do — PUT /api/points/<locid> {points, note, bacnet: true}, where
     each point is the raw point object from /api/assets with `pv` set to the
     new value and `originalPv` to the old one. Bloom passes the change on to
     the site controller. Re-logs in once on a 401. Returns (json, token).
 
+    `bacnet` follows the Bloom screen being imitated: its fan-schedule editor
+    sends `bacnet: true` (the default here); its heating Schedule screen sends
+    no such key at all, so app/bloom_settings callers pass bacnet=None.
+
     This is the ONLY function in the portal that changes anything in Bloom.
     Every caller must have shown a person exactly what will change and had
-    their confirmation first (app/bloom_fans.plan_push, routes.fans_push)."""
+    their confirmation first (app/bloom_fans.plan_push, routes.fans_push,
+    app/bloom_settings.plan, routes.skyline_settings)."""
     base = (account.base_url or DEFAULT_BASE).rstrip("/")
     url = f"{base}/api/points/{locid}"
-    body = {"points": points, "note": note, "bacnet": True}
+    body = {"points": points, "note": note}
+    if bacnet is not None:
+        body["bacnet"] = bacnet
 
     def send(tok):
         return session.put(url, json=body, timeout=timeout, headers={"Authorization": f"Bearer {tok}"})
@@ -386,12 +395,12 @@ def _alarm_text(a):
 
 
 def _clock(v):
-    """Bloom schedule times are HHMM integers (500 -> 5:00, 2200 -> 22:00)."""
-    n = _num(v)
-    if n is None:
-        return None
-    n = int(n)
-    return f"{n // 100}:{n % 100:02d}"
+    """Bloom schedule times are the hour times 100 plus HUNDREDTHS of an hour
+    (500 -> 5:00, 550 -> 5:30, 2200 -> 22:00) — how Bloom's own Schedule screen
+    reads them, not HHMM."""
+    from app import bloom_settings
+    t = bloom_settings.clock_decode(v)
+    return f"{t[0]}:{t[1]:02d}" if t else None
 
 
 def _fmt_point(t, raw):
@@ -771,6 +780,7 @@ def poll_account(app, account):
                     BloomAsset.is_active.is_(True),
                     BloomAsset.deleted_at.is_(None))
             .all())
+    watched, feeds = [], set()                        # (row, the building as read last time, as read now)
     for row in rows:
         b = by_key.get(str(row.asset_key)) or by_name.get(norm_name(row.name))
         st = db.session.get(BloomStatus, row.id) or BloomStatus(asset_id=row.id)
@@ -780,12 +790,27 @@ def poll_account(app, account):
             st.ok = False
             st.error = "building not present in /api/assets"
         else:
+            before = (st.data or {}).get("asset")
+            if before and row.asset_key not in feeds:            # one feed shared by two rows is compared once
+                feeds.add(row.asset_key)
+                watched.append((row, before, b))
             st.ok = True
             st.error = None
             st.last_ok_at = now
             st.data = {"asset": b, "alarms": alarms.get(str(asset_key(b)), [])}
         db.session.add(st)
     db.session.commit()
+    # The settings ledger: a setting that differs from the poll before was
+    # changed by someone, here or elsewhere (app/setting_audit.py).
+    try:
+        from app import setting_audit
+        for row, before, b in watched:
+            setting_audit.observe("bloom", row.id, row.building_id, row.name,
+                                  setting_audit.bloom_changes(before, b), now)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        log.warning("Bloom settings audit failed for %s: %s", account.label, e)
     # History snapshots for the per-sensor chart (throttled per asset).
     try:
         _record_samples(app, rows, by_key, by_name, now)

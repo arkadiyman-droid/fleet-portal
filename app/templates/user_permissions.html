@@ -34,6 +34,13 @@
           <span>may run the fans here</span>
         </label>
         {% endif %}
+        {% if p.settings %}
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:-2px 0 8px 22px;font-size:13px" title="Lets {{ user.name }} change the heating settings of the buildings of {{ p.name }}. Every change is recorded under their name.">
+          <input type="hidden" name="set_offered" value="{{ p.id }}">
+          <input type="checkbox" name="set_property_id" value="{{ p.id }}" class="pf" style="width:auto;margin:0"{% if p.set_tick %} checked{% endif %}{% if not p.via_client and not (p.role and p.role != 'viewer') %} data-view="pv-{{ p.id }}"{% endif %}>
+          <span>may change heating settings here</span>
+        </label>
+        {% endif %}
         {% endfor %}
       </div>
       {% endfor %}

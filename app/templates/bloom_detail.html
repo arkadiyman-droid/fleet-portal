@@ -131,7 +131,23 @@
         <div class="k">Outdoor cutoff</div><div class="v">{{ tt(d.schedule.oat_cutoff) }}</div>
         {% if d.schedule.space_min_sp is not none %}<div class="k">Min-space setpoint</div><div class="v">{{ tt(d.schedule.space_min_sp) }}</div>{% endif %}
       </div>
+      {% if can_set %}<p style="margin:12px 0 0"><a class="bd-back" href="{{ url_for('admin.skyline_settings', asset_id=a.id) }}">Change settings…</a></p>{% endif %}
     </section>
+
+    {% if changes is not none %}
+    <section class="bd-card bd-wide">
+      <h2>Settings changes <span class="card-sub" style="text-transform:none;font-weight:400">· made here or anywhere else · <a href="{{ url_for('admin.changes_page', q=a.name, days='365') }}">all of them</a></span></h2>
+      {% if not changes %}<div class="card-sub">None recorded. A setting changed from now on shows here, whoever changes it and wherever.</div>{% else %}
+      <table class="bd-points">
+        {% for ch in changes %}
+        <tr><td style="white-space:nowrap">{{ ch.when }}</td>
+          <td>{{ ch.label }}: {{ ch.old }} → <b>{{ ch.new }}</b></td>
+          <td style="text-align:left;font-family:inherit">{{ ch.who }}{% if ch.unseen %} · <span style="color:var(--bd-warn)">not yet seen at the controller</span>{% endif %}{% if ch.note %}<div class="code">{{ ch.note }}</div>{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+      {% endif %}
+    </section>
+    {% endif %}
 
     {% if d.alarms %}
     <section class="bd-card bd-wide">

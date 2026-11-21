@@ -104,6 +104,19 @@
     </div></div>
   </div>
 
+  {% if changes is not none %}
+  <div class="section" style="margin-top:14px">
+    <h2>Settings changes <span class="card-sub" style="font-weight:400">· whoever made them, wherever · checked about once an hour · <a href="{{ url_for('admin.changes_page', q=r.box.name, days='365') }}">all of them</a></span></h2>
+    {% if not changes %}<div class="card-sub">None recorded. A setting changed on this box from now on shows here.</div>{% else %}
+    <table style="font-size:13px">
+      {% for ch in changes %}
+      <tr><td style="white-space:nowrap">{{ ch.when }}</td><td>{{ ch.label }}</td><td>{{ ch.old }} → <b>{{ ch.new }}</b></td><td>{{ ch.who }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="section hx" style="margin-top:14px" id="history">
     <div class="hx-bar">
       <h2 style="margin:0 8px 0 0">History</h2>

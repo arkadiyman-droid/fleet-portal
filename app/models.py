@@ -884,6 +884,61 @@ class BloomFanWrite(db.Model):
     site = db.relationship("BloomFanSite")
 
 
+class BloomSettingWrite(db.Model):
+    """One change of a heating building's settings that the portal sent to
+    Bloom — who confirmed it, when, the reason they gave, every point changed
+    with its old and new value, and what came back. Rows are never edited:
+    this is the record of what the portal did to a real heating plant
+    (app/bloom_settings.plan, bloom.put_points, routes.skyline_settings)."""
+    __tablename__ = "bloom_setting_writes"
+    __table_args__ = (db.Index("ix_bloom_setting_writes_asset_at", "asset_id", "at"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("bloom_assets.id", ondelete="CASCADE"), nullable=False)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    by = db.Column(db.String(120))
+    note = db.Column(db.Text)
+    changes = db.Column(JSONB, nullable=False)                      # [{type, name, label, old, new}]
+    ok = db.Column(db.Boolean, nullable=False, default=False)        # Bloom accepted the request
+    landed = db.Column(db.Boolean)                                   # re-read from Bloom and found in place
+    detail = db.Column(db.String(500))                               # Bloom's reply, or the error
+
+    asset = db.relationship("BloomAsset")
+
+
+class SettingChange(db.Model):
+    """The settings ledger: ONE setting of ONE building going from one value to
+    another (app/setting_audit.py). Written when a person sends a change
+    through the portal (origin "portal": their name and reason) and when a
+    poll finds a setting different from the poll before (origin "outside":
+    changed on the vendor's site, an app, or at the controller). The same for
+    every kind of box — `source` says which. Rows are never edited, except
+    `seen_at`: when a poll first found a portal change in place."""
+    __tablename__ = "setting_changes"
+    __table_args__ = (db.Index("ix_setting_changes_building_at", "building_id", "at"),
+                      db.Index("ix_setting_changes_source_at", "source", "source_id", "at"),
+                      db.Index("ix_setting_changes_at", "at"))
+
+    id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="SET NULL"))
+    source = db.Column(db.String(12), nullable=False)               # bloom | legacy | echotherm
+    source_id = db.Column(db.Integer, nullable=False)               # that kind's own row id (BloomAsset.id, ...)
+    device = db.Column(db.String(200))                              # its name when the change happened
+    key = db.Column(db.String(60), nullable=False)                  # the vendor's own name for the setting
+    label = db.Column(db.String(120), nullable=False)
+    old = db.Column(JSONB)
+    new = db.Column(JSONB)
+    old_text = db.Column(db.String(120))                            # as a person reads it, fixed when written
+    new_text = db.Column(db.String(120))
+    origin = db.Column(db.String(10), nullable=False)               # portal | outside
+    by = db.Column(db.String(120))                                  # who, for a portal change
+    note = db.Column(db.Text)                                       # the reason they gave
+    seen_at = db.Column(db.DateTime)                                # a poll found the value in place
+
+    building = db.relationship("Building")
+
+
 class BloomFanAuto(db.Model):
     """Whether the portal may switch a property's fan groups between schedule
     slots by itself as the temperature band changes (bloom_fans.auto_switch).
@@ -935,6 +990,37 @@ class FanControl(db.Model):
     at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     __table_args__ = (db.UniqueConstraint("user_id", "property_id", name="uq_fan_controls_user_property"),)
+
+
+class SettingControl(db.Model):
+    """A person who may CHANGE the heating settings of ONE property's buildings
+    from the portal, under their own name (app/permissions.can_change_settings;
+    every change lands in the settings ledger with that name). Ticked per
+    person and per property on the person's permissions page, like FanControl
+    and separate from it. It counts only while the person can also see the
+    property, and it is removed when that view is taken away."""
+    __tablename__ = "setting_controls"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id", ondelete="CASCADE"), nullable=False)
+    by = db.Column(db.String(120))                    # who ticked it
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "property_id", name="uq_setting_controls_user_property"),)
+
+
+class SettingSnapshot(db.Model):
+    """The settings of one box as last read — what the next read is compared
+    with to find a change (app/setting_audit.track). One row per box of any
+    kind, overwritten; `data` is flat {setting key: value}. Kinds whose poller
+    already keeps the previous reading (Bloom) do not need a row here."""
+    __tablename__ = "setting_snapshots"
+
+    source = db.Column(db.String(12), primary_key=True)             # legacy | echotherm | ...
+    source_id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.DateTime, nullable=False)
+    data = db.Column(JSONB, nullable=False)
 
 
 class RcController(db.Model):

@@ -173,6 +173,7 @@
       {% if g.is_superuser %}<a href="{{ url_for('admin.sensor_health_page') }}" title="Sensors that look faulty">Sensors</a>{% endif %}
       {% if not view_only %}<a href="{{ url_for('admin.updates_page') }}">Updates</a>{% endif %}
       <a href="{{ url_for('admin.alerts_page') }}">Alerts{% if open_alerts %} <span class="navbadge">{{ open_alerts }}</span>{% endif %}</a>
+      {% if g.is_superuser %}<a href="{{ url_for('admin.changes_page') }}" title="Settings changes: which building, what, when, and who">Changes</a>{% endif %}
       {% if not view_only %}<a href="{{ url_for('admin.list_clients') }}">Clients</a>
       <a href="{{ url_for('admin.list_properties') }}">Properties</a>
       <a href="{{ url_for('admin.list_buildings') }}">Buildings</a>

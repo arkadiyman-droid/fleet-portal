@@ -62,6 +62,10 @@ class Config:
         self.LEGACY_POLLER_ENABLED = os.environ.get("LEGACY_POLLER_ENABLED", "1") not in ("0", "false", "False")
         self.LEGACY_POLL_INTERVAL_SECONDS = int(os.environ.get("LEGACY_POLL_INTERVAL_SECONDS", "300"))
         self.LEGACY_POLL_WORKERS = int(os.environ.get("LEGACY_POLL_WORKERS", "16"))   # boxes read side by side
+        # A box's SETTINGS (eight more oBIX objects) are read this often, the
+        # boxes taking turns so no poll cycle carries them all; a change shows
+        # in the settings ledger within this long (app/setting_audit.py). 0 = off.
+        self.LEGACY_SETTINGS_EVERY_MIN = int(os.environ.get("LEGACY_SETTINGS_EVERY_MIN", "60"))
         # Their alerts (app/alerts.py check_legacy): red on two polls in a row,
         # dark after LEGACY_DARK_MINUTES; when LEGACY_OUTAGE_SHARE of the boxes
         # go dark together it is the portal's own connection: one message.

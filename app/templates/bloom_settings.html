@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ a.name }} — settings — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .st-top { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin:0 0 6px; }
+  .st-top h1 { margin:0; font-size:20px; }
+  .st-back { text-decoration:none; border:1px solid var(--border); border-radius:8px; padding:5px 12px; color:inherit; font-size:13px; background:var(--panel); }
+  .st-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:900px; }
+  .st-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:0 0 14px; }
+  .st-card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  .st-row { display:grid; grid-template-columns:minmax(170px, 250px) minmax(210px, 290px) minmax(140px, 1fr); gap:4px 16px; align-items:center; padding:9px 0; border-top:1px solid var(--border); font-size:14px; }
+  .st-row:first-of-type { border-top:none; }
+  .st-row .lab { font-weight:600; margin:0; }
+  .st-row .in { display:flex; flex-wrap:nowrap; align-items:center; gap:8px; }
+  .st-row .in select { width:auto; max-width:100%; min-width:0; }
+  .st-row .tick { display:inline-flex; align-items:center; gap:8px; margin:0; font-weight:400; cursor:pointer; }
+  .st-row .tick input { width:18px; height:18px; margin:0; padding:0; }
+  .st-row .lab small { display:block; font-weight:400; color:var(--muted); font-size:12px; line-height:1.35; margin-top:2px; }
+  .st-row .now { font-size:12.5px; color:var(--muted); }
+  .st-row .now b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .st-row input[type=number], .st-row select { font:inherit; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:inherit; }
+  .st-row input, .st-row select, .st-form textarea { margin:0; }
+  .st-row input[type=number] { width:84px; font-variant-numeric:tabular-nums; }
+  .st-row .unit { color:var(--muted); font-size:12.5px; }
+  .st-row.chg { background:var(--info-bg); margin:0 -16px; padding-left:16px; padding-right:16px; }
+  .st-row.bad { background:var(--crit-bg); margin:0 -16px; padding-left:16px; padding-right:16px; }
+  .st-err { color:var(--crit); font-weight:600; font-size:12.5px; }
+  .st-na { color:var(--muted); font-size:12.5px; }
+  .st-go { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:10px 18px; font:inherit; font-weight:700; cursor:pointer; }
+  .st-go:hover { background:var(--accent-hover); }
+  .st-go.send { background:#b45309; } .st-go.send:hover { background:#92400e; }
+  .st-chg { border-collapse:collapse; font-size:14px; width:auto; background:none; margin:0 0 12px; }
+  .st-chg th { text-align:left; font-size:11px; padding:4px 22px 4px 0; background:none; }
+  .st-chg td { padding:6px 22px 6px 0; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  .st-chg td.new { font-weight:700; }
+  .st-form textarea { width:min(640px, 100%); min-height:54px; padding:8px; border:1px solid var(--border); border-radius:6px; font:inherit; background:var(--panel); color:inherit; }
+  .st-log table { border-collapse:collapse; font-size:13px; width:100%; background:none; }
+  .st-log th { text-align:left; font-size:11px; padding:4px 10px 4px 0; background:none; }
+  .st-log td { padding:5px 10px 5px 0; border-bottom:1px solid var(--border); vertical-align:top; }
+  .st-pill { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; white-space:nowrap; background:var(--unk-bg); color:var(--unk); }
+  .st-pill.ok { background:var(--ok-bg); color:var(--ok); } .st-pill.bad { background:var(--crit-bg); color:var(--crit); } .st-pill.warn { background:var(--warn-bg); color:var(--warn); }
+  .banner { font-weight:400; } .banner b { font-weight:700; }
+  @media (max-width:640px) { .st-row { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+{% macro num(v) %}{% if v is number %}{{ '%g'|format(v) }}{% endif %}{% endmacro %}
+<div class="st-top">
+  <a class="st-back" href="{{ url_for('admin.skyline_building', asset_id=a.id) }}">← {{ a.name }}</a>
+  <h1>Change settings</h1>
+  <span class="card-sub">{{ a.name }} · Bloom</span>
+</div>
+
+{% if error %}
+  <div class="banner crit">Could not read this building from Bloom just now, so nothing can be shown or sent: {{ error }}</div>
+{% else %}
+
+{% if result %}
+  {% if result.state == 'sent' and result.landed %}
+    <div class="banner ok"><b>Sent, and confirmed.</b> Bloom accepted {{ result.n }} change{{ 's' if result.n != 1 }}{% if result.detail %} ("{{ result.detail }}"){% endif %}, and reading the building back from Bloom shows the new value{{ 's' if result.n != 1 }} in place: {{ result.summary }}.</div>
+  {% elif result.state == 'sent' %}
+    <div class="banner warn"><b>Sent, not yet confirmed.</b> Bloom accepted {{ result.n }} change{{ 's' if result.n != 1 }}{% if result.detail %} ("{{ result.detail }}"){% endif %}, but reading the building back a few seconds later did not yet show {{ 'all of them' if result.n != 1 else 'it' }}. Reload this page in a minute: a value still shaded below has not landed.</div>
+  {% elif result.state == 'failed' %}
+    <div class="banner crit"><b>Not changed.</b> Bloom did not take the request, so the building's settings are as they were: {{ result.detail }}</div>
+  {% elif result.state == 'changed' %}
+    <div class="banner warn"><b>Nothing was sent.</b> The values in Bloom changed between the preview and your confirmation, so the change you approved is no longer the change that would be made. Check the fresh preview below and confirm again.</div>
+  {% elif result.state == 'note' %}
+    <div class="banner warn"><b>Nothing was sent.</b> A reason is required: Bloom records it with the change.</div>
+  {% endif %}
+{% endif %}
+
+<p class="st-note">
+  Read live from Bloom at <b>{{ read_at }}</b>. These are the settings on Bloom's own Schedule screen, with Bloom's own limits.
+  Nothing is sent until you have seen the change and confirmed it.
+  <a href="{{ bloom_url }}" target="_blank" rel="noopener">Open this building's schedule in Bloom ↗</a>
+</p>
+{% if a.view %}<div class="banner info">This building shares one Bloom feed with another building of the same plant. A setting changed here is changed for the whole plant.</div>{% endif %}
+{% if stale %}<div class="banner warn"><b>This building is not reporting.</b> Bloom last heard from it {{ age }}. A change sent now will most likely be refused, because Bloom cannot reach the controller.</div>{% endif %}
+
+{% if not p.n_offered %}
+  <div class="banner unknown">Bloom lists none of these settings for this building, so there is nothing to change here.</div>
+{% else %}
+
+{% if p.errors %}
+  <div class="banner crit"><b>Nothing can be sent yet.</b> Fix the value{{ 's' if p.rows|selectattr('error')|list|length != 1 }} marked below.</div>
+{% elif step == 'preview' and not p.n_changes %}
+  <div class="banner ok">Nothing to send: every value is already what Bloom holds.</div>
+{% elif step == 'preview' or (step == 'send' and p.n_changes) %}
+<div class="st-card st-form">
+  <h2>What will change at {{ a.name }}</h2>
+  <table class="st-chg">
+    <tr><th>Setting</th><th>In Bloom now</th><th></th><th>After</th></tr>
+    {% for r in p.rows if r.change %}
+    <tr><td>{{ r.label }}</td><td>{{ r.old_text }}</td><td>→</td><td class="new">{{ r.new_text }}</td></tr>
+    {% endfor %}
+    {% for r in p.rows if r.note %}
+    <tr><td>{{ r.label }}</td><td colspan="3" class="card-sub">{{ r.note }}</td></tr>
+    {% endfor %}
+  </table>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="step" value="send">
+    <input type="hidden" name="digest" value="{{ p.digest }}">
+    {% for k, v in hidden %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <p style="margin:0 0 6px;font-size:13px">Reason (Bloom records it with the change):</p>
+    <textarea name="note" required>{{ note or default_note }}</textarea>
+    <p style="margin:10px 0 0"><button class="st-go send" type="submit">Send {{ p.n_changes }} change{{ 's' if p.n_changes != 1 }} to {{ a.name }}</button>
+      <a href="{{ url_for('admin.skyline_settings', asset_id=a.id) }}" style="margin-left:14px">Cancel</a></p>
+    <p class="card-sub" style="margin:8px 0 0">Bloom passes the change on to the building's heating controller, where it takes effect at once. It is logged below with your name.</p>
+  </form>
+</div>
+{% endif %}
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="step" value="preview">
+  {% for grp in groups %}
+  <div class="st-card">
+    <h2>{{ grp.name }}</h2>
+    {% for r in grp.rows %}
+    <div class="st-row {{ 'bad' if r.error else ('chg' if r.change) }}">
+      <label class="lab" for="f-{{ r.key }}">{{ r.label }}{% if r.help %}<small>{{ r.help }}</small>{% endif %}</label>
+      {% if not r.found %}
+        <span class="st-na">Not available here: {{ r.why }}.</span><span></span>
+      {% else %}
+      <span class="in">
+        {% if r.kind == 'deg' %}
+          <input id="f-{{ r.key }}" type="number" name="{{ r.key }}" value="{{ num(r.field) }}" min="{{ r.lo }}" max="{{ r.hi }}" step="1" inputmode="numeric"><span class="unit">°F</span>
+        {% elif r.kind == 'count' %}
+          <input id="f-{{ r.key }}" type="number" name="{{ r.key }}" value="{{ num(r.field) }}" min="{{ r.lo }}" max="{{ r.hi }}" step="1" inputmode="numeric">
+        {% elif r.kind == 'clock' %}
+          <select id="f-{{ r.key }}" name="{{ r.key }}">{% for v, lbl in r.options %}<option value="{{ v }}"{{ ' selected' if v == r.field }}>{{ lbl }}</option>{% endfor %}</select>
+        {% elif r.kind == 'date' %}
+          <select id="f-{{ r.key }}" name="{{ r.key }}.m" aria-label="{{ r.label }}: month">{% for m in months %}<option value="{{ loop.index }}"{{ ' selected' if r.md and r.md[0] == loop.index }}>{{ m }}</option>{% endfor %}</select>
+          <input type="number" name="{{ r.key }}.d" value="{{ r.md[1] if r.md }}" min="1" max="31" step="1" aria-label="{{ r.label }}: day" style="width:64px;flex:none">
+        {% elif r.kind == 'flag' %}
+          <input type="hidden" name="{{ r.key }}.sent" value="1">
+          <label class="tick"><input id="f-{{ r.key }}" type="checkbox" name="{{ r.key }}" value="1"{{ ' checked' if r.field == 1 }}> on</label>
+        {% elif r.kind == 'choice' %}
+          <select id="f-{{ r.key }}" name="{{ r.key }}">{% for v, lbl in r.choices %}<option value="{{ v }}"{{ ' selected' if r.field == v }}>{{ lbl }}</option>{% endfor %}</select>
+        {% endif %}
+      </span>
+      <span class="now">
+        {% if r.error %}<span class="st-err">{{ r.error }}.</span> {% endif %}
+        in Bloom now: <b>{{ r.old_text }}</b>{% if r.lo is defined and r.kind == 'deg' %} · allowed {{ r.lo }}° to {{ r.hi }}°{% elif r.lo is defined %} · allowed {{ r.lo }} to {{ r.hi }}{% endif %}
+      </span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+  <p style="margin:0 0 18px"><button class="st-go" type="submit">Review changes</button>
+    <a href="{{ url_for('admin.skyline_building', asset_id=a.id) }}" style="margin-left:14px">Cancel</a>
+    <span class="card-sub" style="margin-left:14px">Shows exactly what would change. Nothing is sent by this button.</span></p>
+</form>
+{% endif %}
+{% endif %}
+
+<div class="st-card st-log">
+  <h2>Settings changes the portal has sent to this building</h2>
+  {% if not log %}<p class="card-sub" style="margin:0">None yet.</p>{% else %}
+  <table>
+    <tr><th>When</th><th>By</th><th>Result</th><th>Changes</th><th>Reason</th></tr>
+    {% for w in log %}
+    <tr><td style="white-space:nowrap">{{ w.when }}</td><td>{{ w.by or '—' }}</td>
+      <td>{% if not w.ok %}<span class="st-pill bad">not taken</span>{% elif w.landed %}<span class="st-pill ok">sent · confirmed</span>{% else %}<span class="st-pill warn">sent · unconfirmed</span>{% endif %}{% if w.detail %}<div class="card-sub">{{ w.detail }}</div>{% endif %}</td>
+      <td>{{ w.summary }}</td>
+      <td>{{ w.note }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}

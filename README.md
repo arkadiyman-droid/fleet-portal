@@ -224,7 +224,10 @@ password they were given).
 
 **What they never get** — anything that changes something (hide/delete/mute a
 box, fan schedules or automatic switching, filing, users, billing, updates),
-a box's network address, and any building not shared with them.
+a box's network address, and any building not shared with them. The two
+exceptions are ticks the administrator gives per property on the same page:
+**may run the fans here** and **may change heating settings here** (see
+*Changing settings, and the settings ledger* below).
 
 The rule is in one place per kind of thing: `permissions.can_view_building`
 (a grant of any role on the building, its property or its client), applied by
@@ -233,6 +236,64 @@ The rule is in one place per kind of thing: `permissions.can_view_building`
 a building belongs to the administrator alone, so **file a building in
 Portfolio before sharing its property**. `tests/test_viewer_access_db.py`
 signs in as a view-only person and tries every page and data feed.
+
+### Changing settings, and the settings ledger
+
+**Changing a building's settings** (`/skyline/<id>/settings`,
+`app/bloom_settings.py`, `routes.skyline_settings`). A Bloom heating building's
+page has a **Change settings…** link: day and night indoor setpoints, the
+outdoor cutoffs, when the day and night periods start, the heating season's
+dates and the secondary call-for-heat rule — the settings of Bloom's own
+Schedule screen, with Bloom's own limits. The building is read live each time;
+**Review changes** shows old → new and sends nothing; a second, confirming
+submit with a reason sends it (`bloom.put_points`), and only if Bloom still
+holds what the preview showed. It is read back and logged
+(`bloom_setting_writes`). A setting Bloom lists twice on a building is not
+offered there.
+
+**Who may** — the administrator, and any person given the **may change heating
+settings here** tick for the building's property on their permissions page
+(`models.SettingControl`, `permissions.can_change_settings`). The tick sits
+beside the fan tick, works the same way (it needs the view of the property and
+goes when the view goes), and every change is recorded under that person's
+own name.
+
+**The settings ledger** (`app/setting_audit.py`, table `setting_changes`,
+page **Changes**). One row is one setting of one building going from one value
+to another: when, from what, to what, and who.
+
+- A change sent through the portal is recorded at once with the person and
+  their reason.
+- A change made anywhere else — the vendor's own site, an app, the keypad —
+  is caught by comparing each read of a box's settings with the read before,
+  and recorded as changed *outside the portal*. When that difference is just a
+  portal change arriving at the controller, the portal's row is marked as seen
+  there instead of a second row being written.
+- Only settings are compared, never readings or values a controller computes
+  for itself, and a row is written only when one changes — so a building
+  nobody touches adds nothing.
+
+Where to read it: **Changes** in the administrator's menu (the whole fleet,
+filtered by period, by through/outside the portal, and searched by building,
+setting, person or reason) and the **Settings changes** card on a building's
+own page.
+
+What is watched today:
+
+| Kind of box | Settings compared | How often |
+|---|---|---|
+| Bloom heating buildings | the 13 Schedule settings + the two hot-water alarm limits | every poll (about a minute) |
+| 2010 oBIX boxes | every field of `emsSettings`, `emsConfig`, `DITs`, `DTs`, `hotWaterHeat`, `vacuumSteam`, `aquastat`, `cfhtable` except clock stamps | each box in its turn, about once an hour (`LEGACY_SETTINGS_EVERY_MIN`, 0 = off) |
+
+Roof-fan schedule switching keeps its own log on the Fans pages (automatic
+switching would bury everything else here).
+
+**Adding a kind of box** (an EchoTherm controller, the next vendor) takes three
+things, listed at the top of `app/setting_audit.py`: a flat snapshot of its
+settings, a `describe()` that puts a setting in words, and one `track()` call
+in its poller. The ledger, the Changes page and the building cards take every
+kind as they are. A kind the portal can also write to calls `record_portal()`
+when a person sends a change.
 
 ### Directory: managers from the violations portal
 

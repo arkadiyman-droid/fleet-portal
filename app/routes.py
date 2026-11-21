@@ -17,6 +17,7 @@ from app.models import (AlertEvent, AlertState, BloomAsset, Building, Client, Co
                         RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
+    can_change_settings,
     can_run_fans,
     can_view_building,
     creatable_building_property_query,
@@ -985,6 +986,12 @@ def _who():
     return "the administrator" if is_superuser() else (u.login if u else "?")
 
 
+def _who_named():
+    """Who is acting, for the settings ledger: a person's own name."""
+    u = current_user()
+    return "the administrator" if is_superuser() else ((u.name or u.login) if u else "?")
+
+
 def _polled_controllers():
     base = Controller.query if is_superuser() else visible_controller_query(current_user().id)
     return [c for c in base.filter_by(is_active=True).order_by(Controller.name).all()
@@ -1523,7 +1530,12 @@ def live_box(box_id):
     daily = LegacyDaily.query.filter_by(box_id=b.id).order_by(LegacyDaily.day.desc()).limit(31).all()
     events = LegacyEvent.query.filter_by(box_id=b.id).order_by(LegacyEvent.ts.desc()).limit(30).all()
     bad_sensors = sensor_health.for_box(b.id, b.name)
+    changes = None
+    if is_superuser():
+        from app import setting_audit
+        changes = _change_rows(setting_audit.recent(source="legacy", source_id=b.id, limit=10))
     return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm, now_utc=datetime.utcnow(),
+                           changes=changes,
                            dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30), daily=daily, events=events,
                            local=history.local, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90),
                            bad_sensors=bad_sensors, sensor_window_days=sensor_health.WINDOW_DAYS)
@@ -2325,8 +2337,68 @@ def skyline_building(asset_id):
                 tints["dhw_rc"] = rc
     from app import heat_overnight
     heat = heat_overnight.for_bloom([a.id]).get(a.id)
+    # Settings a person may change from here (the administrator only): the
+    # link shows when Bloom lists any of them for this building.
+    can_set, changes = False, None
+    may_set = can_change_settings(a.building)        # the administrator, or a person with the settings tick here
+    if d and may_set:
+        from app import bloom_settings
+        can_set = bloom_settings.offered((st.data or {}).get("asset") or {}) > 0
+    if may_set:
+        from app import setting_audit
+        changes = _change_rows(setting_audit.recent(source="bloom", source_id=a.id, limit=8))
     return render_template("bloom_detail.html", title=a.name, a=a, d=d, st=st, back=back,
-                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago, tints=tints, heat=heat)
+                           read_ago=read_ago, dhw=dhw, dhw_ago=dhw_ago, tints=tints, heat=heat, can_set=can_set,
+                           changes=changes)
+
+
+def _change_rows(rows):
+    """Ledger rows as the pages show them: local time, who, and where to click."""
+    from app import legacy, setting_audit
+    out = []
+    for r in rows:
+        when = r.at.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
+        url = (url_for("admin.skyline_building", asset_id=r.source_id) if r.source == "bloom" else
+               url_for("admin.live_box", box_id=r.source_id) if r.source == "legacy" else None)
+        out.append({"when": when.strftime("%b %d, %I:%M %p").replace(" 0", " "), "day": when.strftime("%a"),
+                    "device": r.device, "url": url, "label": r.label, "old": r.old_text, "new": r.new_text,
+                    "origin": r.origin, "who": setting_audit.who(r), "note": r.note,
+                    "unseen": r.origin == "portal" and r.seen_at is None,
+                    "source": setting_audit.SOURCES.get(r.source, r.source)})
+    return out
+
+
+CHANGE_DAYS = {"1": 1, "7": 7, "30": 30, "90": 90, "365": 365}
+
+
+@admin_bp.route("/changes")
+def changes_page():
+    """The settings ledger across the fleet: which setting of which building
+    changed, when, from what to what, and who did it — through the portal, or
+    outside it (app/setting_audit.py). Administrator only."""
+    if not is_superuser():
+        abort(403)
+    from app import setting_audit
+    from app.models import SettingChange
+    days = request.args.get("days", "30")
+    days = days if days in CHANGE_DAYS else "30"
+    origin = request.args.get("by", "")
+    origin = origin if origin in ("portal", "outside") else ""
+    q = (request.args.get("q") or "").strip()[:80]
+    since = datetime.utcnow() - timedelta(days=CHANGE_DAYS[days])
+    query = SettingChange.query.filter(SettingChange.at >= since)
+    if origin:
+        query = query.filter(SettingChange.origin == origin)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(db.or_(SettingChange.device.ilike(like), SettingChange.label.ilike(like),
+                                    SettingChange.by.ilike(like), SettingChange.note.ilike(like)))
+    total = query.count()
+    rows = _change_rows(query.order_by(SettingChange.at.desc(), SettingChange.id.desc()).limit(500).all())
+    n_outside = SettingChange.query.filter(SettingChange.at >= since, SettingChange.origin == "outside").count()
+    n_portal = SettingChange.query.filter(SettingChange.at >= since, SettingChange.origin == "portal").count()
+    return render_template("changes.html", title="Changes", rows=rows, total=total, days=days, by=origin, q=q,
+                           n_outside=n_outside, n_portal=n_portal, day_choices=list(CHANGE_DAYS))
 
 
 @admin_bp.route("/skyline/<int:asset_id>/series.json")
@@ -2341,6 +2413,131 @@ def skyline_series(asset_id):
     data["name"] = a.name
     data["url"] = url_for("admin.skyline_building", asset_id=a.id)
     return jsonify(data)
+
+
+def _bloom_live_asset(asset):
+    """This Bloom asset's building object fresh from Bloom — the full one, whose
+    points carry the ids a write needs — matched the way the poller matches it
+    (locid, else name). Returns (building or None, session, token)."""
+    import requests
+    from app import bloom
+    acct = asset.account
+    sess = requests.Session()
+    tok = acct.token or bloom.login(acct, sess)
+    data, tok2 = bloom.fetch_json(acct, sess, tok, "/api/assets",
+                                  current_app.config.get("BLOOM_POLL_TIMEOUT_SECONDS", 20))
+    if tok2 and tok2 != acct.token:
+        acct.token, acct.token_at = tok2, datetime.utcnow()
+        db.session.commit()
+    by_name = None
+    for b in bloom.buildings(data):
+        if str(bloom.asset_key(b)) == str(asset.asset_key):
+            return b, sess, tok2
+        if by_name is None and bloom.norm_name(b.get("name")) == bloom.norm_name(asset.name):
+            by_name = b
+    return by_name, sess, tok2
+
+
+SETTINGS_PUT_TIMEOUT = 25          # seconds Bloom gets to take a settings change (its own screen allows 35)
+SETTINGS_READBACK = (3, 6)         # seconds to wait before each read-back
+
+
+@admin_bp.route("/skyline/<int:asset_id>/settings", methods=["GET", "POST"])
+def skyline_settings(asset_id):
+    """Change a Bloom heating building's settings — setpoints, outdoor cutoff,
+    day period, heating season, secondary call for heat — the way Bloom's own
+    Schedule screen does. A WRITE to Bloom, so: the administrator only; the
+    building is read live each time; a change is shown old -> new before it
+    can be sent; it goes only if it is still the change that was shown; it is
+    read back and logged (app/bloom_settings.plan, bloom.put_points)."""
+    import time as _time
+    from app import bloom, bloom_fans, bloom_settings as bs, legacy
+    from app.models import BloomSettingWrite
+    a = BloomAsset.query.get_or_404(asset_id)
+    if not can_change_settings(a.building) or (not is_superuser() and (not a.is_active or a.deleted_at)):
+        abort(403)
+
+    def local(ts):
+        return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
+
+    step = request.form.get("step", "") if request.method == "POST" else ""
+    wanted, form_errors = bs.parse(request.form) if request.method == "POST" else ({}, {})
+    note = (request.form.get("note") or "").strip()[:500] if request.method == "POST" else ""
+    error = p = result = building = age = None
+    try:
+        building, sess, tok = _bloom_live_asset(a)
+        if building is None:
+            error = "the building is not in Bloom's feed for this login"
+        else:
+            p = bs.plan(building, wanted, form_errors)
+            age = bs.heard_age(building)
+    except Exception as e:
+        db.session.rollback()
+        error = str(e)[:300]
+
+    if step == "send" and p is not None:
+        if p["errors"] or not p["points"]:
+            pass                                     # the page says what is wrong / that nothing changes
+        elif request.form.get("digest", "") != p["digest"]:
+            result = {"state": "changed"}
+        elif not note:
+            result = {"state": "note"}
+        else:
+            row = BloomSettingWrite(asset_id=a.id, by=_who_named(), note=note, changes=p["log"], ok=False)
+            n, summary = p["n_changes"], bs.write_summary(p["log"])
+            try:
+                # no `bacnet` key: Bloom's own Schedule screen sends none (its fan editor does)
+                data, tok = bloom.put_points(a.account, sess, tok, bloom.asset_key(building), p["points"], note,
+                                             timeout=SETTINGS_PUT_TIMEOUT, bacnet=None)
+                row.ok, row.detail = bloom_fans.reply_summary(data)      # Bloom's own verdict and sentence
+            except Exception as e:
+                row.detail = str(e)[:500]
+            db.session.add(row)
+            if row.ok:                               # the ledger, at once: a poll may see the new value any second
+                from app import setting_audit
+                setting_audit.record_portal("bloom", a.id, a.building_id, a.name,
+                                            setting_audit.bloom_portal_changes(p["log"]), _who_named(), note,
+                                            landed=False)
+            db.session.commit()
+            if row.ok:
+                row.landed = False
+                try:                                 # read it back: did the values land?
+                    for wait in SETTINGS_READBACK:
+                        _time.sleep(wait)
+                        again, sess, tok = _bloom_live_asset(a)
+                        if again is None:
+                            continue
+                        building, age = again, bs.heard_age(again)
+                        if bs.landed(again, wanted):
+                            row.landed = True
+                            setting_audit.mark_seen("bloom", a.id, [c["type"] for c in p["log"]])
+                            break
+                except Exception:
+                    db.session.rollback()
+                    row.landed = None
+            db.session.add(row)
+            db.session.commit()
+            result = {"state": "sent" if row.ok else "failed", "landed": bool(row.landed), "n": n,
+                      "detail": row.detail, "summary": summary}
+            if row.landed:                           # done: the form goes back to showing what Bloom holds
+                wanted = {}
+            p, step = bs.plan(building, wanted), ""
+
+    log = []
+    for w in (BloomSettingWrite.query.filter_by(asset_id=a.id).order_by(BloomSettingWrite.at.desc()).limit(15).all()):
+        ch = w.changes or []
+        log.append({"when": local(w.at), "by": w.by, "ok": w.ok, "landed": w.landed,
+                    "detail": bloom_fans.tidy_detail(w.detail),
+                    "n": len(ch), "summary": bs.write_summary(ch), "note": w.note})
+    groups = bs.form_groups(p) if p is not None else []
+    locid = bloom.asset_key(building) if building else a.asset_key
+    return render_template(
+        "bloom_settings.html", title=f"{a.name} — settings", a=a, p=p, groups=groups, error=error, result=result,
+        step=step, note=note, log=log, read_at=local(datetime.utcnow()), months=bs.MONTHS,
+        hidden=bs.fields(wanted) if p is not None else [],
+        stale=age is not None and age > bs.STALE_MIN, age=fleet_health.ago(age * 60) if age is not None else None,
+        default_note=f"Fleet portal: settings changed by {_who_named()}",
+        bloom_url=f"{(a.account.base_url or bloom.DEFAULT_BASE).rstrip('/')}/property/{locid}/schedule")
 
 
 @admin_bp.route("/portfolio")
@@ -2781,10 +2978,35 @@ def _access_summary(user) -> str:
     words = {"viewer": "view", "operator": "operate", "admin": "admin"}
     said = "; ".join(f"{', '.join(sorted(by_role[r]))} ({words[r]})" for r in ("admin", "operator", "viewer")
                      if r in by_role) or "nothing yet"
-    from app.models import FanControl
+    from app.models import FanControl, SettingControl
     fans = sorted(p.name for p in Property.query.join(FanControl, FanControl.property_id == Property.id)
                   .filter(FanControl.user_id == user.id).all())
-    return said + (f"; runs fans at {', '.join(fans)}" if fans else "")
+    sets = sorted(p.name for p in Property.query.join(SettingControl, SettingControl.property_id == Property.id)
+                  .filter(SettingControl.user_id == user.id).all())
+    return said + (f"; runs fans at {', '.join(fans)}" if fans else "") + \
+        (f"; changes settings at {', '.join(sets)}" if sets else "")
+
+
+def _prune_setting_controls(user):
+    """The settings tick goes with seeing the property, exactly like the fan
+    tick (_prune_fan_controls). Returns the names dropped. The caller commits."""
+    from app.models import SettingControl
+    db.session.flush()
+    gone = []
+    for sc in SettingControl.query.filter_by(user_id=user.id).all():
+        prop = Property.query.get(sc.property_id)
+        if prop is None or effective_role_for_property(user.id, prop) is None:
+            gone.append(prop.name if prop else "a deleted property")
+            db.session.delete(sc)
+    return gone
+
+
+def _settable_property_ids():
+    """Properties with a building whose settings the portal can change today
+    (a Bloom heating building on it)."""
+    return {pid for (pid,) in db.session.query(Building.property_id)
+            .join(BloomAsset, BloomAsset.building_id == Building.id)
+            .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
 
 
 def _prune_fan_controls(user):
@@ -2949,15 +3171,18 @@ def user_permissions(user_id):
     buildings = Building.query.filter_by(is_active=True).order_by(Building.name).all()
     # The simple way to share: one tick per property (view-only), and where the
     # property has roof fans a second tick to let the person run them.
-    from app.models import FanControl
+    from app.models import FanControl, SettingControl
     held = {p.scope_id: p.role for p in grants if p.scope_type == "property"}
     by_client = {p.scope_id: p.role for p in grants if p.scope_type == "client"}
     with_fans = set(_fans_sites_by_property())
     fan_held = {fc.property_id for fc in FanControl.query.filter_by(user_id=user.id).all()}
+    settable = _settable_property_ids()
+    set_held = {sc.property_id for sc in SettingControl.query.filter_by(user_id=user.id).all()}
     share = []
     for c in clients:
         props = [{"id": p.id, "name": p.name, "role": held.get(p.id), "via_client": by_client.get(c.id),
                   "fans": p.name in with_fans or p.id in fan_held, "fan_tick": p.id in fan_held,
+                  "settings": p.id in settable or p.id in set_held, "set_tick": p.id in set_held,
                   "n": sum(1 for b in p.buildings if b.is_active)}
                  for p in sorted(c.properties, key=lambda x: x.name.lower()) if p.is_active]
         if props:
@@ -3009,16 +3234,41 @@ def set_user_properties(user_id):
             db.session.delete(have_f[prop.id])
             fan_off.append(prop.name)
     fan_off += [n for n in _prune_fan_controls(user) if n not in fan_off]
+
+    # the settings tick, the same way ('set_offered' / 'set_property_id')
+    from app.models import SettingControl
+    offered_s = {int(v) for v in request.form.getlist("set_offered") if v.isdigit()}
+    want_s = {int(v) for v in request.form.getlist("set_property_id") if v.isdigit()} & offered_s
+    have_s = {sc.property_id: sc for sc in SettingControl.query.filter_by(user_id=user.id).all()}
+    set_on, set_off, refused_s = [], [], []
+    for prop in Property.query.filter(Property.id.in_(offered_s or [-1])).order_by(Property.name).all():
+        if prop.id in want_s and prop.id not in have_s:
+            if effective_role_for_property(user.id, prop) is None:
+                refused_s.append(prop.name)
+                continue
+            db.session.add(SettingControl(user_id=user.id, property_id=prop.id, by=_who()))
+            set_on.append(prop.name)
+        elif prop.id not in want_s and prop.id in have_s:
+            db.session.delete(have_s[prop.id])
+            set_off.append(prop.name)
+    set_off += [n for n in _prune_setting_controls(user) if n not in set_off]
     db.session.commit()
     said = f"View access saved: {added} propert{'y' if added == 1 else 'ies'} added, {removed} removed."
     if fan_on:
         said += f" {user.name} can now run the fans at {', '.join(fan_on)}."
     if fan_off:
         said += f" Fan control taken away at {', '.join(sorted(fan_off))}."
+    if set_on:
+        said += f" {user.name} can now change the heating settings at {', '.join(set_on)}."
+    if set_off:
+        said += f" Changing settings taken away at {', '.join(sorted(set_off))}."
     flash(said, "success")
     if refused:
         flash(f"Fan control was not given at {', '.join(refused)}: {user.name} has to be able to see a property "
               f"before running its fans. Tick the property as well.", "error")
+    if refused_s:
+        flash(f"Changing settings was not given at {', '.join(refused_s)}: {user.name} has to be able to see a "
+              f"property before changing its settings. Tick the property as well.", "error")
     return redirect(url_for("admin.user_permissions", user_id=user.id))
 
 
@@ -3051,8 +3301,10 @@ def revoke_permission(user_id, permission_id):
     grant = Permission.query.filter_by(id=permission_id, user_id=user_id).first_or_404()
     db.session.delete(grant)
     gone = _prune_fan_controls(User.query.get_or_404(user_id))
+    gone_s = _prune_setting_controls(User.query.get_or_404(user_id))
     db.session.commit()
-    flash("Grant revoked." + (f" Fan control at {', '.join(sorted(gone))} went with it." if gone else ""), "success")
+    flash("Grant revoked." + (f" Fan control at {', '.join(sorted(gone))} went with it." if gone else "") +
+          (f" Changing settings at {', '.join(sorted(gone_s))} went with it." if gone_s else ""), "success")
     return redirect(url_for("admin.user_permissions", user_id=user_id))
 
 

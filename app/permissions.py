@@ -30,7 +30,7 @@ from flask import abort, g, session
 from sqlalchemy import and_, or_
 
 from app.extensions import db
-from app.models import Building, Client, Controller, FanControl, Permission, Property, User
+from app.models import Building, Client, Controller, FanControl, Permission, Property, SettingControl, User
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
 
@@ -300,6 +300,27 @@ def fan_control_names():
         if prop is not None and prop.is_active and effective_role_for_property(user.id, prop) is not None:
             names.add(prop.name)
     return names
+
+
+# ─── settings control: who may change a property's heating settings ──────
+#
+# The second thing the administrator can hand to a person, property by
+# property (models.SettingControl): changing the settings of that property's
+# buildings, under their own name.
+
+def can_change_settings(building) -> bool:
+    """May this request change the settings of this building? The
+    administrator always; a person only where they hold the settings tick on
+    the building's property AND can still see that property."""
+    if is_superuser():
+        return True
+    user = current_user()
+    prop = building.property if building is not None else None
+    if user is None or prop is None or not prop.is_active or not building.is_active:
+        return False
+    if effective_role_for_property(user.id, prop) is None:
+        return False
+    return SettingControl.query.filter_by(user_id=user.id, property_id=prop.id).first() is not None
 
 
 def can_run_fans(prop_name) -> bool:
