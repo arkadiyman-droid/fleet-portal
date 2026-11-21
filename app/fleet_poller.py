@@ -123,7 +123,7 @@ def audit_settings(app, ctrl: Controller, now=None):
     body = resp.json() or {}
     added = setting_audit.track(
         "echotherm", ctrl.id, ctrl.building_id, ctrl.name, setting_audit.echotherm_snapshot(body.get("settings")),
-        setting_audit.echotherm_describe, now or datetime.datetime.utcnow(),
+        setting_audit.echotherm_describer(body.get("labels")), now or datetime.datetime.utcnow(),
         who=setting_audit.echotherm_who(body.get("changes")))
     db.session.commit()
     return added

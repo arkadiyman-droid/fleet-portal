@@ -188,7 +188,7 @@ def test_a_person_ticked_for_a_property_changes_its_settings_under_their_own_nam
     import app.models as m
     assert pat.get(_url(world)).status_code == 403            # seeing a property is not changing it
     perms = root.get(f"/users/{world['viewer']}/permissions").get_data(as_text=True)
-    assert "may change heating settings here" in perms and perms.count('name="set_offered"') == 2    # Berry and Other hold Bloom buildings
+    assert "may change heating settings here" in perms and perms.count('name="set_offered"') == 3    # every property with a box whose settings can be changed
 
     r = root.post(f"/users/{world['viewer']}/properties",
                   data={"property_id": [world["berry"]], "set_offered": [world["berry"], world["other"]],

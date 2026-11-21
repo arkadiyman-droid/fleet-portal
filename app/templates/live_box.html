@@ -106,7 +106,7 @@
 
   {% if changes is not none %}
   <div class="section" style="margin-top:14px">
-    <h2>Settings changes <span class="card-sub" style="font-weight:400">· whoever made them, wherever · checked about once an hour · <a href="{{ url_for('admin.changes_page', q=r.box.name, days='365') }}">all of them</a></span></h2>
+    <h2>Settings changes <span class="card-sub" style="font-weight:400">· whoever made them, wherever · checked about once an hour{% if g.is_superuser %} · <a href="{{ url_for('admin.changes_page', q=r.box.name, days='365') }}">all of them</a>{% endif %}{% if can_set %} · <a href="{{ url_for('admin.live_box_settings', box_id=r.box.id) }}">Change settings…</a>{% endif %}</span></h2>
     {% if not changes %}<div class="card-sub">None recorded. A setting changed on this box from now on shows here.</div>{% else %}
     <table style="font-size:13px">
       {% for ch in changes %}

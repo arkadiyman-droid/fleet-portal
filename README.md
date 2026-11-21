@@ -251,6 +251,38 @@ holds what the preview showed. It is read back and logged
 (`bloom_setting_writes`). A setting Bloom lists twice on a building is not
 offered there.
 
+**The other kinds of box** have the same page, reached from **Change
+settings…** in the *Settings changes* card of the box's own page, and built on
+one shared form (`app/box_settings.py`, `templates/box_settings.html`): the
+box's settings are read live with the box's own ranges, **Review changes**
+shows old → new, a confirming submit with a reason sends only what was shown,
+it is read back, and the ledger records who and why.
+
+- **EchoTherm controllers** (`/fleet/<id>/settings`,
+  `routes.fleet_controller_settings`). The controller itself lists what the
+  portal may change — ten everyday comfort settings: indoor target, night
+  setback, outdoor cutoffs, day and night start, the season dates — and takes
+  a change only where its site has switched that on (the controller's own
+  dashboard: Settings → Fleet Portal → *Let the Fleet Portal change comfort
+  settings*; off by default). Elsewhere the page is read-only and says so. The
+  controller refuses anything off its list, anything outside a setting's
+  range, and a setting that moved since the person was shown it; it logs the
+  change with the person's name, and the ledger reads that back.
+- **2010 oBIX boxes** (`/live/<id>/settings`, `routes.live_box_settings`,
+  `app/legacy_settings.py`). Outdoor cutoffs, day and night hours, the heating
+  season, the two heat-off points and the **hourly indoor targets** (weekdays,
+  Saturday, Sunday × 24) — the table that is the temperature a building is
+  actually heated to on these boxes. The write follows the gateway's own
+  source and Windows client: a `PUT` of only the changed items, by name, no
+  wrapper. Because the box clamps silently and rewrites whole blocks of its
+  memory from the gateway's copy, the page checks every value against the
+  box's own range first, refuses to write to a box that started minutes ago or
+  whose settings read back as nonsense, holds the poller's lock so nothing
+  else talks to the box meanwhile, requires the box's reply to carry exactly
+  what was sent, and reads back afterwards (also reporting any *other*
+  setting that moved). The module's docstring is the reference for why each
+  guard exists.
+
 **Who may** — the administrator, and any person given the **may change heating
 settings here** tick for the building's property on their permissions page
 (`models.SettingControl`, `permissions.can_change_settings`). The tick sits

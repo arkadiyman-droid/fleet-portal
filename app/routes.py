@@ -779,12 +779,309 @@ def fleet_controller(controller_id):
     from app import heat_overnight
     heat = heat_overnight.for_echo([ctrl.id]).get(ctrl.id)
     changes = None
-    if is_superuser():
+    may_set = can_change_settings(ctrl.building)     # the administrator, or a person with the settings tick here
+    if may_set:
         from app import setting_audit
         changes = _change_rows(setting_audit.recent(source="echotherm", source_id=ctrl.id, limit=10))
     return render_template("fleet_controller.html", title=ctrl.name, card=card, status=ctrl.status, otint=otint,
                            heat=heat, raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow(),
-                           changes=changes)
+                           changes=changes, can_set=may_set)
+
+
+@admin_bp.route("/live/<int:box_id>/settings", methods=["GET", "POST"])
+def live_box_settings(box_id):
+    """Change a 2010 oBIX box's settings — outdoor cutoffs, day and night
+    hours, the heating season, the heat-off points and the hourly indoor
+    targets — exactly the way the box's own Windows client writes them, with
+    every guard that source study turned up (app/legacy_settings.py). The same
+    flow as the other kinds: read live, show old -> new, send only what was
+    shown, read back, record who and why."""
+    from sqlalchemy import text as _sql
+    from app import box_settings as bx, legacy, legacy_settings as ls, setting_audit
+    from app.models import SettingSnapshot
+    b = LegacyBox.query.get_or_404(box_id)
+    if not can_change_settings(b.building) or (not is_superuser() and (not b.is_active or b.deleted_at)):
+        abort(403)
+
+    def local(ts):
+        return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
+
+    checks = (bx.before(*ls.CHECKS_KEYS["day"], "the day has to start before the night"),
+              bx.real_date(*ls.CHECKS_KEYS["winter"]), bx.real_date(*ls.CHECKS_KEYS["summer"]))
+    step = request.form.get("step", "") if request.method == "POST" else ""
+    note = (request.form.get("note") or "").strip()[:500] if request.method == "POST" else ""
+    error = p = result = None
+    fields, notes, objects, info, sess = [], [], {}, {}, None
+    try:
+        if b.login is None:
+            error = "this box has no login on file"
+        else:
+            sess = ls.session(b.login.username, b.login.password)
+            info = ls.about(sess, b.url)
+            objects = ls.read(sess, b.url)
+            fields = ls.fields(objects)
+    except Exception as e:
+        error = f"{type(e).__name__}: {str(e)[:200]}"
+
+    writer = info.get("level") in ("Manager", "Admin")
+    young = info.get("up_min") is not None and info["up_min"] < ls.MIN_UP_MIN
+    insane = next((f"{o}: {w}" for o in ("emsSettings", "DITs") for w in [ls.sane(o, (objects.get(o) or {}).get("items") or {})] if w), None)
+    can_send = bool(fields) and writer and not young and not insane and not error
+    wanted, form_errors = bx.parse(request.form, fields) if request.method == "POST" else ({}, {})
+    if not error and fields:
+        p = bx.plan(fields, wanted, form_errors, checks)
+
+    if step == "send" and p is not None and can_send:
+        if p["errors"] or not p["changes"]:
+            pass
+        elif request.form.get("digest", "") != p["digest"]:
+            result = {"state": "changed"}
+        elif not note:
+            result = {"state": "note"}
+        else:
+            n, summary = p["n_changes"], bx.summary(p["log"])
+            by_obj = {}
+            for key, new in p["changes"].items():
+                obj, item = key.split(".", 1)
+                by_obj.setdefault(obj, ({}, {}))
+                by_obj[obj][0][item], by_obj[obj][1][item] = new, p["expect"][key]
+            # Nothing else may talk to the box during a write: hold the poller's lock.
+            conn = db.engine.connect()
+            got = conn.execute(_sql("SELECT pg_try_advisory_lock(:k)"), {"k": legacy._LOCK_KEY}).scalar()
+            try:
+                if not got:
+                    result = {"state": "failed", "detail": "Nothing was sent: the portal is in the middle of reading the "
+                                                           "boxes. Try again in a minute."}
+                else:
+                    outcomes, stored = [], []
+                    for obj, (changes, expect) in by_obj.items():
+                        try:
+                            o = ls.write(sess, b.url, obj, changes, expect)
+                        except Exception as e:
+                            o = {"ok": False, "sent": True, "confirmed": False, "drift": [],
+                                 "detail": f"{type(e).__name__}: {str(e)[:160]} — it is not known whether the box took it; "
+                                           "read the page again"}
+                        o["obj"] = obj
+                        outcomes.append(o)
+                        if o["ok"]:
+                            stored += [c for c in p["log"] if c["key"].startswith(obj + ".")]
+                        else:
+                            break                        # do not go on to the next object after a refusal
+                    if stored:
+                        done = all(o["confirmed"] for o in outcomes if o["ok"])
+                        setting_audit.record_portal("legacy", b.id, b.building_id, b.name, stored, _who_named(), note,
+                                                    landed=done)
+                        if done:                         # the hourly read must not find these again as "outside"
+                            snap = db.session.get(SettingSnapshot, ("legacy", b.id))
+                            if snap is not None:
+                                snap.data = {**(snap.data or {}), **{c["key"]: str(c["new"]) for c in stored}}
+                        db.session.commit()
+                    bad = next((o for o in outcomes if not o["ok"]), None)
+                    drift = sorted({f"{o['obj']}.{d}" for o in outcomes for d in o.get("drift") or []})
+                    if bad and not stored:
+                        result = {"state": "failed", "detail": f"The box's settings are as they were: {bad['detail']}."}
+                    else:
+                        detail = (f"One part was not taken ({bad['obj']}): {bad['detail']}. " if bad else "") + \
+                                 (f"Other settings read differently after the write than before it: {', '.join(drift[:6])}. "
+                                  "Check them on this page." if drift else "")
+                        result = {"state": "sent", "landed": bool(stored) and not bad and all(o["confirmed"] for o in outcomes),
+                                  "n": len(stored), "summary": bx.summary(stored), "detail": detail or None}
+                    try:
+                        objects = ls.read(sess, b.url)
+                        fields = ls.fields(objects)
+                    except Exception:
+                        pass
+                    wanted = {} if (result.get("landed")) else wanted
+                    p, step = bx.plan(fields, wanted, {}, checks), ""
+            finally:
+                if got:
+                    conn.execute(_sql("SELECT pg_advisory_unlock(:k)"), {"k": legacy._LOCK_KEY})
+                conn.close()
+
+    if not error:
+        if not fields:
+            notes.append({"cls": "unknown", "head": "Nothing to change here.",
+                          "text": "This box did not list any of these settings as writable."})
+        elif not writer:
+            notes.append({"cls": "warn", "head": "The portal's login at this box may only read.",
+                          "text": f"Its access level is {info.get('level') or 'unknown'}; a write needs Manager or Admin. "
+                                  "The values below are for reading only."})
+        elif young:
+            notes.append({"cls": "warn", "head": "This box started a moment ago.",
+                          "text": "Nothing is written to a box in its first few minutes, while it is still loading its own "
+                                  "settings. Reload this page shortly."})
+        elif insane:
+            notes.append({"cls": "crit", "head": "This box's settings do not read back sensibly, so nothing will be written.",
+                          "text": f"{insane}. A write now could store those values."})
+        if (objects.get("emsSettings") or {}).get("items", {}).get("ditMode", {}).get("val") == "1":
+            notes.append({"cls": "info", "head": "Outdoor adjustment is on at this box.",
+                          "text": "It nudges the hourly target by a couple of degrees when it is mild or cold outside, so "
+                                  "the building may be held slightly off the numbers below."})
+    log = _change_rows(setting_audit.recent(source="legacy", source_id=b.id, limit=12))
+    return render_template(
+        "box_settings.html", title=f"{b.name} — settings", box_name=b.name, kind_label="2010 box", kind_word="box",
+        back_url=url_for("admin.live_box", box_id=b.id), self_url=url_for("admin.live_box_settings", box_id=b.id),
+        error=error, result=result, notes=notes, p=p, groups=bx.form_groups(p) if p else [], step=step, note=note,
+        default_note=f"Fleet portal: settings changed by {_who_named()}", hidden=bx.hidden_fields(wanted),
+        log=log, read_at=local(datetime.utcnow()), can_send=can_send, months=bx.MONTHS, hour_words=bx.hour_words,
+        intro="The hourly targets are the temperature the building is heated to. What each setting does is taken from "
+              "these boxes' original firmware; change only what you mean to.",
+        send_note="Only the changed values are sent. The box stores them within a second or two; it keeps no record of "
+                  "its own, so the record is the one below.")
+
+
+# A controller's comfort settings, as groups a person reads (the controller
+# sends the list itself, with its own ranges: app/box_settings.py).
+_ECHO_GROUPS = {"dit.target_inside_temp": "Indoor", "dit.night_setback": "Indoor",
+                "dit.day_outside_sp": "Outdoor cutoff", "dit.night_outside_sp": "Outdoor cutoff",
+                "dit.day_st_hour": "Day and night", "dit.nit_st_hour": "Day and night",
+                "dit.summer_end_month": "Heating season", "dit.summer_end_day": "Heating season",
+                "dit.summer_st_month": "Heating season", "dit.summer_st_day": "Heating season"}
+_ECHO_HELP = {
+    "dit.target_inside_temp": "How warm the building is kept during the day.",
+    "dit.night_setback": "How many degrees below the day target the building is allowed at night.",
+    "dit.day_outside_sp": "During the day, heating stays off while it is warmer than this outside.",
+    "dit.night_outside_sp": "The same, during the night.",
+    "dit.day_st_hour": "From this hour the day target applies.",
+    "dit.nit_st_hour": "From this hour the night setback applies.",
+    "dit.summer_end_month": "Summer ends on this date; heating is allowed from the next day.",
+    "dit.summer_st_month": "Summer starts on this date; heating is locked out from it.",
+}
+
+
+def _echo_fields(remote):
+    """The controller's own list of what the portal may change -> form fields."""
+    out = []
+    for f in (remote or {}).get("fields") or []:
+        key = f.get("key")
+        if not key:
+            continue
+        out.append({"key": key, "label": f.get("name") or f.get("label") or key, "kind": f.get("kind") or "num",
+                    "lo": f.get("min"), "hi": f.get("max"), "value": f.get("value"),
+                    "help": _ECHO_HELP.get(key, ""), "group": _ECHO_GROUPS.get(key, "Settings"),
+                    "cell": None, "group_help": None})
+    return out
+
+
+def _echo_call(ctrl, method="get", body=None):
+    """One request to a controller's fleet settings route. Returns
+    (status code, JSON or None). Raises on a network failure."""
+    import requests
+    port = current_app.config.get("FLEET_OBIX_PORT", 8061)
+    url = f"http://{ctrl.tailscale_ip}:{port}/api/fleet/settings" + ("/set" if method == "post" else "")
+    headers = {"Authorization": f"Bearer {ctrl.fleet_api_token}"}
+    timeout = current_app.config.get("FLEET_POLL_TIMEOUT_SECONDS", 8)
+    resp = requests.post(url, json=body, timeout=timeout, headers=headers) if method == "post" else \
+        requests.get(url, timeout=timeout, headers=headers)
+    try:
+        data = resp.json()
+    except ValueError:
+        data = None
+    return resp.status_code, data
+
+
+@admin_bp.route("/fleet/<int:controller_id>/settings", methods=["GET", "POST"])
+def fleet_controller_settings(controller_id):
+    """Change an EchoTherm controller's everyday comfort settings — the ten the
+    controller itself lists, with its own ranges, and only where the site has
+    switched that on. The same guarded flow as a Bloom building's page: read
+    live, show old -> new, send only what was shown, read back, record who
+    and why in the settings ledger (app/box_settings.py)."""
+    from app import box_settings as bx, legacy, setting_audit
+    ctrl = Controller.query.get_or_404(controller_id)
+    if not can_change_settings(ctrl.building) or (not is_superuser() and not ctrl.is_active):
+        abort(403)
+
+    def local(ts):
+        return ts.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL).strftime("%b %d, %I:%M:%S %p").replace(" 0", " ")
+
+    checks = (bx.before("dit.day_st_hour", "dit.nit_st_hour", "the day has to start before the night"),
+              bx.real_date("dit.summer_end_month", "dit.summer_end_day"),
+              bx.real_date("dit.summer_st_month", "dit.summer_st_day"))
+    step = request.form.get("step", "") if request.method == "POST" else ""
+    note = (request.form.get("note") or "").strip()[:500] if request.method == "POST" else ""
+    error = p = result = remote = None
+    fields, notes = [], []
+
+    def read():
+        """(fields, remote) live from the controller, or an error string."""
+        if not (ctrl.tailscale_ip and ctrl.fleet_api_token):
+            return None, None, "this controller has no address or token on file"
+        status, body = _echo_call(ctrl)
+        if status in (401, 403, 404) or not isinstance(body, dict) or "remote" not in body:
+            return [], None, None                    # software older than the settings feature
+        if status != 200:
+            return None, None, f"the controller answered HTTP {status}"
+        return _echo_fields(body["remote"]), body["remote"], None
+
+    try:
+        fields, remote, error = read()
+    except Exception as e:
+        error = f"{type(e).__name__}: {str(e)[:200]}"
+    can_send = bool(remote and remote.get("enabled") and fields)
+    wanted, form_errors = bx.parse(request.form, fields or []) if request.method == "POST" else ({}, {})
+    if not error and fields:
+        p = bx.plan(fields, wanted, form_errors, checks)
+
+    if step == "send" and p is not None and can_send:
+        if p["errors"] or not p["changes"]:
+            pass
+        elif request.form.get("digest", "") != p["digest"]:
+            result = {"state": "changed"}
+        elif not note:
+            result = {"state": "note"}
+        else:
+            n, summary, log_rows = p["n_changes"], bx.summary(p["log"]), p["log"]
+            try:
+                status, body = _echo_call(ctrl, "post", {"by": _who_named(), "changes": p["changes"], "expect": p["expect"]})
+            except Exception as e:
+                status, body = None, {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+            body = body if isinstance(body, dict) else {}
+            if status == 200 and body.get("ok"):
+                setting_audit.record_portal("echotherm", ctrl.id, ctrl.building_id, ctrl.name, log_rows, _who_named(),
+                                            note, landed=False)
+                db.session.commit()
+                took = False
+                try:
+                    fields, remote, err2 = read()
+                    if not err2 and fields and bx.landed(fields, wanted):
+                        took = True
+                        setting_audit.mark_seen("echotherm", ctrl.id, [c["key"] for c in log_rows])
+                        db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                result = {"state": "sent", "landed": took, "n": n, "summary": summary, "detail": None}
+                wanted = {} if took else wanted
+                p, step = bx.plan(fields, wanted, {}, checks), ""
+            else:
+                why = [f"{r.get('error')} ({k})" for k, r in (body.get("results") or {}).items()
+                       if isinstance(r, dict) and r.get("status") == "rejected"]
+                detail = "; ".join(why) or body.get("error") or (f"the controller answered HTTP {status}" if status else "no answer")
+                result = {"state": "failed", "detail": f"The controller did not take the change, so its settings are as they were: {detail}"}
+                step = ""
+
+    if not error and remote is None:
+        notes.append({"cls": "unknown", "head": "Not available on this controller yet.",
+                      "text": "Its software is older than this feature. Update it from Updates and come back."})
+    elif not error and not remote.get("enabled"):
+        notes.append({"cls": "warn", "head": "This controller does not take settings from the portal.",
+                      "text": "Each site chooses. Someone at the site switches it on from the controller's own dashboard: "
+                              "Settings → Fleet Portal → Let the Fleet Portal change comfort settings. "
+                              "Until then the values below are for reading only."})
+    if remote and remote.get("weeklyScheduleEnabled"):
+        notes.append({"cls": "warn", "head": "The weekly schedule is on at this controller.",
+                      "text": "Its hourly tables set the indoor target, so the day target and the night setback below "
+                              "are not what the building follows right now. The other settings apply as usual."})
+    log = _change_rows(setting_audit.recent(source="echotherm", source_id=ctrl.id, limit=12))
+    return render_template(
+        "box_settings.html", title=f"{ctrl.name} — settings", box_name=ctrl.name, kind_label="EchoTherm controller",
+        kind_word="controller", back_url=url_for("admin.fleet_controller", controller_id=ctrl.id),
+        self_url=url_for("admin.fleet_controller_settings", controller_id=ctrl.id),
+        error=error, result=result, notes=notes, p=p, groups=bx.form_groups(p) if p else [], step=step, note=note,
+        default_note=f"Fleet portal: settings changed by {_who_named()}", hidden=bx.hidden_fields(wanted),
+        log=log, read_at=local(datetime.utcnow()), can_send=can_send, months=bx.MONTHS, hour_words=bx.hour_words,
+        intro="These are the everyday comfort settings; anything else is changed at the controller.",
+        send_note="The controller applies the change within a minute and writes it to its own activity log with your name.")
 
 
 # ─── Alerts (app/alerts.py decides, app/notify.py sends) ────────────────
@@ -1536,11 +1833,12 @@ def live_box(box_id):
     events = LegacyEvent.query.filter_by(box_id=b.id).order_by(LegacyEvent.ts.desc()).limit(30).all()
     bad_sensors = sensor_health.for_box(b.id, b.name)
     changes = None
-    if is_superuser():
+    may_set = can_change_settings(b.building)        # the administrator, or a person with the settings tick here
+    if may_set:
         from app import setting_audit
         changes = _change_rows(setting_audit.recent(source="legacy", source_id=b.id, limit=10))
     return render_template("live_box.html", title=b.name, r=row, hhmm=legacy.hhmm, now_utc=datetime.utcnow(),
-                           changes=changes,
+                           changes=changes, can_set=may_set,
                            dark_min=current_app.config.get("LEGACY_DARK_MINUTES", 30), daily=daily, events=events,
                            local=history.local, raw_days=current_app.config.get("LEGACY_RAW_DAYS", 90),
                            bad_sensors=bad_sensors, sensor_window_days=sensor_health.WINDOW_DAYS)
@@ -3009,10 +3307,17 @@ def _prune_setting_controls(user):
 
 def _settable_property_ids():
     """Properties with a building whose settings the portal can change today
-    (a Bloom heating building on it)."""
-    return {pid for (pid,) in db.session.query(Building.property_id)
-            .join(BloomAsset, BloomAsset.building_id == Building.id)
-            .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
+    (a Bloom heating building, an EchoTherm controller or a 2010 box on it)."""
+    bloom = {pid for (pid,) in db.session.query(Building.property_id)
+             .join(BloomAsset, BloomAsset.building_id == Building.id)
+             .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
+    echo = {pid for (pid,) in db.session.query(Building.property_id)
+            .join(Controller, Controller.building_id == Building.id)
+            .filter(Controller.is_active.is_(True), Building.is_active.is_(True)).distinct()}
+    boxes = {pid for (pid,) in db.session.query(Building.property_id)
+             .join(LegacyBox, LegacyBox.building_id == Building.id)
+             .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None), Building.is_active.is_(True)).distinct()}
+    return bloom | echo | boxes
 
 
 def _prune_fan_controls(user):

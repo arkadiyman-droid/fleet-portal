@@ -494,6 +494,19 @@ def echotherm_describe(key, value, snapshot=None) -> tuple:
     return label[:120], text[:120]
 
 
+def echotherm_describer(labels: dict):
+    """describe() for track(), using the labels a controller sent with its
+    settings ({key: label}): a setting that has one reads as the controller's
+    own screens name it; anything else falls back to the spelled-out key."""
+    labels = labels if isinstance(labels, dict) else {}
+
+    def describe(key, value, snapshot=None):
+        label, text = echotherm_describe(key, value, snapshot)
+        named = labels.get(key)
+        return (str(named)[:120] if named else label), text
+    return describe
+
+
 def echotherm_who(changes: list):
     """who(key) for track(), from the controller's own list of recent saves
     ([{ts, by, changes: [{key, ...}]}], oldest first): the latest save that

@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}{{ box_name }} — settings — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .st-top { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin:0 0 6px; }
+  .st-top h1 { margin:0; font-size:20px; }
+  .st-back { text-decoration:none; border:1px solid var(--border); border-radius:8px; padding:5px 12px; color:inherit; font-size:13px; background:var(--panel); }
+  .st-note { font-size:13px; color:var(--muted); margin:0 0 14px; max-width:900px; }
+  .st-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin:0 0 14px; }
+  .st-card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 10px; }
+  .st-card h2 small { text-transform:none; letter-spacing:0; font-weight:400; }
+  .st-row { display:grid; grid-template-columns:minmax(170px, 260px) minmax(210px, 290px) minmax(140px, 1fr); gap:4px 16px; align-items:center; padding:9px 0; border-top:1px solid var(--border); font-size:14px; }
+  .st-row:first-of-type { border-top:none; }
+  .st-row .lab { font-weight:600; margin:0; }
+  .st-row .lab small { display:block; font-weight:400; color:var(--muted); font-size:12px; line-height:1.35; margin-top:2px; }
+  .st-row .in { display:flex; flex-wrap:nowrap; align-items:center; gap:8px; }
+  .st-row .now { font-size:12.5px; color:var(--muted); }
+  .st-row .now b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .st-card input[type=number], .st-card select, .st-form textarea { font:inherit; padding:6px 8px; border:1px solid var(--border); border-radius:6px; background:var(--panel); color:inherit; margin:0; }
+  .st-row input[type=number] { width:84px; font-variant-numeric:tabular-nums; }
+  .st-row .in select { width:auto; max-width:100%; }
+  .st-row .unit { color:var(--muted); font-size:12.5px; }
+  .st-row.chg, .st-cell.chg { background:var(--info-bg); }
+  .st-row.bad, .st-cell.bad { background:var(--crit-bg); }
+  .st-row.chg, .st-row.bad { margin:0 -16px; padding-left:16px; padding-right:16px; }
+  .st-err { color:var(--crit); font-weight:600; font-size:12.5px; }
+  /* a table of hourly values: one small cell per hour */
+  .st-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(64px, 1fr)); gap:6px; }
+  .st-cell { border:1px solid var(--border); border-radius:8px; padding:5px 6px 6px; text-align:center; }
+  .st-cell label { display:block; font-size:10.5px; color:var(--muted); font-weight:400; margin:0 0 3px; }
+  .st-cell input[type=number] { width:100%; padding:4px 2px; text-align:center; font-variant-numeric:tabular-nums; }
+  .st-cell .st-err { display:block; font-size:10.5px; margin-top:3px; }
+  .st-go { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:10px 18px; font:inherit; font-weight:700; cursor:pointer; }
+  .st-go:hover { background:var(--accent-hover); }
+  .st-go.send { background:#b45309; } .st-go.send:hover { background:#92400e; }
+  .st-chg { border-collapse:collapse; font-size:14px; width:auto; background:none; margin:0 0 12px; }
+  .st-chg th { text-align:left; font-size:11px; padding:4px 22px 4px 0; background:none; }
+  .st-chg td { padding:6px 22px 6px 0; border-bottom:1px solid var(--border); font-variant-numeric:tabular-nums; }
+  .st-chg td.new { font-weight:700; }
+  .st-form textarea { width:min(640px, 100%); min-height:54px; }
+  .st-log table { border-collapse:collapse; font-size:13px; width:100%; background:none; }
+  .st-log td { padding:5px 10px 5px 0; border-bottom:1px solid var(--border); vertical-align:top; }
+  .banner { font-weight:400; } .banner b { font-weight:700; }
+  @media (max-width:640px) { .st-row { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+{% block content %}
+{% macro num(v) %}{% if v is number %}{{ '%g'|format(v) }}{% endif %}{% endmacro %}
+<div class="st-top">
+  <a class="st-back" href="{{ back_url }}">← {{ box_name }}</a>
+  <h1>Change settings</h1>
+  <span class="card-sub">{{ box_name }} · {{ kind_label }}</span>
+</div>
+
+{% if error %}
+  <div class="banner crit">Could not read this {{ kind_word }}'s settings just now, so nothing can be shown or sent: {{ error }}</div>
+{% else %}
+
+{% if result %}
+  {% if result.state == 'sent' and result.landed %}
+    <div class="banner ok"><b>Changed, and confirmed.</b> The {{ kind_word }} took {{ result.n }} change{{ 's' if result.n != 1 }}, and reading it back shows the new value{{ 's' if result.n != 1 }} in place: {{ result.summary }}.</div>
+  {% elif result.state == 'sent' %}
+    <div class="banner warn"><b>Sent, not yet confirmed.</b> The {{ kind_word }} accepted {{ result.n }} change{{ 's' if result.n != 1 }}, but reading it back did not show {{ 'all of them' if result.n != 1 else 'it' }} in place. Reload this page in a minute: a value still shaded below has not taken.{% if result.detail %} {{ result.detail }}{% endif %}</div>
+  {% elif result.state == 'failed' %}
+    <div class="banner crit"><b>Not changed.</b> {{ result.detail }}</div>
+  {% elif result.state == 'changed' %}
+    <div class="banner warn"><b>Nothing was sent.</b> The settings on the {{ kind_word }} changed between the preview and your confirmation, so the change you approved is no longer the change that would be made. Check the fresh preview below and confirm again.</div>
+  {% elif result.state == 'note' %}
+    <div class="banner warn"><b>Nothing was sent.</b> A reason is required: it is kept with the change.</div>
+  {% endif %}
+{% endif %}
+
+<p class="st-note">Read live from the {{ kind_word }} at <b>{{ read_at }}</b>, with its own limits. Nothing is sent until you have seen the change and confirmed it. {{ intro }}</p>
+{% for n in notes %}<div class="banner {{ n.cls }}">{% if n.head %}<b>{{ n.head }}</b> {% endif %}{{ n.text }}</div>{% endfor %}
+
+{% if p %}
+{% if p.errors %}
+  <div class="banner crit"><b>Nothing can be sent yet.</b> Fix the value{{ 's' if p.rows|selectattr('error')|list|length != 1 }} marked below.</div>
+{% elif step == 'preview' and not p.n_changes %}
+  <div class="banner ok">Nothing to send: every value is already what the {{ kind_word }} holds.</div>
+{% elif can_send and (step == 'preview' or (step == 'send' and p.n_changes)) %}
+<div class="st-card st-form">
+  <h2>What will change at {{ box_name }}</h2>
+  <table class="st-chg">
+    <tr><th>Setting</th><th>Now</th><th></th><th>After</th></tr>
+    {% for r in p.rows if r.change %}
+    <tr><td>{{ r.label }}</td><td>{{ r.old_text }}</td><td>→</td><td class="new">{{ r.new_text }}</td></tr>
+    {% endfor %}
+  </table>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="step" value="send">
+    <input type="hidden" name="digest" value="{{ p.digest }}">
+    {% for k, v in hidden %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+    <p style="margin:0 0 6px;font-size:13px">Reason (kept with the change):</p>
+    <textarea name="note" required>{{ note or default_note }}</textarea>
+    <p style="margin:10px 0 0"><button class="st-go send" type="submit">Send {{ p.n_changes }} change{{ 's' if p.n_changes != 1 }} to {{ box_name }}</button>
+      <a href="{{ self_url }}" style="margin-left:14px">Cancel</a></p>
+    <p class="card-sub" style="margin:8px 0 0">{{ send_note }}</p>
+  </form>
+</div>
+{% endif %}
+
+<form method="post">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="step" value="preview">
+  {% for grp in groups %}
+  <div class="st-card">
+    <h2>{{ grp.name }}{% if grp.rows[0].group_help %} <small>· {{ grp.rows[0].group_help }}</small>{% endif %}</h2>
+    {% if grp.rows[0].cell %}
+    <div class="st-grid">
+      {% for r in grp.rows %}
+      <div class="st-cell {{ 'bad' if r.error else ('chg' if r.change) }}" title="{{ r.label }}: now {{ r.old_text }}{% if r.lo is not none %}, allowed {{ r.lo }} to {{ r.hi }}{% endif %}">
+        <label for="f-{{ r.key }}">{{ r.cell }}</label>
+        <input id="f-{{ r.key }}" type="number" name="{{ r.key }}" value="{{ num(r.field) }}"{% if r.lo is not none %} min="{{ r.lo }}" max="{{ r.hi }}"{% endif %} step="1" inputmode="numeric"{{ ' disabled' if not can_send }}>
+        {% if r.error %}<span class="st-err">{{ r.error }}</span>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    {% for r in grp.rows %}
+    <div class="st-row {{ 'bad' if r.error else ('chg' if r.change) }}">
+      <label class="lab" for="f-{{ r.key }}">{{ r.label }}{% if r.help %}<small>{{ r.help }}</small>{% endif %}</label>
+      <span class="in">
+        {% if r.kind == 'hour' %}
+          <select id="f-{{ r.key }}" name="{{ r.key }}"{{ ' disabled' if not can_send }}>{% for h in range(24) %}<option value="{{ h }}"{{ ' selected' if r.field == h }}>{{ hour_words(h) }}</option>{% endfor %}</select>
+        {% elif r.kind == 'month' %}
+          <select id="f-{{ r.key }}" name="{{ r.key }}"{{ ' disabled' if not can_send }}>{% for m in months %}<option value="{{ loop.index }}"{{ ' selected' if r.field == loop.index }}>{{ m }}</option>{% endfor %}</select>
+        {% else %}
+          <input id="f-{{ r.key }}" type="number" name="{{ r.key }}" value="{{ num(r.field) }}"{% if r.lo is not none %} min="{{ r.lo }}" max="{{ r.hi }}"{% endif %} step="1" inputmode="numeric"{{ ' disabled' if not can_send }}>{% if r.kind == 'deg' %}<span class="unit">°F</span>{% endif %}
+        {% endif %}
+      </span>
+      <span class="now">
+        {% if r.error %}<span class="st-err">{{ r.error }}.</span> {% endif %}
+        now: <b>{{ r.old_text }}</b>{% if r.lo is not none and r.kind in ('deg', 'num', 'day') %} · allowed {{ r.lo }}{{ '°' if r.kind == 'deg' }} to {{ r.hi }}{{ '°' if r.kind == 'deg' }}{% endif %}
+      </span>
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% if can_send %}
+  <p style="margin:0 0 18px"><button class="st-go" type="submit">Review changes</button>
+    <a href="{{ back_url }}" style="margin-left:14px">Cancel</a>
+    <span class="card-sub" style="margin-left:14px">Shows exactly what would change. Nothing is sent by this button.</span></p>
+  {% endif %}
+</form>
+{% endif %}
+{% endif %}
+
+<div class="st-card st-log">
+  <h2>Settings changes at {{ box_name }} <small>· made here or anywhere else</small></h2>
+  {% if not log %}<p class="card-sub" style="margin:0">None recorded yet.</p>{% else %}
+  <table>
+    {% for ch in log %}
+    <tr><td style="white-space:nowrap">{{ ch.when }}</td><td>{{ ch.label }}: {{ ch.old }} → <b>{{ ch.new }}</b></td>
+      <td>{{ ch.who }}{% if ch.unseen %} · <span style="color:var(--warn)">not yet seen at the {{ kind_word }}</span>{% endif %}{% if ch.note %}<div class="card-sub">{{ ch.note }}</div>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+{% endblock %}
