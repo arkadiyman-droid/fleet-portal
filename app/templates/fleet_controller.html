@@ -121,6 +121,19 @@
     </div></div>
   </div>
 
+  {% if changes is not none %}
+  <div class="section" style="margin-top:14px">
+    <h2>Settings changes <span class="card-sub" style="font-weight:400">· whoever made them, wherever · checked every few minutes · <a href="{{ url_for('admin.changes_page', q=c.name, days='365') }}">all of them</a></span></h2>
+    {% if not changes %}<div class="card-sub">None recorded. A setting changed on this controller from now on shows here, with who changed it where the controller knows.</div>{% else %}
+    <table style="font-size:13px">
+      {% for ch in changes %}
+      <tr><td style="white-space:nowrap">{{ ch.when }}</td><td>{{ ch.label }}</td><td>{{ ch.old }} → <b>{{ ch.new }}</b></td><td>{{ ch.who }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if raw.recentAlarms %}
   <div class="section" style="margin-top:14px"><h2>Recent alarms</h2>
     <table>

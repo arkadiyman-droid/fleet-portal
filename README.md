@@ -284,11 +284,18 @@ What is watched today:
 |---|---|---|
 | Bloom heating buildings | the 13 Schedule settings + the two hot-water alarm limits | every poll (about a minute) |
 | 2010 oBIX boxes | every field of `emsSettings`, `emsConfig`, `DITs`, `DTs`, `hotWaterHeat`, `vacuumSteam`, `aquastat`, `cfhtable` except clock stamps | each box in its turn, about once an hour (`LEGACY_SETTINGS_EVERY_MIN`, 0 = off) |
+| EchoTherm controllers | every setting the controller holds, read with the fleet token from its `GET /api/fleet/settings` (credentials arrive only as "set" / "not set") | every 5 minutes (`FLEET_SETTINGS_EVERY_MIN`, 0 = off) |
+
+An EchoTherm controller also says **who** made a change at the controller —
+the dashboard login, an API key by name, an oBIX account, or the controller's
+own screen — so those rows carry a name even though they did not go through
+the portal. A controller running software older than that route is simply not
+compared until it is updated.
 
 Roof-fan schedule switching keeps its own log on the Fans pages (automatic
 switching would bury everything else here).
 
-**Adding a kind of box** (an EchoTherm controller, the next vendor) takes three
+**Adding a kind of box** (the next vendor) takes three
 things, listed at the top of `app/setting_audit.py`: a flat snapshot of its
 settings, a `describe()` that puts a setting in words, and one `track()` call
 in its poller. The ledger, the Changes page and the building cards take every

@@ -19,6 +19,7 @@ the poller thread down.
 """
 
 import datetime
+import itertools
 import logging
 import threading
 import time
@@ -33,6 +34,7 @@ from app.models import Controller, ControllerStatus
 log = logging.getLogger(__name__)
 
 _ADVISORY_LOCK_KEY = 875_219_001  # arbitrary fixed id, scoped to this feature
+_cycles = itertools.count()        # poll cycles run by this process (whose turn a settings read is)
 
 
 class FleetPoller:
@@ -68,11 +70,23 @@ class FleetPoller:
                     Controller.tailscale_ip.isnot(None),
                     Controller.fleet_api_token.isnot(None),
                 ).all()
+                cycle = next(_cycles)
                 for ctrl in controllers:
                     try:
                         poll_controller(app, ctrl)
                     except Exception as e:
                         log.warning("Poll failed for controller %s (%s): %s", ctrl.id, ctrl.name, e)
+                    # The settings ledger: every few minutes, a controller that
+                    # just answered has its settings compared with last time.
+                    try:
+                        from app import setting_audit
+                        if (ctrl.status is not None and ctrl.status.ok and setting_audit.turn(
+                                ctrl.id, cycle, app.config.get("FLEET_SETTINGS_EVERY_MIN", 5),
+                                app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60))):
+                            audit_settings(app, ctrl)
+                    except Exception as e:
+                        db.session.rollback()
+                        log.warning("Settings audit failed for controller %s (%s): %s", ctrl.id, ctrl.name, e)
                 # Alerts right after the cycle, still under the lock, so one
                 # process decides and nothing is sent twice (app/alerts.py).
                 try:
@@ -91,6 +105,30 @@ class FleetPoller:
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ADVISORY_LOCK_KEY})
                 conn.close()
+
+
+def audit_settings(app, ctrl: Controller, now=None):
+    """Read one controller's settings (GET /api/fleet/settings, the same token
+    as the status poll; read-only) and record what changed since the last
+    read in the settings ledger (app/setting_audit.py). A controller whose
+    software is older than that route answers 401/403/404: nothing to
+    compare, and no error. Returns the number of new ledger rows, or None
+    when the controller has no such route. App context assumed."""
+    from app import setting_audit
+    port = app.config.get("FLEET_OBIX_PORT", 8061)
+    timeout = app.config.get("FLEET_POLL_TIMEOUT_SECONDS", 8)
+    resp = requests.get(f"http://{ctrl.tailscale_ip}:{port}/api/fleet/settings", timeout=timeout,
+                        headers={"Authorization": f"Bearer {ctrl.fleet_api_token}"})
+    if resp.status_code in (401, 403, 404):
+        return None
+    resp.raise_for_status()
+    body = resp.json() or {}
+    added = setting_audit.track(
+        "echotherm", ctrl.id, ctrl.building_id, ctrl.name, setting_audit.echotherm_snapshot(body.get("settings")),
+        setting_audit.echotherm_describe, now or datetime.datetime.utcnow(),
+        who=setting_audit.echotherm_who(body.get("changes")))
+    db.session.commit()
+    return added
 
 
 def poll_controller(app, ctrl: Controller) -> ControllerStatus:

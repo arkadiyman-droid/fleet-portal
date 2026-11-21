@@ -778,8 +778,13 @@ def fleet_controller(controller_id):
     otint = _tint({"out": _h.get("outdoor")}, None, None, None, []).get("out")
     from app import heat_overnight
     heat = heat_overnight.for_echo([ctrl.id]).get(ctrl.id)
+    changes = None
+    if is_superuser():
+        from app import setting_audit
+        changes = _change_rows(setting_audit.recent(source="echotherm", source_id=ctrl.id, limit=10))
     return render_template("fleet_controller.html", title=ctrl.name, card=card, status=ctrl.status, otint=otint,
-                           heat=heat, raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow())
+                           heat=heat, raw=(ctrl.status.raw_json if ctrl.status else None) or {}, now_utc=datetime.utcnow(),
+                           changes=changes)
 
 
 # ─── Alerts (app/alerts.py decides, app/notify.py sends) ────────────────
@@ -2359,7 +2364,8 @@ def _change_rows(rows):
     for r in rows:
         when = r.at.replace(tzinfo=timezone.utc).astimezone(legacy.LOCAL)
         url = (url_for("admin.skyline_building", asset_id=r.source_id) if r.source == "bloom" else
-               url_for("admin.live_box", box_id=r.source_id) if r.source == "legacy" else None)
+               url_for("admin.live_box", box_id=r.source_id) if r.source == "legacy" else
+               url_for("admin.fleet_controller", controller_id=r.source_id) if r.source == "echotherm" else None)
         out.append({"when": when.strftime("%b %d, %I:%M %p").replace(" 0", " "), "day": when.strftime("%a"),
                     "device": r.device, "url": url, "label": r.label, "old": r.old_text, "new": r.new_text,
                     "origin": r.origin, "who": setting_audit.who(r), "note": r.note,

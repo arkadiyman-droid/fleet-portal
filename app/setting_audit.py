@@ -27,6 +27,12 @@ Kinds of box:
             the status poll does not read, so each box has them read in its
             turn about once an hour (turn(), legacy.SETTINGS_PATHS) and
             compared with its stored snapshot (track())
+  echotherm EchoTherm controllers — GET /api/fleet/settings with the fleet
+            token returns every setting as it stands (credentials left out)
+            and the controller's own note of who saved what lately; read
+            every few minutes (fleet_poller.audit_settings) and compared
+            with the stored snapshot, the controller's "who" filling in the
+            name a change made at the controller would otherwise lack
 
 ADDING A KIND OF BOX (an EchoTherm controller, the next vendor): give it
   1. a snapshot — a flat {setting key: value} dict of what it holds now,
@@ -193,7 +199,7 @@ def observe(source, source_id, building_id, device, changes, now=None) -> int:
             at=now, building_id=building_id, source=source, source_id=source_id, device=device,
             key=c["key"], label=c["label"], old=c["old"], new=c["new"],
             old_text=c["old_text"], new_text=c["new_text"],
-            origin="outside", by=None, note=None, seen_at=now))
+            origin="outside", by=(c.get("by") or None), note=None, seen_at=now))
         added += 1
     return added
 
@@ -208,6 +214,8 @@ def who(row) -> str:
     """'Pat Viewer' / 'outside the portal (in Bloom, or at the controller)'."""
     if row.origin == "portal":
         return row.by or "someone, through the portal"
+    if row.by:                                         # the box itself said who
+        return f"{row.by}, at the controller"
     return OUTSIDE.get(row.source, "outside the portal")
 
 
@@ -243,12 +251,13 @@ def turn(box_id, cycle, every_min, interval_s) -> bool:
     return (cycle + box_id) % cycles == 0
 
 
-def track(source, source_id, building_id, device, snapshot, describe, now=None) -> int:
+def track(source, source_id, building_id, device, snapshot, describe, now=None, who=None) -> int:
     """One box's settings as just read: compare them with the snapshot stored
     for it, record what changed (observe), and store the new snapshot. The
     first sight of a box is only a baseline. A setting missing from this read
     keeps its stored value, so a partial read never looks like a change — now
-    or next time. Returns how many new ledger rows. The caller commits."""
+    or next time. `who(key)` may name who made a change AT the box, where the
+    box itself knows. Returns how many new ledger rows. The caller commits."""
     from app.extensions import db
     from app.models import SettingSnapshot
     now = now or _dt.datetime.utcnow()
@@ -263,7 +272,8 @@ def track(source, source_id, building_id, device, snapshot, describe, now=None) 
     for k, o, n in diff(before, snapshot):
         label, old_text = describe(k, o, before)
         changes.append({"key": k, "label": label, "old": o, "new": n,
-                        "old_text": old_text, "new_text": describe(k, n, snapshot)[1]})
+                        "old_text": old_text, "new_text": describe(k, n, snapshot)[1],
+                        "by": who(k) if who else None})
     added = observe(source, source_id, building_id, device, changes, now)
     row.data, row.at = {**before, **snapshot}, now
     return added
@@ -374,3 +384,76 @@ def legacy_describe(key, value, snapshot=None) -> tuple:
     else:
         text = f"{n:g}"
     return label[:120], text[:120]
+
+
+# ── EchoTherm controllers ────────────────────────────────────────────────────
+
+def echotherm_snapshot(settings: dict) -> dict:
+    """The flat {key: value} the ledger compares, from a controller's
+    GET /api/fleet/settings 'settings' (already flat, but a list is still a
+    list there). A list is spread out so that ONE changed hour of a schedule
+    is one row, not "the list changed": 'weekly_schedule.weekday[5]', and for
+    a list of records 'sensor_registry[slot 3].name'. Its length is a setting
+    of its own, so an entry added or removed shows too."""
+    out = {}
+    for key, value in (settings or {}).items():
+        if not isinstance(value, list):
+            if not isinstance(value, dict):
+                out[key] = value
+            continue
+        out[f"{key}.count"] = len(value)
+        for i, item in enumerate(value):
+            if isinstance(item, dict):
+                tag = f"slot {item['slot']}" if "slot" in item else str(item.get("name") or item.get("user") or i)
+                for f, v in item.items():
+                    if not isinstance(v, (dict, list)):
+                        out[f"{key}[{tag}].{f}"] = v
+            elif not isinstance(item, list):
+                out[f"{key}[{i}]"] = item
+    return out
+
+
+def echotherm_describe(key, value, snapshot=None) -> tuple:
+    """(label, value in words) for one controller setting: the controller's
+    own name for it, spelled out ('Weekly schedule › weekday › 6th')."""
+    parts = []
+    for part in key.split("."):
+        name, _, idx = part.partition("[")
+        words = name.replace("_", " ").strip()
+        if idx:
+            idx = idx.rstrip("]")
+            words += f" › {int(idx) + 1}" if idx.isdigit() else f" › {idx}"
+        parts.append(words)
+    if parts and parts[-1] == "count":
+        parts[-1] = "number of entries"
+    label = " › ".join(p for p in parts if p)
+    label = label[:1].upper() + label[1:]
+    if value is None:
+        text = "—"
+    elif isinstance(value, bool):
+        text = "on" if value else "off"
+    elif isinstance(value, (int, float)):
+        text = f"{value:g}"
+    else:
+        text = str(value) or "(empty)"
+    return label[:120], text[:120]
+
+
+def echotherm_who(changes: list):
+    """who(key) for track(), from the controller's own list of recent saves
+    ([{ts, by, changes: [{key, ...}]}], oldest first): the latest save that
+    touched the setting names who made it. The controller lists a whole list
+    under one key; the ledger's 'key[5]' / 'key[slot 3].name' / 'key.count'
+    all belong to it."""
+    latest = {}
+    for save in changes or []:
+        for c in (save.get("changes") or []) if isinstance(save, dict) else []:
+            if isinstance(c, dict) and c.get("key"):
+                latest[c["key"]] = save.get("by")
+
+    def who(key):
+        base = key.split("[", 1)[0]
+        if base.endswith(".count") and base[:-6] in latest:
+            base = base[:-6]
+        return latest.get(key) or latest.get(base)
+    return who

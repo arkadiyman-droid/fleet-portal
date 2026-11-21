@@ -21,6 +21,9 @@ class Config:
         self.FLEET_TOKEN_ENCRYPTION_KEY = _require_env("FLEET_TOKEN_ENCRYPTION_KEY")
         self.FLEET_POLL_INTERVAL_SECONDS = int(os.environ.get("FLEET_POLL_INTERVAL_SECONDS", "60"))
         self.FLEET_POLL_TIMEOUT_SECONDS = int(os.environ.get("FLEET_POLL_TIMEOUT_SECONDS", "8"))
+        # A controller's SETTINGS are read this often for the settings ledger
+        # (app/setting_audit.py, fleet_poller.audit_settings). 0 = off.
+        self.FLEET_SETTINGS_EVERY_MIN = int(os.environ.get("FLEET_SETTINGS_EVERY_MIN", "5"))
         self.FLEET_OBIX_PORT = int(os.environ.get("FLEET_OBIX_PORT", "8061"))
         self.FLEET_POLLER_ENABLED = os.environ.get("FLEET_POLLER_ENABLED", "1") not in ("0", "false", "False")
 
