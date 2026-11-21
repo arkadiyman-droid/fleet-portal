@@ -23,6 +23,13 @@ def test_on_the_server_the_file_wins(tmp_path, monkeypatch):
     f.write_text("FLEET_ENV_FILE_WINS=1" + chr(10) + "PROBE_SETTING=from-file" + chr(10))
     monkeypatch.setenv("PROBE_SETTING", "stale-from-the-last-restart")
     monkeypatch.delenv("FLEET_ENV_FILE_WINS", raising=False)
-    load_env(str(f))
-    assert os.environ["PROBE_SETTING"] == "from-file"
-    monkeypatch.delenv("FLEET_ENV_FILE_WINS", raising=False)
+    try:
+        load_env(str(f))
+        assert os.environ["PROBE_SETTING"] == "from-file"
+    finally:
+        # load_env() put the flag into the real environment. Take it out by
+        # hand: monkeypatch.delenv() here would REMEMBER the "1" and put it back
+        # when the test ends, and every later test's create_app() would then let
+        # the developer's own .env (its DATABASE_URL included) win over the
+        # test database.
+        os.environ.pop("FLEET_ENV_FILE_WINS", None)

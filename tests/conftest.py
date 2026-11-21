@@ -75,6 +75,10 @@ def app():
         yield application
         db.session.remove()
         db.drop_all()
+        # Every test builds its own app, so its own engine: give the connections
+        # back, or the run dies at Postgres's max_connections (100) once there
+        # are more database tests than that.
+        db.engine.dispose()
 
 
 @pytest.fixture
