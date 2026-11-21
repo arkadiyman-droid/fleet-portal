@@ -25,7 +25,7 @@ Kinds of box:
             is stored
   legacy    the 2010 oBIX boxes — their settings live in eight oBIX objects
             the status poll does not read, so each box has them read in its
-            turn about once an hour (turn(), legacy.SETTINGS_PATHS) and
+            turn about once an hour (due(), legacy.SETTINGS_PATHS) and
             compared with its stored snapshot (track())
   echotherm EchoTherm controllers — GET /api/fleet/settings with the fleet
             token returns every setting as it stands (credentials left out)
@@ -240,15 +240,48 @@ def recent(building_ids=None, source=None, source_id=None, origin=None, by=None,
 
 # ── any kind of box: compare with the stored snapshot ────────────────────────
 
-def turn(box_id, cycle, every_min, interval_s) -> bool:
-    """Is it this box's turn to have its settings read in this poll cycle?
-    Boxes take turns so that no cycle carries them all: each box comes up once
-    every `every_min` minutes' worth of cycles. `cycle` counts the poller's
-    cycles. every_min 0 switches the reading off."""
+def due(source, ids, every_min, now=None, limit=None) -> set:
+    """Which of these boxes should have their settings read now: the ones
+    never read, or last read `every_min` minutes ago or more — the longest
+    waiting first, at most `limit` of them, so that no poll cycle carries
+    every box. Decided from the stored snapshots' times, which every worker
+    process and every restart share. every_min 0 switches the reading off.
+    App context assumed."""
     if not every_min or every_min <= 0:
-        return False
-    cycles = max(1, int(every_min * 60 // max(1, interval_s)))
-    return (cycle + box_id) % cycles == 0
+        return set()
+    from app.extensions import db
+    from app.models import SettingSnapshot
+    now = now or _dt.datetime.utcnow()
+    read_at = dict(db.session.query(SettingSnapshot.source_id, SettingSnapshot.at)
+                   .filter(SettingSnapshot.source == source).all())
+    cut = now - _dt.timedelta(minutes=every_min)
+    waiting = sorted((i for i in ids if read_at.get(i) is None or read_at[i] <= cut),
+                     key=lambda i: (read_at.get(i) or _dt.datetime.min, i))
+    return set(waiting[:limit] if limit else waiting)
+
+
+def share(n_boxes, every_min, interval_s) -> int:
+    """How many boxes' settings one poll cycle should read so that all of
+    them come round once every `every_min` minutes (a little over, so the
+    queue never grows)."""
+    if not every_min or every_min <= 0 or n_boxes <= 0:
+        return 0
+    return int(n_boxes * max(1, interval_s) // (every_min * 60)) + 2
+
+
+def touch(source, source_id, now=None) -> None:
+    """A settings read that was due and brought nothing back: note the
+    attempt, so the box goes to the back of the queue instead of holding a
+    place in every cycle. The stored settings are kept as they are. The
+    caller commits."""
+    from app.extensions import db
+    from app.models import SettingSnapshot
+    now = now or _dt.datetime.utcnow()
+    row = db.session.get(SettingSnapshot, (source, source_id))
+    if row is None:
+        db.session.add(SettingSnapshot(source=source, source_id=source_id, at=now, data={}))
+    else:
+        row.at = now
 
 
 def track(source, source_id, building_id, device, snapshot, describe, now=None, who=None) -> int:
@@ -267,7 +300,7 @@ def track(source, source_id, building_id, device, snapshot, describe, now=None, 
     if row is None:
         db.session.add(SettingSnapshot(source=source, source_id=source_id, at=now, data=dict(snapshot)))
         return 0
-    before = row.data or {}
+    before = row.data or {}                            # {} = only a failed attempt so far: this read is the baseline
     changes = []
     for k, o, n in diff(before, snapshot):
         label, old_text = describe(k, o, before)

@@ -22,7 +22,6 @@ the first poll and daily. Pure HTTP happens in worker threads; the database
 is written afterwards, in the poller's thread.
 """
 import datetime as _dt
-import itertools
 import logging
 import re
 import threading
@@ -79,8 +78,6 @@ ROLES = [("out", ("out",)), ("aqua", ("aqu",)), ("coil", ("coi",)), ("mix", ("mi
 # boilers it really has and its fuel. Boxes report run minutes for boilers
 # they do not have (217 Howard Ave, one boiler, showed 830 heat minutes on
 # "boiler 2"): Anagha sums only numBoilers, and so do we (2026-10-15).
-_cycles = itertools.count()                          # poll cycles run by this process (whose turn it is)
-
 # A box's settings live in these oBIX objects (the 2010 gateway's own tables;
 # every field of them except its clock stamp is a setting). Read now and then,
 # never every poll — see poll_one's `settings_due` and app/setting_audit.py.
@@ -591,7 +588,12 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
     from app import setting_audit
     every = app.config.get("LEGACY_SETTINGS_EVERY_MIN", 60)
     interval = app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300)
-    cycle = next(_cycles)                              # which poll cycle of this process this is
+    # Whose settings are read this cycle: the boxes read longest ago, a
+    # cycle's share of them, and only boxes that answered last time (a dark
+    # box would only hold a place).
+    answering = [b.id for b in boxes if b.login is not None and (b.status is None or b.status.ok)]
+    settings_due = setting_audit.due("legacy", answering, every, now,
+                                     limit=setting_audit.share(len(answering), every, interval))
     for b in boxes:
         if b.login is None:
             continue
@@ -600,7 +602,7 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
                      "verified": b.identity in ("gateway", "open"),
                      "names_due": not (st and st.names_at and now - st.names_at < NAMES_EVERY),
                      "config_due": not (st and st.data and st.data.get("config")),
-                     "settings_due": setting_audit.turn(b.id, cycle, every, interval)})
+                     "settings_due": b.id in settings_due})
     # Boxes read side by side (LEGACY_POLL_WORKERS, default 16: a cycle of
     # ~186 boxes took ~2 min at 8, 2026-10-15). Pacing stays per box.
     with ThreadPoolExecutor(max_workers=workers or app.config.get("LEGACY_POLL_WORKERS", 16)) as pool:
@@ -641,6 +643,8 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
                 setting_audit.track("legacy", b.id, b.building_id, b.name,
                                     setting_audit.legacy_snapshot(res["settings"]),
                                     setting_audit.legacy_describe, res["polled_at"])
+            elif res["id"] in settings_due:           # asked, nothing came back: to the back of the queue
+                setting_audit.touch("legacy", res["id"], res["polled_at"])
         db.session.commit()
     except Exception as e:
         db.session.rollback()

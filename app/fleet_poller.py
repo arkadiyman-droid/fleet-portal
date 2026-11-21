@@ -19,7 +19,6 @@ the poller thread down.
 """
 
 import datetime
-import itertools
 import logging
 import threading
 import time
@@ -34,7 +33,6 @@ from app.models import Controller, ControllerStatus
 log = logging.getLogger(__name__)
 
 _ADVISORY_LOCK_KEY = 875_219_001  # arbitrary fixed id, scoped to this feature
-_cycles = itertools.count()        # poll cycles run by this process (whose turn a settings read is)
 
 
 class FleetPoller:
@@ -70,7 +68,6 @@ class FleetPoller:
                     Controller.tailscale_ip.isnot(None),
                     Controller.fleet_api_token.isnot(None),
                 ).all()
-                cycle = next(_cycles)
                 for ctrl in controllers:
                     try:
                         poll_controller(app, ctrl)
@@ -80,10 +77,11 @@ class FleetPoller:
                     # just answered has its settings compared with last time.
                     try:
                         from app import setting_audit
-                        if (ctrl.status is not None and ctrl.status.ok and setting_audit.turn(
-                                ctrl.id, cycle, app.config.get("FLEET_SETTINGS_EVERY_MIN", 5),
-                                app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60))):
-                            audit_settings(app, ctrl)
+                        if (ctrl.status is not None and ctrl.status.ok and setting_audit.due(
+                                "echotherm", [ctrl.id], app.config.get("FLEET_SETTINGS_EVERY_MIN", 5))):
+                            if audit_settings(app, ctrl) is None:      # older software: ask again later, not every cycle
+                                setting_audit.touch("echotherm", ctrl.id)
+                                db.session.commit()
                     except Exception as e:
                         db.session.rollback()
                         log.warning("Settings audit failed for controller %s (%s): %s", ctrl.id, ctrl.name, e)

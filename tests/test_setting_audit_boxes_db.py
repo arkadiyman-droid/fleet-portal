@@ -60,13 +60,34 @@ def test_box_settings_read_in_plain_words():
     assert d("somethingNew.futureField", "7") == ("Future Field (somethingNew)", "7")      # an unknown field still reads
 
 
-def test_the_boxes_take_turns_so_no_cycle_reads_them_all():
-    ids = range(1, 187)
-    per_cycle = [sum(sa_.turn(b, c, 60, 300) for b in ids) for c in range(12)]
-    assert sum(per_cycle) == 186 and max(per_cycle) <= 16      # each box once in twelve cycles, evenly
-    assert all(sum(sa_.turn(b, c, 60, 300) for c in range(24)) == 2 for b in ids)
-    assert not any(sa_.turn(b, 0, 0, 300) for b in ids)        # switched off
-    assert all(sa_.turn(b, 3, 5, 300) for b in ids)            # every cycle
+def test_a_cycles_share_brings_every_box_round_in_time():
+    assert sa_.share(186, 60, 300) == 17                      # 186 boxes hourly, a cycle every 5 min: 15.5 and a bit
+    assert sa_.share(186, 60, 300) * 12 >= 186
+    assert sa_.share(1, 5, 60) >= 1 and sa_.share(186, 0, 300) == 0 and sa_.share(0, 60, 300) == 0
+
+
+@requires_postgres
+def test_the_boxes_read_longest_ago_go_first_and_no_cycle_reads_them_all(world, session):
+    import app.models as m
+    ids = list(range(1, 41))
+    t0 = NOW
+    assert sa_.due("legacy", ids, 0, t0) == set()             # switched off
+    first = sa_.due("legacy", ids, 60, t0, limit=6)
+    assert first == {1, 2, 3, 4, 5, 6}                        # never read: in order, a share at a time
+    for i in first:
+        sa_.track("legacy", i, None, f"box {i}", {"emsSettings.x": "1"}, sa_.legacy_describe, t0)
+    sa_.touch("legacy", 7, t0)                                # asked, nothing came back: it has had its turn
+    session.commit()
+    nxt = sa_.due("legacy", ids, 60, t0 + dt.timedelta(minutes=5), limit=6)
+    assert nxt == {8, 9, 10, 11, 12, 13}                      # the read ones and the failed one wait their hour
+    assert m.SettingSnapshot.query.filter_by(source="legacy", source_id=7).one().data == {}
+    hour = t0 + dt.timedelta(minutes=61)
+    assert sa_.due("legacy", list(range(1, 8)), 60, hour) == {1, 2, 3, 4, 5, 6, 7}      # an hour on: due again
+    assert sa_.due("echotherm", [1], 5, hour) == {1}          # another kind of box has its own queue
+    # a box that only ever failed takes its first good read as the baseline, not as changes
+    assert sa_.track("legacy", 7, None, "box 7", {"emsSettings.x": "1"}, sa_.legacy_describe, hour) == 0
+    session.commit()
+    assert m.SettingChange.query.count() == 0
 
 
 # ── any kind of box: the stored snapshot ─────────────────────────────────────
