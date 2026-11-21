@@ -25,7 +25,10 @@ log = logging.getLogger(__name__)
 
 INVOICE_DUE_DAYS = 30
 
-_ADVISORY_LOCK_KEY = 875_219_002  # distinct from fleet_poller.py's 875_219_001
+# Its own key: it shared 875_219_002 with the 2010 box poller (app/legacy.py),
+# so a daily run could make the boxes skip a reading — worse now that the run
+# also talks to Stripe (app/subscriptions.reconcile_all).
+_ADVISORY_LOCK_KEY = 875_219_005
 
 
 def current_contract(building):
@@ -153,6 +156,17 @@ class BillingScheduler:
                 got_lock = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _ADVISORY_LOCK_KEY}).scalar()
                 if not got_lock:
                     return  # another worker/process owns this cycle
+                # Subscriptions: every day, re-read from Stripe and billed for
+                # the units the buildings have now (app/subscriptions.py).
+                try:
+                    from app import subscriptions
+                    if subscriptions.configured():
+                        n = subscriptions.reconcile_all()
+                        if n:
+                            log.info("Billing scheduler: %d subscription(s) checked against Stripe", n)
+                except Exception as e:
+                    db.session.rollback()
+                    log.warning("Subscription reconcile failed: %s", e)
                 today = datetime.date.today()
                 period_start, period_end = period_for_date(today)
                 window_end = period_start + datetime.timedelta(days=6)

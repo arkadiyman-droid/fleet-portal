@@ -30,7 +30,7 @@ from flask import abort, g, session
 from sqlalchemy import and_, or_
 
 from app.extensions import db
-from app.models import Building, Client, Controller, FanControl, Permission, Property, SettingControl, User
+from app.models import BillingControl, Building, Client, Controller, FanControl, Permission, Property, SettingControl, User
 
 ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
 
@@ -321,6 +321,24 @@ def can_change_settings(building) -> bool:
     if effective_role_for_property(user.id, prop) is None:
         return False
     return SettingControl.query.filter_by(user_id=user.id, property_id=prop.id).first() is not None
+
+
+# ─── billing control: who may manage an owner's subscription ─────────────
+
+def billing_client_ids():
+    """None for the administrator (every owner); otherwise the ids of the
+    owners whose subscription this person may manage, possibly empty."""
+    if is_superuser():
+        return None
+    user = current_user()
+    if user is None:
+        return set()
+    return {bc.client_id for bc in BillingControl.query.filter_by(user_id=user.id).all()}
+
+
+def can_manage_billing(client) -> bool:
+    ids = billing_client_ids()
+    return client is not None and (ids is None or (client.is_active and client.id in ids))
 
 
 def can_run_fans(prop_name) -> bool:

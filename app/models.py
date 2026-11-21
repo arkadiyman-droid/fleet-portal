@@ -324,6 +324,85 @@ class Payment(db.Model):
         return f"<Payment invoice_id={self.invoice_id} amount_cents={self.amount_cents}>"
 
 
+class SubscriptionRate(db.Model):
+    """The subscription prices per apartment unit. Append-only: the newest row
+    is in force (app/subscriptions.current_rates); no row = the defaults in
+    config (SUB_MONTHLY_CENTS_PER_UNIT / SUB_QUARTERLY_CENTS_PER_UNIT)."""
+    __tablename__ = "subscription_rates"
+
+    id = db.Column(db.Integer, primary_key=True)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    by = db.Column(db.String(120))
+    monthly_cents = db.Column(db.Integer, nullable=False)          # per unit, per month
+    quarterly_cents = db.Column(db.Integer, nullable=False)        # per unit, per quarter
+
+    __table_args__ = (
+        CheckConstraint("monthly_cents > 0 AND quarterly_cents > 0", name="ck_subscription_rates_positive"),
+    )
+
+
+class Subscription(db.Model):
+    """An owner's (Client's) subscription, as Stripe last reported it
+    (app/subscriptions.py). One live row per owner; a cancelled one stays as
+    history. Stripe is the source of truth: this row is refreshed from it on
+    every webhook, on the owner's billing page and once a day."""
+    __tablename__ = "subscriptions"
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    stripe_subscription_id = db.Column(db.String(255), nullable=False, unique=True)
+    stripe_item_id = db.Column(db.String(255))
+    status = db.Column(db.String(30), nullable=False)               # Stripe's: active, past_due, canceled, ...
+    interval = db.Column(db.String(10), nullable=False)             # month | quarter
+    units = db.Column(db.Integer, nullable=False)                   # billed apartment units (the quantity)
+    cents_per_unit = db.Column(db.Integer, nullable=False)
+    current_period_end = db.Column(db.DateTime)                     # when the next charge is due
+    cancel_at_period_end = db.Column(db.Boolean, nullable=False, default=False)
+    last_error = db.Column(db.String(300))
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    client = db.relationship("Client")
+    charges = db.relationship("SubscriptionCharge", back_populates="subscription", cascade="all, delete-orphan",
+                              passive_deletes=True, order_by="SubscriptionCharge.created_at.desc()")
+
+
+class SubscriptionCharge(db.Model):
+    """One Stripe invoice of a subscription: a charge that went through, or
+    one that failed. Keyed by Stripe's invoice id, so a webhook delivered
+    twice records it once."""
+    __tablename__ = "subscription_charges"
+
+    id = db.Column(db.Integer, primary_key=True)
+    subscription_id = db.Column(db.Integer, db.ForeignKey("subscriptions.id", ondelete="CASCADE"), nullable=False)
+    stripe_invoice_id = db.Column(db.String(255), nullable=False, unique=True)
+    number = db.Column(db.String(60))
+    amount_cents = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(20), nullable=False)               # paid | failed | open
+    paid_at = db.Column(db.DateTime)
+    hosted_url = db.Column(db.Text)                                 # Stripe's page for this invoice / receipt
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    subscription = db.relationship("Subscription", back_populates="charges")
+
+
+class BillingControl(db.Model):
+    """A person who may manage ONE owner's subscription from the portal:
+    subscribe, choose monthly or quarterly, open Stripe's page for the card on
+    file, invoices and cancelling. Ticked per person and per owner on the
+    person's permissions page; separate from every other right, and needs
+    none of them (app/permissions.can_manage_billing)."""
+    __tablename__ = "billing_controls"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    client_id = db.Column(db.Integer, db.ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    by = db.Column(db.String(120))
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint("user_id", "client_id", name="uq_billing_controls_user_client"),)
+
+
 class Enrollment(db.Model):
     """A blank controller that called home to be adopted (EMS
     use_controller/fleet/enroll.py, portal app/enroll_api.py).

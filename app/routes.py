@@ -17,7 +17,9 @@ from app.models import (AlertEvent, AlertState, BloomAsset, Building, Client, Co
                         RolloutTarget, User)
 from app.permissions import (
     ROLE_RANK,
+    billing_client_ids,
     can_change_settings,
+    can_manage_billing,
     can_run_fans,
     can_view_building,
     creatable_building_property_query,
@@ -125,9 +127,11 @@ def _menu_flags():
     short menu (My properties, Fans, Alerts). runs_fans: they have also been
     given the fans of at least one property to run."""
     try:
-        return {"view_only": is_view_only(), "runs_fans": bool(fan_control_names())}
+        ids = billing_client_ids()
+        return {"view_only": is_view_only(), "runs_fans": bool(fan_control_names()),
+                "pays_for": bool(ids) and ids is not None}
     except Exception:
-        return {"view_only": False, "runs_fans": False}
+        return {"view_only": False, "runs_fans": False, "pays_for": False}
 
 
 @admin_bp.route("/home")
@@ -3480,6 +3484,8 @@ def user_permissions(user_id):
     with_fans = set(_fans_sites_by_property())
     fan_held = {fc.property_id for fc in FanControl.query.filter_by(user_id=user.id).all()}
     set_held = {sc.property_id for sc in SettingControl.query.filter_by(user_id=user.id).all()}
+    from app.models import BillingControl
+    bill_held = {bc.client_id for bc in BillingControl.query.filter_by(user_id=user.id).all()}
     share = []
     for c in clients:
         props = [{"id": p.id, "name": p.name, "role": held.get(p.id), "via_client": by_client.get(c.id),
@@ -3488,7 +3494,7 @@ def user_permissions(user_id):
                   "n": sum(1 for b in p.buildings if b.is_active)}
                  for p in sorted(c.properties, key=lambda x: x.name.lower()) if p.is_active]
         if props:
-            share.append({"client": c.name, "props": props})
+            share.append({"client": c.name, "client_id": c.id, "bill_tick": c.id in bill_held, "props": props})
     return render_template(
         "user_permissions.html", title=f"Permissions: {user.name}", user=user, grants=grant_rows,
         clients=clients, properties=properties, buildings=buildings, share=share,
@@ -3554,6 +3560,20 @@ def set_user_properties(user_id):
             db.session.delete(have_s[prop.id])
             set_off.append(prop.name)
     set_off += [n for n in _prune_setting_controls(user) if n not in set_off]
+
+    # who pays: one tick per owner ('bill_offered' / 'bill_client_id'); needs no other right
+    from app.models import BillingControl
+    offered_b = {int(v) for v in request.form.getlist("bill_offered") if v.isdigit()}
+    want_b = {int(v) for v in request.form.getlist("bill_client_id") if v.isdigit()} & offered_b
+    have_b = {bc.client_id: bc for bc in BillingControl.query.filter_by(user_id=user.id).all()}
+    bill_on, bill_off = [], []
+    for cl in Client.query.filter(Client.id.in_(offered_b or [-1])).order_by(Client.name).all():
+        if cl.id in want_b and cl.id not in have_b:
+            db.session.add(BillingControl(user_id=user.id, client_id=cl.id, by=_who()))
+            bill_on.append(cl.name)
+        elif cl.id not in want_b and cl.id in have_b:
+            db.session.delete(have_b[cl.id])
+            bill_off.append(cl.name)
     db.session.commit()
     said = f"View access saved: {added} propert{'y' if added == 1 else 'ies'} added, {removed} removed."
     if fan_on:
@@ -3564,6 +3584,10 @@ def set_user_properties(user_id):
         said += f" {user.name} can now change the heating settings at {', '.join(set_on)}."
     if set_off:
         said += f" Changing settings taken away at {', '.join(sorted(set_off))}."
+    if bill_on:
+        said += f" {user.name} can now manage the subscription of {', '.join(bill_on)}."
+    if bill_off:
+        said += f" Managing the subscription taken away for {', '.join(bill_off)}."
     flash(said, "success")
     if refused:
         flash(f"Fan control was not given at {', '.join(refused)}: {user.name} has to be able to see a property "
@@ -3921,10 +3945,164 @@ def billing_dashboard():
     drafts = Invoice.query.filter_by(status="draft").order_by(Invoice.period_start.desc(), Invoice.id).all()
     pending = Invoice.query.filter_by(status="pending").order_by(Invoice.due_date).all()
     recent_paid = Invoice.query.filter_by(status="paid").order_by(Invoice.updated_at.desc()).limit(20).all()
+    from app import subscriptions as subs
+    from app.models import SubscriptionRate
+    owners = []
+    for c in Client.query.filter_by(is_active=True).order_by(Client.name).all():
+        row = subs.live_subscription(c)
+        units = subs.owner_units(c)
+        owners.append({"client": c, "sub": row, "units": units,
+                       "amount": (row.units * row.cents_per_unit) if row else None,
+                       "units_differ": bool(row and units and units != row.units)})
+    rates = subs.current_rates()
+    last_rate = SubscriptionRate.query.order_by(SubscriptionRate.id.desc()).first()
     return render_template(
         "billing_dashboard.html", title="Billing", period_start=period_start, period_end=period_end,
         drafts=drafts, pending=pending, recent_paid=recent_paid, today=today,
+        owners=owners, rates=rates, last_rate=last_rate, stripe_ready=subs.configured(),
+        webhook_ready=bool(current_app.config.get("STRIPE_WEBHOOK_SECRET")), money=subs.money,
+        intervals=subs.INTERVALS,
     )
+
+
+def _public_base():
+    """The portal's own address, for the links Stripe sends people back to."""
+    return (current_app.config.get("PORTAL_PUBLIC_URL") or request.url_root).rstrip("/")
+
+
+def _owner_or_403(client_id):
+    c = Client.query.get_or_404(client_id)
+    if not can_manage_billing(c):
+        abort(403)
+    return c
+
+
+@admin_bp.route("/billing/mine")
+def my_billing():
+    """Where 'Billing' takes a person who pays for one or more owners."""
+    if is_superuser():
+        return redirect(url_for("admin.billing_dashboard"))
+    ids = billing_client_ids() or set()
+    clients = Client.query.filter(Client.id.in_(list(ids) or [-1]), Client.is_active.is_(True)).order_by(Client.name).all()
+    if len(clients) == 1:
+        return redirect(url_for("admin.owner_billing", client_id=clients[0].id))
+    if not clients:
+        abort(403)
+    return render_template("billing_mine.html", title="Billing", clients=clients)
+
+
+@admin_bp.route("/billing/owner/<int:client_id>")
+def owner_billing(client_id):
+    """One owner's subscription: buildings, units, prices; subscribe; manage
+    the card and invoices at Stripe; switch monthly / quarterly."""
+    from app import subscriptions as subs
+    client = _owner_or_403(client_id)
+    ready = subs.configured()
+    welcome = None
+    if ready and request.args.get("session_id"):
+        try:
+            row = subs.finish_checkout(client, request.args["session_id"])
+            welcome = "done" if row is not None else "unknown"
+        except Exception as e:
+            db.session.rollback()
+            current_app.logger.warning("Checkout return for owner %s: %s", client.id, e)
+            welcome = "unknown"
+    row = subs.live_subscription(client)
+    if ready and row is not None and welcome is None and \
+            (datetime.utcnow() - (row.updated_at or datetime.min)).total_seconds() > 60:
+        subs.refresh(row)
+        db.session.commit()
+        row = subs.live_subscription(client)
+    from app.models import Subscription
+    history = Subscription.query.filter_by(client_id=client.id).order_by(Subscription.id.desc()).all()
+    charges = [ch for s_ in history for ch in s_.charges][:24]
+    buildings = subs.owner_buildings(client)
+    units = sum(u or 0 for _b, u in buildings)
+    rates = subs.current_rates()
+    return render_template(
+        "owner_billing.html", title=f"Billing — {client.name}", client=client, row=row, charges=charges,
+        buildings=buildings, units=units, rates=rates, intervals=subs.INTERVALS, money=subs.money, ready=ready,
+        welcome=welcome, cancelled=bool(request.args.get("cancelled")),
+        failed=[ch for ch in charges if ch.status == "failed"][:1])
+
+
+def _owner_action(client_id, do):
+    from app import subscriptions as subs
+    client = _owner_or_403(client_id)
+    if not subs.configured():
+        flash("Card payments are not switched on for this portal yet.", "error")
+        return redirect(url_for("admin.owner_billing", client_id=client.id))
+    try:
+        return do(subs, client)
+    except subs.Refused as e:
+        flash(str(e)[:1].upper() + str(e)[1:] + ".", "error")
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.exception("Billing action for owner %s failed", client.id)
+        flash(f"Stripe did not take that: {str(e)[:200]}", "error")
+    return redirect(url_for("admin.owner_billing", client_id=client.id))
+
+
+@admin_bp.route("/billing/owner/<int:client_id>/subscribe", methods=["POST"])
+def owner_subscribe(client_id):
+    return _owner_action(client_id, lambda subs, c: redirect(
+        subs.start_checkout(c, request.form.get("interval", ""), _public_base()), code=303))
+
+
+@admin_bp.route("/billing/owner/<int:client_id>/manage", methods=["POST"])
+def owner_manage(client_id):
+    return _owner_action(client_id, lambda subs, c: redirect(subs.portal_url(c, _public_base()), code=303))
+
+
+@admin_bp.route("/billing/owner/<int:client_id>/switch", methods=["POST"])
+def owner_switch(client_id):
+    def do(subs, c):
+        r = subs.switch_interval(c, request.form.get("interval", ""))
+        flash(f"Switched to {subs.INTERVALS[r['interval']][0].lower()} billing. The unused part of the last period "
+              "was credited, and the new period was charged.", "success")
+        return redirect(url_for("admin.owner_billing", client_id=c.id))
+    return _owner_action(client_id, do)
+
+
+@admin_bp.route("/billing/owner/<int:client_id>/units", methods=["POST"])
+@superuser_required
+def owner_sync_units(client_id):
+    def do(subs, c):
+        r = subs.sync_units(c)
+        flash(f"Now billed for {r['new']} units (was {r['old']}); the difference is on the next charge."
+              if r["changed"] else f"Nothing changed: {r['why']}.", "success")
+        return redirect(url_for("admin.owner_billing", client_id=c.id))
+    return _owner_action(client_id, do)
+
+
+@admin_bp.route("/billing/rates", methods=["POST"])
+@superuser_required
+def billing_rates():
+    from app import subscriptions as subs
+
+    def cents(name):
+        try:
+            return round(float((request.form.get(name) or "").replace("$", "").strip()) * 100)
+        except ValueError:
+            return 0
+    apply_existing = request.form.get("apply_existing") == "1"
+    if apply_existing and not subs.configured():
+        flash("Prices were not saved: moving existing subscriptions needs Stripe switched on.", "error")
+        return redirect(url_for("admin.billing_dashboard"))
+    try:
+        r = subs.set_rates(cents("monthly"), cents("quarterly"), _who(), apply_existing)
+    except subs.Refused as e:
+        flash(f"Prices were not saved: {e}.", "error")
+        return redirect(url_for("admin.billing_dashboard"))
+    rates = subs.current_rates()
+    said = f"Prices saved: {subs.money(rates['month'])} per unit monthly, {subs.money(rates['quarter'])} per unit quarterly."
+    if apply_existing:
+        said += (f" Moved to them from the next renewal: {', '.join(r['moved'])}." if r["moved"]
+                 else " No running subscription needed moving.")
+    flash(said, "success")
+    if r["failed"]:
+        flash("Not moved (Stripe refused): " + "; ".join(r["failed"]), "error")
+    return redirect(url_for("admin.billing_dashboard"))
 
 
 @admin_bp.route("/billing/generate", methods=["POST"])
@@ -4049,6 +4227,13 @@ def stripe_webhook():
         current_app.logger.warning("Stripe webhook: rejected (missing/invalid signature or not configured).")
         abort(400)
     mark_paid_from_stripe_event(event)
+    try:
+        from app import subscriptions
+        subscriptions.handle_event(event)
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Stripe webhook: subscription handling failed for %s", event.get("type"))
+        return ("", 500)                              # Stripe retries; the daily reconcile also catches up
     return ("", 200)
 
 
@@ -4087,4 +4272,15 @@ def update_building_contract(building_id):
     ))
     db.session.commit()
     flash(f"Contract updated: {unit_count} unit(s) @ {_dollars(rate_per_unit_cents)}/yr, effective {start_date.isoformat()}.", "success")
+    from app import subscriptions as subs
+    if subs.configured() and subs.live_subscription(bld.property.client) is not None:
+        try:
+            r = subs.sync_units(bld.property.client)
+            if r["changed"]:
+                flash(f"{bld.property.client.name}'s subscription now bills {r['new']} units (was {r['old']}); "
+                      "the difference is on its next charge.", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"The subscription was not updated for the new unit count ({str(e)[:120]}); "
+                  "the daily check will try again.", "error")
     return redirect(url_for("admin.building_contract", building_id=bld.id))

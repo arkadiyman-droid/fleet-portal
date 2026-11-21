@@ -152,6 +152,10 @@ class Config:
         # app/stripe_billing.py.
         self.STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "")
         self.STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+        # Subscription prices per apartment unit, used until a price is saved on
+        # the Billing page (app/subscriptions.current_rates). Cents.
+        self.SUB_MONTHLY_CENTS_PER_UNIT = int(os.environ.get("SUB_MONTHLY_CENTS_PER_UNIT", "85"))
+        self.SUB_QUARTERLY_CENTS_PER_UNIT = int(os.environ.get("SUB_QUARTERLY_CENTS_PER_UNIT", "250"))
 
 
 def _require_env(name: str) -> str:

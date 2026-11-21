@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block content %}
+  <div class="page-head"><h1>{{ title }}</h1></div>
+  <p class="card-sub" style="margin:0 0 12px">You manage the subscription of these owners.</p>
+  <table style="max-width:640px">
+    <tbody>
+    {% for c in clients %}
+      <tr><td><a href="{{ url_for('admin.owner_billing', client_id=c.id) }}">{{ c.name }}</a></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

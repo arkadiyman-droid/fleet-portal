@@ -341,6 +341,44 @@ in its poller. The ledger, the Changes page and the building cards take every
 kind as they are. A kind the portal can also write to calls `record_portal()`
 when a person sends a change.
 
+### Subscriptions: owners pay by the apartment unit, card on file
+
+`app/subscriptions.py`. One Stripe subscription per owner (Client). Its
+quantity is the owner's apartment units — the unit counts on its buildings'
+current contracts (Buildings → Contract) — at a price per unit for the
+interval chosen: **monthly** (default $0.85 per unit) or **quarterly**
+(default $2.50 per unit). The prices are set on the Billing page; new ones
+apply to new subscriptions at once and, if asked, to existing ones from their
+next renewal, never mid-period.
+
+**The payer's side.** A person given *may manage … subscription and payment*
+for an owner (Users → Permissions; `models.BillingControl`, needs no other
+right) gets **Billing** in their menu: the owner's buildings, units and both
+prices. **Subscribe and add a payment method** opens Stripe Checkout, which
+shows every payment method switched on in Stripe (card, Apple Pay, Google
+Pay, bank account, PayPal where Stripe offers it), keeps the one used on file
+and charges it automatically each period. **Manage card and invoices** opens
+Stripe's own customer page (card on file, invoices and receipts, cancel at the
+end of the paid period). Monthly ↔ quarterly is switched on the owner's page:
+the unused part of the period is credited and the new one charged. No card
+number ever passes through the portal.
+
+**Staying right.** Stripe is the source of truth. The local row is refreshed
+from Stripe — never from what a browser says — on return from Checkout, on
+every webhook (`/webhooks/stripe`), when the billing page is opened, and daily
+in the billing scheduler, which also bills each owner for the units it has
+now (a unit count change is prorated on the next charge). So it keeps working
+while Stripe's webhooks cannot reach the portal behind Cloudflare Access.
+
+**To switch it on:** a Stripe account; in Stripe, the payment methods wanted
+(Settings → Payment methods); `STRIPE_SECRET_KEY` in `.env`; for instant
+updates, a webhook endpoint `https://<portal>/webhooks/stripe` for
+`checkout.session.completed`, `customer.subscription.created/updated/deleted`,
+`invoice.paid` and `invoice.payment_failed`, its signing secret as
+`STRIPE_WEBHOOK_SECRET`, and a Cloudflare Access bypass for that one path.
+Test with Stripe's test keys and test card first. The half-yearly invoices
+(below) keep working for owners who pay by invoice.
+
 ### Directory: managers from the violations portal
 
 PATHSCO Violations (a separate application on the same server) already

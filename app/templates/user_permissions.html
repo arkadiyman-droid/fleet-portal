@@ -23,6 +23,11 @@
       {% for grp in share %}
       <div class="form-panel" style="max-width:340px;padding:14px 16px">
         <div style="font-weight:600;margin-bottom:8px">{{ grp.client }}</div>
+        <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:-4px 0 10px;font-size:13px" title="Lets {{ user.name }} subscribe {{ grp.client }}, choose monthly or quarterly, and manage the card on file, invoices and cancelling (at Stripe). Needs no other right.">
+          <input type="hidden" name="bill_offered" value="{{ grp.client_id }}">
+          <input type="checkbox" name="bill_client_id" value="{{ grp.client_id }}" style="width:auto;margin:0"{% if grp.bill_tick %} checked{% endif %}>
+          <span>may manage {{ grp.client }}'s subscription and payment</span>
+        </label>
         {% for p in grp.props %}
         <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin:0 0 6px">
           <input type="checkbox" name="property_id" value="{{ p.id }}" id="pv-{{ p.id }}" style="width:auto;margin:0"{% if p.role %} checked{% endif %}{% if p.role and p.role != 'viewer' %} disabled{% endif %}>

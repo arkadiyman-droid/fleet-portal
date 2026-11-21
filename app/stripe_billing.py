@@ -131,6 +131,8 @@ def mark_paid_from_stripe_event(event) -> None:
     if event_type not in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
         return
     session_obj = event["data"]["object"]
+    if session_obj.get("mode") not in (None, "payment"):
+        return  # an owner's subscription (app/subscriptions.py), not a one-off invoice payment
     if session_obj.get("payment_status") != "paid":
         return  # e.g. an async method's session that hasn't cleared funds yet
 

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .ob-wrap { max-width:980px; }
+  .ob-card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px 18px; margin:0 0 14px; }
+  .ob-card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:0 0 12px; }
+  .ob-plans { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:12px; margin:0 0 14px; }
+  .ob-plan { border:2px solid var(--border); border-radius:12px; padding:14px 16px; cursor:pointer; display:block; margin:0; font-weight:400; }
+  .ob-plan:has(input:checked) { border-color:var(--accent); background:var(--info-bg); }
+  .ob-plan input { width:auto; margin:0 8px 0 0; }
+  .ob-plan .nm { font-weight:700; font-size:15px; }
+  .ob-plan .amt { font-size:26px; font-weight:700; margin:6px 0 2px; font-variant-numeric:tabular-nums; }
+  .ob-plan .sub { color:var(--muted); font-size:12.5px; }
+  .ob-go { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:11px 22px; font:inherit; font-weight:700; cursor:pointer; }
+  .ob-go:hover { background:var(--accent-hover); }
+  .ob-go.plain { background:var(--panel); color:inherit; border:1px solid var(--border); font-weight:600; }
+  .ob-kv { display:grid; grid-template-columns:auto 1fr; gap:6px 18px; font-size:14px; }
+  .ob-kv .k { color:var(--muted); }
+  .ob-kv .v { font-variant-numeric:tabular-nums; }
+  .ob-pay { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 0; }
+  .ob-pay span { font-size:11.5px; border:1px solid var(--border); border-radius:12px; padding:2px 9px; color:var(--muted); }
+  .ob-table { font-size:13.5px; }
+  .ob-table td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .banner { font-weight:400; } .banner b { font-weight:700; }
+  .ob-pill { font-size:11px; font-weight:700; border-radius:8px; padding:1px 8px; white-space:nowrap; }
+  .ob-pill.ok { background:var(--ok-bg); color:var(--ok); } .ob-pill.bad { background:var(--crit-bg); color:var(--crit); }
+  .ob-pill.warn { background:var(--warn-bg); color:var(--warn); }
+</style>
+{% endblock %}
+{% block content %}
+<div class="ob-wrap">
+  <div class="page-head">
+    <h1>Billing <span class="card-sub" style="font-weight:400">· {{ client.name }}</span></h1>
+    {% if g.is_superuser %}<a class="btn plain" href="{{ url_for('admin.billing_dashboard') }}">Back to Billing</a>{% endif %}
+  </div>
+
+  {% if welcome == 'done' %}<div class="banner ok"><b>Thank you — you're subscribed.</b> Your payment method is on file and will be charged automatically each period. Stripe emails a receipt every time.</div>
+  {% elif welcome == 'unknown' %}<div class="banner warn"><b>Thank you.</b> Stripe is still confirming the payment; this page shows it as soon as it does. Reload in a minute.</div>{% endif %}
+  {% if cancelled %}<div class="banner unknown">Nothing was charged. You can subscribe whenever you are ready.</div>{% endif %}
+  {% if not ready %}<div class="banner warn"><b>Card payments are not switched on for this portal yet.</b> The prices below are what the subscription will cost.</div>{% endif %}
+  {% if row and row.status in ('past_due', 'unpaid') %}<div class="banner crit"><b>The last payment did not go through.</b> Stripe will try again over the next days. To fix it now, use <b>Manage card and invoices</b> to update the payment method.</div>
+  {% elif row and row.status == 'incomplete' %}<div class="banner warn"><b>The first payment has not completed yet.</b> If it does not, use <b>Manage card and invoices</b>.</div>{% endif %}
+  {% if row and row.last_error and g.is_superuser %}<div class="banner warn">{{ row.last_error }}</div>{% endif %}
+
+  {% if row %}
+  <div class="ob-card">
+    <h2>Your subscription</h2>
+    <div class="ob-kv">
+      <div class="k">Status</div><div class="v">{% if row.status == 'active' and not row.cancel_at_period_end %}<span class="ob-pill ok">Active</span>{% elif row.cancel_at_period_end %}<span class="ob-pill warn">Ends {{ row.current_period_end.strftime('%b %d, %Y') if row.current_period_end else 'at the end of the period' }}</span>{% elif row.status in ('past_due', 'unpaid') %}<span class="ob-pill bad">Payment overdue</span>{% else %}<span class="ob-pill warn">{{ row.status|replace('_', ' ')|capitalize }}</span>{% endif %}</div>
+      <div class="k">Plan</div><div class="v">{{ intervals[row.interval][0] }} · {{ money(row.cents_per_unit) }} per unit</div>
+      <div class="k">Billed for</div><div class="v">{{ row.units }} unit{{ 's' if row.units != 1 }}{% if units and units != row.units %} <span class="card-sub">(your buildings have {{ units }} now; the next charge is adjusted)</span>{% endif %}</div>
+      <div class="k">Each {{ 'month' if row.interval == 'month' else 'quarter' }}</div><div class="v"><b>{{ money(row.units * row.cents_per_unit) }}</b> <span class="card-sub">before any tax</span></div>
+      <div class="k">{{ 'Ends on' if row.cancel_at_period_end else 'Next charge' }}</div><div class="v">{{ row.current_period_end.strftime('%B %d, %Y') if row.current_period_end else '—' }}</div>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:16px">
+      <form method="post" action="{{ url_for('admin.owner_manage', client_id=client.id) }}" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="ob-go" type="submit"{{ ' disabled' if not ready }}>Manage card and invoices</button>
+      </form>
+      {% set other = 'quarter' if row.interval == 'month' else 'month' %}
+      {% if row.status in ('active', 'trialing', 'past_due') and not row.cancel_at_period_end %}
+      <form method="post" action="{{ url_for('admin.owner_switch', client_id=client.id) }}" style="margin:0"
+            onsubmit="return confirm('Switch to {{ intervals[other][0]|lower }} billing at {{ money(rates[other]) }} per unit? The unused part of this period is credited and the new {{ 'quarter' if other == 'quarter' else 'month' }} ({{ money((units or row.units) * rates[other]) }}) is charged now.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="interval" value="{{ other }}">
+        <button class="ob-go plain" type="submit"{{ ' disabled' if not ready }}>Switch to {{ intervals[other][0]|lower }} ({{ money((units or row.units) * rates[other]) }} a {{ 'quarter' if other == 'quarter' else 'month' }})</button>
+      </form>
+      {% endif %}
+      {% if g.is_superuser and units and units != row.units %}
+      <form method="post" action="{{ url_for('admin.owner_sync_units', client_id=client.id) }}" style="margin:0">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="ob-go plain" type="submit">Bill {{ units }} units now</button>
+      </form>
+      {% endif %}
+    </div>
+    <p class="card-sub" style="margin:10px 0 0">"Manage card and invoices" opens Stripe's secure page: change the card or bank account on file, download invoices and receipts, or cancel (it then ends at the end of the period already paid for).</p>
+  </div>
+  {% else %}
+  <div class="ob-card">
+    <h2>Choose how to pay</h2>
+    {% if units %}
+    <form method="post" action="{{ url_for('admin.owner_subscribe', client_id=client.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="ob-plans">
+        {% for key in ('quarter', 'month') %}
+        <label class="ob-plan">
+          <input type="radio" name="interval" value="{{ key }}"{{ ' checked' if key == 'quarter' }}>
+          <span class="nm">{{ intervals[key][0] }}</span>
+          <div class="amt">{{ money(units * rates[key]) }}</div>
+          <div class="sub">every {{ 'quarter' if key == 'quarter' else 'month' }} · {{ units }} units × {{ money(rates[key]) }}<br>
+            {{ money(units * rates[key] * (4 if key == 'quarter' else 12)) }} a year</div>
+        </label>
+        {% endfor %}
+      </div>
+      <button class="ob-go" type="submit"{{ ' disabled' if not ready }}>Subscribe and add a payment method</button>
+      <div class="ob-pay"><span>Credit or debit card</span><span>Apple Pay</span><span>Google Pay</span><span>Bank account</span><span>PayPal, where offered</span></div>
+      <p class="card-sub" style="margin:10px 0 0">You go to Stripe's secure page to pay the first {{ 'period' }} and keep the payment method on file; after that it is charged automatically and you get a receipt by email each time. Card numbers never pass through this portal. The methods shown at Stripe depend on your device and what is switched on.</p>
+    </form>
+    {% else %}
+    <div class="banner unknown" style="margin:0">None of {{ client.name }}'s buildings has a unit count yet, so there is nothing to price. {% if g.is_superuser %}Set the units on each building's contract (Buildings → Contract).{% else %}Your EchoTherm contact sets them up.{% endif %}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="ob-card">
+    <h2>Buildings and units</h2>
+    <table class="ob-table">
+      <thead><tr><th>Building</th><th>Property</th><th style="text-align:right">Units</th><th style="text-align:right">Monthly</th><th style="text-align:right">Quarterly</th></tr></thead>
+      <tbody>
+      {% for b, u in buildings %}
+        <tr><td>{{ b.name }}{% if g.is_superuser %} <a class="card-sub" href="{{ url_for('admin.building_contract', building_id=b.id) }}">contract</a>{% endif %}</td><td>{{ b.property.name }}</td>
+          <td class="n">{% if u %}{{ u }}{% else %}<span class="card-sub">not set yet</span>{% endif %}</td>
+          <td class="n">{{ money(u * rates['month']) if u else '—' }}</td><td class="n">{{ money(u * rates['quarter']) if u else '—' }}</td></tr>
+      {% endfor %}
+        <tr style="font-weight:700"><td>Total</td><td></td><td class="n">{{ units }}</td><td class="n">{{ money(units * rates['month']) }}</td><td class="n">{{ money(units * rates['quarter']) }}</td></tr>
+      </tbody>
+    </table>
+    <p class="card-sub" style="margin:8px 0 0">{{ money(rates['month']) }} per unit per month, or {{ money(rates['quarter']) }} per unit per quarter. When a building's unit count changes, the next charge is adjusted for the rest of the period.</p>
+  </div>
+
+  {% if charges %}
+  <div class="ob-card">
+    <h2>Payments</h2>
+    <table class="ob-table">
+      <thead><tr><th>Date</th><th>Invoice</th><th style="text-align:right">Amount</th><th>Result</th><th></th></tr></thead>
+      <tbody>
+      {% for ch in charges %}
+        <tr><td>{{ (ch.paid_at or ch.created_at).strftime('%b %d, %Y') }}</td><td>{{ ch.number or '—' }}</td><td class="n">{{ money(ch.amount_cents) }}</td>
+          <td>{% if ch.status == 'paid' %}<span class="ob-pill ok">paid</span>{% elif ch.status == 'failed' %}<span class="ob-pill bad">did not go through</span>{% else %}<span class="ob-pill warn">open</span>{% endif %}</td>
+          <td>{% if ch.hosted_url %}<a href="{{ ch.hosted_url }}" target="_blank" rel="noopener">invoice ↗</a>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

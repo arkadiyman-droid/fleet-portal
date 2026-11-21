@@ -13,6 +13,40 @@
     Generation only creates drafts — nothing is sent until you approve it below.
   </p>
 
+  <h2 style="font-size:14px;margin:24px 0 8px">Subscriptions — monthly or quarterly, card on file</h2>
+  {% if not stripe_ready %}<div class="banner warn" style="font-weight:400"><b>Card payments are not switched on yet.</b> Put the Stripe keys on the server (STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET in .env) and reload. Until then owners see their prices but cannot subscribe.</div>
+  {% elif not webhook_ready %}<div class="banner info" style="font-weight:400">Stripe is on; its webhook secret is not set, so changes reach the portal when a billing page is opened and once a day rather than at once.</div>{% endif %}
+  <table style="margin-bottom:12px">
+    <thead><tr><th>Owner</th><th>Plan</th><th style="text-align:right">Units</th><th style="text-align:right">Per period</th><th>Status</th><th>Next charge</th></tr></thead>
+    <tbody>
+    {% for o in owners %}
+      <tr>
+        <td><a href="{{ url_for('admin.owner_billing', client_id=o.client.id) }}">{{ o.client.name }}</a></td>
+        {% if o.sub %}
+        <td>{{ intervals[o.sub.interval][0] }} · {{ money(o.sub.cents_per_unit) }}/unit</td>
+        <td style="text-align:right">{{ o.sub.units }}{% if o.units_differ %} <span class="status-pill status-unconfigured" title="The buildings have {{ o.units }} units now">{{ o.units }} now</span>{% endif %}</td>
+        <td style="text-align:right">{{ money(o.amount) }}</td>
+        <td>{% if o.sub.status == 'active' and not o.sub.cancel_at_period_end %}<span class="status-pill status-ok">active</span>{% elif o.sub.cancel_at_period_end %}<span class="status-pill status-unconfigured">ends at period end</span>{% elif o.sub.status in ('past_due', 'unpaid') %}<span class="status-pill status-err">payment overdue</span>{% else %}<span class="status-pill status-unconfigured">{{ o.sub.status|replace('_', ' ') }}</span>{% endif %}</td>
+        <td>{{ o.sub.current_period_end.strftime('%b %d, %Y') if o.sub.current_period_end else '—' }}</td>
+        {% else %}
+        <td class="card-sub">not subscribed</td><td style="text-align:right">{{ o.units or '—' }}</td><td></td><td></td><td></td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="card-sub" style="margin:0 0 14px">Who may subscribe and pay for an owner is a tick on each person's page (Users → Permissions → "may manage … subscription and payment"). An owner's page opens from its name.</p>
+
+  <form method="post" action="{{ url_for('admin.billing_rates') }}" style="display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:0 0 28px;max-width:900px">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <b style="font-size:13px">Price per unit</b>
+    <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400">monthly $<input name="monthly" value="{{ '%.2f'|format(rates.month / 100) }}" style="width:80px;margin:0" inputmode="decimal"></label>
+    <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400">quarterly $<input name="quarterly" value="{{ '%.2f'|format(rates.quarter / 100) }}" style="width:80px;margin:0" inputmode="decimal"></label>
+    <label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:400"><input type="checkbox" name="apply_existing" value="1" style="width:auto;margin:0"> also move existing subscriptions, from their next renewal</label>
+    <button type="submit" class="btn">Save prices</button>
+    <span class="card-sub" style="flex-basis:100%">{% if last_rate %}Last changed {{ last_rate.at.strftime('%b %d, %Y') }} by {{ last_rate.by or '—' }}.{% else %}The starting prices; not changed yet.{% endif %} New prices apply to new subscriptions at once; existing ones keep theirs unless the box is ticked, and then change at their next renewal, never mid-period.</span>
+  </form>
+
   <h2 style="font-size:14px;margin:24px 0 8px">Drafts — Needs Review</h2>
   {% if drafts %}
   <table style="margin-bottom:28px">
