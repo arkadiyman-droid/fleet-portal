@@ -388,6 +388,35 @@ def test_a_subscription_checkout_never_settles_an_invoice(app, owner, fake, sess
     assert inv.status == "pending" and m.Payment.query.count() == 0
 
 
+def test_a_parallel_store_of_the_same_subscription_does_not_clash(app, owner, session):
+    """Seen live on the first test checkout: checkout.session.completed and
+    customer.subscription.created reached two workers at once and both
+    inserted the subscription; one answered Stripe with a 500."""
+    import app.models as m
+    from sqlalchemy import text
+    session.execute(text(                                 # the other worker's row, unseen by this session's lookup
+        "INSERT INTO subscriptions (client_id, stripe_subscription_id, status, interval, units, cents_per_unit,"
+        " cancel_at_period_end, created_at, updated_at) VALUES (:c, 'sub_9', 'active', 'quarter', 7, 250, false, now(), now())"),
+        {"c": owner["client"]})
+    row = subs._insert_once(m.Subscription(client_id=owner["client"], stripe_subscription_id="sub_9", status="incomplete",
+                                           interval="month", units=0, cents_per_unit=0), stripe_subscription_id="sub_9")
+    assert (row.units, row.status) == (7, "active")
+    session.commit()                                      # the transaction survived the clash
+    assert m.Subscription.query.count() == 1
+
+
+def test_an_invoice_that_arrives_before_its_subscription_is_still_recorded(app, owner, fake, session, monkeypatch):
+    import app.models as m
+    r = _as(app, user_id=owner["bea"]).post(_url(owner, "/subscribe"), data={"interval": "quarter"})
+    sub_id = fake.pay(r.headers["Location"].rsplit("/", 1)[-1])          # paid, but no event about it yet
+    iid = fake.invoice(sub_id, paid=True, amount=25000)
+    assert _webhook(app, monkeypatch, {"type": "invoice.paid", "data": {"object": {"id": iid}}}).status_code == 200
+    row = m.Subscription.query.one()
+    assert (row.stripe_subscription_id, row.units, row.interval) == (sub_id, 100, "quarter")
+    ch, = row.charges
+    assert (ch.status, ch.amount_cents) == ("paid", 25000)
+
+
 # ── who may ──────────────────────────────────────────────────────────────────
 
 def test_only_the_administrator_or_a_person_ticked_for_the_owner(app, owner, fake, session):

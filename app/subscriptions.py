@@ -260,6 +260,20 @@ def _ts(v):
         return None
 
 
+def _insert_once(obj, **key):
+    """Add a new row, unless a parallel request (Stripe sends several webhook
+    events at the same instant, plus the person's own return from Checkout)
+    has just stored the same Stripe object: then return that one. Inside a
+    savepoint, so the caller's transaction survives the clash."""
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with db.session.begin_nested():
+            db.session.add(obj)
+        return obj
+    except IntegrityError:
+        return type(obj).query.filter_by(**key).one()
+
+
 def apply(sub: dict):
     """Store a Stripe subscription (as fetched from Stripe) on its owner's
     row. Returns the row, or None when it is not one of ours."""
@@ -276,9 +290,9 @@ def apply(sub: dict):
         if client_id is None or db.session.get(Client, client_id) is None:
             log.warning("Stripe subscription %s names no owner of ours", sub.get("id"))
             return None
-        row = Subscription(client_id=client_id, stripe_subscription_id=sub["id"], status="incomplete",
-                           interval="month", units=0, cents_per_unit=0)
-        db.session.add(row)
+        row = _insert_once(Subscription(client_id=client_id, stripe_subscription_id=sub["id"], status="incomplete",
+                                        interval="month", units=0, cents_per_unit=0),
+                           stripe_subscription_id=sub["id"])
     items = ((sub.get("items") or {}).get("data") or [])
     item = items[0] if items else {}
     price = item.get("price") or {}
@@ -313,14 +327,21 @@ def record_invoice(inv: dict):
         sub_id = (((inv.get("parent") or {}).get("subscription_details") or {}).get("subscription"))
     if isinstance(sub_id, dict):
         sub_id = sub_id.get("id")
-    row = Subscription.query.filter_by(stripe_subscription_id=sub_id).first() if sub_id else None
-    if row is None:
+    if not sub_id:
         return None
+    row = Subscription.query.filter_by(stripe_subscription_id=sub_id).first()
+    if row is None:
+        # the invoice event can arrive before any event about its subscription:
+        # store the subscription first rather than lose the charge
+        row = apply(api_retrieve_subscription(sub_id))
+        if row is None:
+            return None
     ch = SubscriptionCharge.query.filter_by(stripe_invoice_id=inv["id"]).first()
     if ch is None:
-        ch = SubscriptionCharge(subscription=row, stripe_invoice_id=inv["id"], amount_cents=0, status="open",
-                                created_at=_ts(inv.get("created")) or _dt.datetime.utcnow())
-        db.session.add(ch)
+        # by id, not subscription=row: a clashing duplicate must not linger in row.charges
+        ch = _insert_once(SubscriptionCharge(subscription_id=row.id, stripe_invoice_id=inv["id"], amount_cents=0,
+                                             status="open", created_at=_ts(inv.get("created")) or _dt.datetime.utcnow()),
+                          stripe_invoice_id=inv["id"])
     paid = inv.get("status") == "paid" or bool(inv.get("paid"))
     ch.number = inv.get("number") or ch.number
     ch.amount_cents = int((inv.get("amount_paid") if paid else inv.get("amount_due")) or 0)
