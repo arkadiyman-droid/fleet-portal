@@ -344,16 +344,25 @@ when a person sends a change.
 ### Subscriptions: owners pay by the apartment unit, card on file
 
 `app/subscriptions.py`. One Stripe subscription per owner (Client). Its
-quantity is the owner's apartment units — the unit counts on its buildings'
-current contracts (Buildings → Contract) — at a price per unit for the
-interval chosen: **monthly** (default $0.85 per unit) or **quarterly**
-(default $2.50 per unit). The prices are set on the Billing page; new ones
-apply to new subscriptions at once and, if asked, to existing ones from their
-next renewal, never mid-period.
+quantity is the owner's apartment units at a price per unit for the interval
+chosen: **monthly** (default $0.85 per unit) or **quarterly** (default $2.50
+per unit). The prices are set on the Billing page; new ones apply to new
+subscriptions at once and, if asked, to existing ones from their next renewal,
+never mid-period.
+
+**Units are set per property** on **Billing → Unit counts**
+(`routes.billing_units`), because a "building" here is often one boiler zone of
+a larger building (north/south halves, high/low zones). Each property row shows
+its units, where the number came from, and the violations portal's figure as a
+one-click suggestion; all are saved at once. A property with no count of its
+own is billed by its buildings' contract counts (Buildings → Contract) instead
+— never both (`subscriptions.property_units`). Every change is kept in
+`property_unit_changes` (who, when, from → to, source), and an owner already
+subscribed is billed the new total, prorated on its next charge.
 
 **The payer's side.** A person given *may manage … subscription and payment*
 for an owner (Users → Permissions; `models.BillingControl`, needs no other
-right) gets **Billing** in their menu: the owner's buildings, units and both
+right) gets **Billing** in their menu: the owner's properties, units and both
 prices. **Subscribe and add a payment method** opens Stripe Checkout, which
 shows every payment method switched on in Stripe (card, Apple Pay, Google
 Pay, bank account, PayPal where Stripe offers it), keeps the one used on file
@@ -372,11 +381,16 @@ while Stripe's webhooks cannot reach the portal behind Cloudflare Access.
 
 **To switch it on:** a Stripe account; in Stripe, the payment methods wanted
 (Settings → Payment methods); `STRIPE_SECRET_KEY` in `.env`; for instant
-updates, a webhook endpoint `https://<portal>/webhooks/stripe` for
-`checkout.session.completed`, `customer.subscription.created/updated/deleted`,
-`invoice.paid` and `invoice.payment_failed`, its signing secret as
+updates, a webhook endpoint `https://<portal>/webhooks/stripe` (snapshot
+payload) for `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+`customer.subscription.created/updated/deleted`, `invoice.paid`,
+`invoice.payment_succeeded`, `invoice.payment_failed` and `invoice.finalized`
+(the handler takes only ids from an event and re-reads the object from Stripe,
+so the endpoint's API version does not matter), its signing secret as
 `STRIPE_WEBHOOK_SECRET`, and a Cloudflare Access bypass for that one path.
-Test with Stripe's test keys and test card first. The half-yearly invoices
+Test with Stripe's test keys and test card first; a test event can be sent
+from Stripe's dashboard with no software installed (Workbench → Shell →
+`stripe trigger customer.subscription.created`). The half-yearly invoices
 (below) keep working for owners who pay by invoice.
 
 ### Directory: managers from the violations portal

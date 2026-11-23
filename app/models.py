@@ -52,6 +52,19 @@ class Property(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # The apartment units the subscription bills for this property as a whole
+    # (Billing -> Units). A "building" here is often a boiler zone (north/south
+    # halves, high/low zones), so units are known per property, not per zone.
+    # NULL = add up the property's building contracts instead.
+    unit_count = db.Column(db.Integer)
+    units_source = db.Column(db.String(160))     # where the number came from, for the reviewer
+    units_set_by = db.Column(db.String(120))
+    units_set_at = db.Column(db.DateTime)
+
+    __table_args__ = (
+        CheckConstraint("unit_count IS NULL OR unit_count > 0", name="ck_properties_unit_count_positive"),
+    )
+
     client = db.relationship("Client", back_populates="properties")
     buildings = db.relationship(
         "Building", back_populates="property", cascade="all, delete-orphan", passive_deletes=True
@@ -401,6 +414,23 @@ class BillingControl(db.Model):
     at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
     __table_args__ = (db.UniqueConstraint("user_id", "client_id", name="uq_billing_controls_user_client"),)
+
+
+class PropertyUnitChange(db.Model):
+    """Every change to a property's billed unit count: who, when, from what to
+    what, and where the number came from. The bill is units x price, so this
+    is the answer to "why was I charged for N units?"."""
+    __tablename__ = "property_unit_changes"
+
+    id = db.Column(db.Integer, primary_key=True)
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id", ondelete="CASCADE"), nullable=False, index=True)
+    at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    by = db.Column(db.String(120))
+    old_units = db.Column(db.Integer)
+    new_units = db.Column(db.Integer)
+    source = db.Column(db.String(160))
+
+    property = db.relationship("Property")
 
 
 class Enrollment(db.Model):

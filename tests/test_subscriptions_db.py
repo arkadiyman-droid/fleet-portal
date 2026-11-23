@@ -161,12 +161,13 @@ def test_the_price_is_units_times_the_rate_for_the_interval(app, owner, session)
     assert subs.current_rates() == {"month": 90, "quarter": 260}
 
 
-def test_the_owners_page_shows_buildings_units_and_both_prices(app, owner, fake):
+def test_the_owners_page_shows_properties_units_and_both_prices(app, owner, fake):
     page = _as(app, user_id=owner["bea"]).get(_url(owner)).get_data(as_text=True)
     assert "Billing" in page and "Acme Housing" in page
     assert "$250.00" in page and "$85.00" in page                 # 100 units: quarterly and monthly
     assert "$1,000.00 a year" in page and "$1,020.00 a year" in page
-    assert "3 Garden St" in page and "not set yet" in page
+    assert "Properties and units" in page and "Acme Gardens" in page
+    assert "Unit counts" not in page                              # the payer is not sent to the admin page
     assert "Apple Pay" in page and "PayPal, where offered" in page
     assert "Subscribe and add a payment method" in page and fake.checkouts == []
 
@@ -260,6 +261,67 @@ def test_a_unit_count_change_reaches_the_subscription_prorated(app, owner, fake,
     session.commit()
     assert subs.reconcile_all() == 1
     assert fake.modifies[-1]["units"] == 122 and m.Subscription.query.one().units == 122
+
+
+def test_a_property_unit_count_replaces_its_buildings_contracts(app, owner, session):
+    import app.models as m
+    client = session.get(m.Client, owner["client"])
+    prop = session.get(m.Property, owner["property"])
+    second = m.Property(client_id=client.id, name="Acme Towers")       # no count, no contracts: not billed
+    session.add(second)
+    session.commit()
+    assert [(p.name, u) for p, u, _ in subs.owner_properties(client)] == [("Acme Gardens", 100), ("Acme Towers", None)]
+    assert subs.set_property_units(prop, 120, "violations portal", "Admin") is True
+    session.commit()
+    assert subs.property_units(prop) == 120 and subs.owner_units(client) == 120   # never 120 + the contracts' 100
+    assert subs.set_property_units(prop, 120, "x", "Admin") is False               # same number: nothing recorded
+    assert subs.set_property_units(prop, None, None, "Admin") is True              # cleared: back to the contracts
+    session.commit()
+    assert subs.owner_units(client) == 100
+    ch = m.PropertyUnitChange.query.order_by(m.PropertyUnitChange.id).all()
+    assert [(c.old_units, c.new_units, c.source, c.by) for c in ch] == [(None, 120, "violations portal", "Admin"),
+                                                                       (120, None, None, "Admin")]
+    with pytest.raises(subs.Refused):
+        subs.set_property_units(prop, 0, "x", "Admin")
+
+
+def test_the_unit_counts_page_saves_all_properties_at_once(app, owner, fake, session):
+    import app.models as m
+    client = session.get(m.Client, owner["client"])
+    second = m.Property(client_id=client.id, name="Acme Towers")
+    session.add(second)
+    session.flush()
+    session.add(m.DirectoryProperty(ext_id=501, name="Acme Towers LP", unit_count=88, property_id=second.id,
+                                    buildings=[], seen_at=dt.datetime(2026, 11, 22)))
+    session.commit()
+    root = _as(app, superuser=True)
+    page = root.get("/billing/units").get_data(as_text=True)
+    assert "Acme Housing" in page and "Acme Gardens" in page and "Acme Towers" in page
+    assert "building contracts (100)" in page and "not set — not billed" in page
+    assert 'data-val="88"' in page                                         # the violations portal's figure, one click away
+    r = root.post("/billing/units", data={f"units_{owner['property']}": "1,05", f"units_{second.id}": "88"},
+                  follow_redirects=True)
+    text = r.get_data(as_text=True)
+    assert "Saved 2 changes" in text
+    session.expire_all()
+    p1, p2 = session.get(m.Property, owner["property"]), session.get(m.Property, second.id)
+    assert p1.unit_count == 105 and p1.units_source.startswith("entered by ")    # typed in, not the suggestion
+    assert (p2.unit_count, p2.units_source) == (88, "violations portal")
+    assert subs.owner_units(client) == 193
+    r = root.post("/billing/units", data={f"units_{owner['property']}": "-3", f"units_{second.id}": "88"},
+                  follow_redirects=True)
+    assert "Not saved" in r.get_data(as_text=True) and session.get(m.Property, owner["property"]).unit_count == 105
+    # an owner already subscribed is billed the new total, prorated
+    _subscribe(app, fake, owner)
+    assert m.Subscription.query.one().units == 193
+    r = root.post("/billing/units", data={f"units_{owner['property']}": "", f"units_{second.id}": "88"},
+                  follow_redirects=True)                                     # cleared: back to its contracts (100)
+    assert "now bills 188 units (was 193)" in r.get_data(as_text=True)
+    assert fake.modifies[-1]["units"] == 188 and fake.modifies[-1]["proration"] == "create_prorations"
+    # only the administrator
+    bea = _as(app, user_id=owner["bea"])
+    assert bea.get("/billing/units").status_code == 403
+    assert bea.post("/billing/units", data={f"units_{second.id}": "1"}).status_code == 403
 
 
 def test_new_prices_move_existing_subscriptions_only_when_asked_and_only_from_renewal(app, owner, fake, session):

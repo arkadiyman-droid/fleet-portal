@@ -2,8 +2,9 @@
 app/subscriptions.py — owners pay by the apartment unit, monthly or quarterly, card on file
 
 One Stripe subscription per owner (Client). Its quantity is the owner's
-apartment units — the unit counts on its buildings' current contracts — and
-its price is the rate per unit for the interval chosen:
+apartment units — per property, the count set on Billing -> Units, or where
+none is set the unit counts on its buildings' current contracts
+(property_units) — and its price is the rate per unit for the interval chosen:
 
     monthly    current_rates()["month"]    cents per unit per month   (default 85)
     quarterly  current_rates()["quarter"]  cents per unit per quarter (default 250)
@@ -22,8 +23,8 @@ session is fetched server-side), on every webhook, when the billing page is
 opened, and once a day (reconcile_all). So it stays right even while Stripe's
 webhooks cannot reach the portal (it sits behind Cloudflare Access).
 
-WHAT MOVES THE PRICE. A building's unit count changing, or a building
-leaving: sync_units() sets the new quantity, prorated on the next charge.
+WHAT MOVES THE PRICE. A property's or building's unit count changing, or a
+building leaving: sync_units() sets the new quantity, prorated on the next charge.
 Switching monthly <-> quarterly: switch_interval(), which credits the unused
 part of the current period and charges the new one at once. A new rate:
 set_rates(), which applies to new subscriptions and — when asked — to the
@@ -74,8 +75,57 @@ def owner_buildings(client) -> list:
     return out
 
 
+def property_units(prop):
+    """The units billed for one property: its own count (Billing -> Units)
+    when set, otherwise the sum of its active buildings' contract counts;
+    None when neither is known. A property count wins over its buildings'
+    contracts — the two are never added together."""
+    if prop.unit_count:
+        return prop.unit_count
+    from app.billing import current_contract
+    counts = [c.unit_count for b in prop.buildings if b.is_active for c in [current_contract(b)] if c]
+    return sum(counts) if counts else None
+
+
+def owner_properties(client) -> list:
+    """[(property, units or None, active buildings)] for the owner's active
+    properties, in name order."""
+    out = []
+    for prop in sorted((p for p in client.properties if p.is_active), key=lambda p: p.name.lower()):
+        blds = sorted((b for b in prop.buildings if b.is_active), key=lambda b: b.name.lower())
+        out.append((prop, property_units(prop), blds))
+    return out
+
+
 def owner_units(client) -> int:
-    return sum(u or 0 for _b, u in owner_buildings(client))
+    return sum(u or 0 for _p, u, _b in owner_properties(client))
+
+
+def directory_units(prop):
+    """What the violations portal says the property has: the sum of the unit
+    counts on the directory entries linked to it, or None."""
+    from app.models import DirectoryProperty
+    rows = DirectoryProperty.query.filter(DirectoryProperty.property_id == prop.id,
+                                          DirectoryProperty.present.is_(True),
+                                          DirectoryProperty.unit_count.isnot(None)).all()
+    return sum(r.unit_count for r in rows) if rows else None
+
+
+def set_property_units(prop, units, source, by) -> bool:
+    """Set (or with None, clear) a property's billed units and record the
+    change. Returns whether anything changed. Does not commit and does not
+    touch Stripe — the caller pushes the new total with sync_units()."""
+    from app.models import PropertyUnitChange
+    if units is not None and units <= 0:
+        raise Refused("a unit count must be above zero")
+    if units == prop.unit_count:
+        return False
+    db.session.add(PropertyUnitChange(property_id=prop.id, by=by, old_units=prop.unit_count,
+                                      new_units=units, source=source))
+    prop.unit_count = units
+    prop.units_source = source if units is not None else None
+    prop.units_set_by, prop.units_set_at = by, _dt.datetime.utcnow()
+    return True
 
 
 def money(cents) -> str:

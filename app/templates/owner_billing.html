@@ -49,7 +49,7 @@
     <div class="ob-kv">
       <div class="k">Status</div><div class="v">{% if row.status == 'active' and not row.cancel_at_period_end %}<span class="ob-pill ok">Active</span>{% elif row.cancel_at_period_end %}<span class="ob-pill warn">Ends {{ row.current_period_end.strftime('%b %d, %Y') if row.current_period_end else 'at the end of the period' }}</span>{% elif row.status in ('past_due', 'unpaid') %}<span class="ob-pill bad">Payment overdue</span>{% else %}<span class="ob-pill warn">{{ row.status|replace('_', ' ')|capitalize }}</span>{% endif %}</div>
       <div class="k">Plan</div><div class="v">{{ intervals[row.interval][0] }} · {{ money(row.cents_per_unit) }} per unit</div>
-      <div class="k">Billed for</div><div class="v">{{ row.units }} unit{{ 's' if row.units != 1 }}{% if units and units != row.units %} <span class="card-sub">(your buildings have {{ units }} now; the next charge is adjusted)</span>{% endif %}</div>
+      <div class="k">Billed for</div><div class="v">{{ row.units }} unit{{ 's' if row.units != 1 }}{% if units and units != row.units %} <span class="card-sub">(your properties have {{ units }} now; the next charge is adjusted)</span>{% endif %}</div>
       <div class="k">Each {{ 'month' if row.interval == 'month' else 'quarter' }}</div><div class="v"><b>{{ money(row.units * row.cents_per_unit) }}</b> <span class="card-sub">before any tax</span></div>
       <div class="k">{{ 'Ends on' if row.cancel_at_period_end else 'Next charge' }}</div><div class="v">{{ row.current_period_end.strftime('%B %d, %Y') if row.current_period_end else '—' }}</div>
     </div>
@@ -98,25 +98,25 @@
       <p class="card-sub" style="margin:10px 0 0">You go to Stripe's secure page to pay the first {{ 'period' }} and keep the payment method on file; after that it is charged automatically and you get a receipt by email each time. Card numbers never pass through this portal. The methods shown at Stripe depend on your device and what is switched on.</p>
     </form>
     {% else %}
-    <div class="banner unknown" style="margin:0">None of {{ client.name }}'s buildings has a unit count yet, so there is nothing to price. {% if g.is_superuser %}Set the units on each building's contract (Buildings → Contract).{% else %}Your EchoTherm contact sets them up.{% endif %}</div>
+    <div class="banner unknown" style="margin:0">None of {{ client.name }}'s properties has a unit count yet, so there is nothing to price. {% if g.is_superuser %}Set them on <a href="{{ url_for('admin.billing_units') }}">Billing → Unit counts</a>.{% else %}Your EchoTherm contact sets them up.{% endif %}</div>
     {% endif %}
   </div>
   {% endif %}
 
   <div class="ob-card">
-    <h2>Buildings and units</h2>
+    <h2>Properties and units</h2>
     <table class="ob-table">
-      <thead><tr><th>Building</th><th>Property</th><th style="text-align:right">Units</th><th style="text-align:right">Monthly</th><th style="text-align:right">Quarterly</th></tr></thead>
+      <thead><tr><th>Property</th><th style="text-align:right">Buildings</th><th style="text-align:right">Apartment units</th><th style="text-align:right">Monthly</th><th style="text-align:right">Quarterly</th></tr></thead>
       <tbody>
-      {% for b, u in buildings %}
-        <tr><td>{{ b.name }}{% if g.is_superuser %} <a class="card-sub" href="{{ url_for('admin.building_contract', building_id=b.id) }}">contract</a>{% endif %}</td><td>{{ b.property.name }}</td>
+      {% for p, u, blds in properties %}
+        <tr><td>{{ p.name }}</td><td class="n">{{ blds|length }}</td>
           <td class="n">{% if u %}{{ u }}{% else %}<span class="card-sub">not set yet</span>{% endif %}</td>
           <td class="n">{{ money(u * rates['month']) if u else '—' }}</td><td class="n">{{ money(u * rates['quarter']) if u else '—' }}</td></tr>
       {% endfor %}
         <tr style="font-weight:700"><td>Total</td><td></td><td class="n">{{ units }}</td><td class="n">{{ money(units * rates['month']) }}</td><td class="n">{{ money(units * rates['quarter']) }}</td></tr>
       </tbody>
     </table>
-    <p class="card-sub" style="margin:8px 0 0">{{ money(rates['month']) }} per unit per month, or {{ money(rates['quarter']) }} per unit per quarter. When a building's unit count changes, the next charge is adjusted for the rest of the period.</p>
+    <p class="card-sub" style="margin:8px 0 0">{{ money(rates['month']) }} per unit per month, or {{ money(rates['quarter']) }} per unit per quarter. When a property's unit count changes, the next charge is adjusted for the rest of the period.{% if g.is_superuser %} Units are set on <a href="{{ url_for('admin.billing_units') }}">Billing → Unit counts</a>.{% endif %}</p>
   </div>
 
   {% if charges %}

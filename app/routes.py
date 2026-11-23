@@ -4016,12 +4016,12 @@ def owner_billing(client_id):
     from app.models import Subscription
     history = Subscription.query.filter_by(client_id=client.id).order_by(Subscription.id.desc()).all()
     charges = [ch for s_ in history for ch in s_.charges][:24]
-    buildings = subs.owner_buildings(client)
-    units = sum(u or 0 for _b, u in buildings)
+    properties = subs.owner_properties(client)
+    units = sum(u or 0 for _p, u, _b in properties)
     rates = subs.current_rates()
     return render_template(
         "owner_billing.html", title=f"Billing — {client.name}", client=client, row=row, charges=charges,
-        buildings=buildings, units=units, rates=rates, intervals=subs.INTERVALS, money=subs.money, ready=ready,
+        properties=properties, units=units, rates=rates, intervals=subs.INTERVALS, money=subs.money, ready=ready,
         welcome=welcome, cancelled=bool(request.args.get("cancelled")),
         failed=[ch for ch in charges if ch.status == "failed"][:1])
 
@@ -4073,6 +4073,84 @@ def owner_sync_units(client_id):
               if r["changed"] else f"Nothing changed: {r['why']}.", "success")
         return redirect(url_for("admin.owner_billing", client_id=c.id))
     return _owner_action(client_id, do)
+
+
+@admin_bp.route("/billing/units")
+@superuser_required
+def billing_units():
+    """Every owner's properties on one page: the apartment units each is
+    billed for, where the number came from, and what the violations portal
+    says — edit them all and save once."""
+    from app import subscriptions as subs
+    owners = []
+    for c in Client.query.filter_by(is_active=True).order_by(Client.name).all():
+        rows = []
+        for prop, units, blds in subs.owner_properties(c):
+            rows.append({"prop": prop, "units": units, "buildings": len(blds),
+                         "from_contracts": units is not None and not prop.unit_count,
+                         "suggested": subs.directory_units(prop)})
+        if rows:
+            owners.append({"client": c, "rows": rows, "total": sum(r["units"] or 0 for r in rows),
+                           "sub": subs.live_subscription(c)})
+    from app.models import PropertyUnitChange
+    recent = PropertyUnitChange.query.order_by(PropertyUnitChange.id.desc()).limit(15).all()
+    return render_template("billing_units.html", title="Unit counts", owners=owners, recent=recent,
+                           rates=subs.current_rates(), money=subs.money)
+
+
+@admin_bp.route("/billing/units", methods=["POST"])
+@superuser_required
+def billing_units_save():
+    from app import subscriptions as subs
+    who = _who()
+    changed, bad, touched = [], [], set()
+    for c in Client.query.filter_by(is_active=True).all():
+        for prop in c.properties:
+            if not prop.is_active or f"units_{prop.id}" not in request.form:
+                continue
+            raw = (request.form.get(f"units_{prop.id}") or "").replace(",", "").strip()
+            if raw == "":
+                new = None
+            elif raw.isdigit() and int(raw) > 0:
+                new = int(raw)
+            else:
+                bad.append(prop.name)
+                continue
+            if new is None:
+                source = None
+            elif new == prop.unit_count:
+                continue
+            elif new == subs.directory_units(prop):
+                source = "violations portal"
+            else:
+                source = f"entered by {who}"
+            old = prop.unit_count
+            if subs.set_property_units(prop, new, source, who):
+                changed.append(f"{prop.name} {old or '—'} → {new or 'cleared'}")
+                touched.add(c.id)
+    db.session.commit()
+    if bad:
+        flash("Not saved (a unit count is a whole number above zero, or empty): " + ", ".join(bad) + ".", "error")
+    if not changed:
+        flash("Nothing changed.", "success")
+        return redirect(url_for("admin.billing_units"))
+    flash(f"Saved {len(changed)} change{'s' if len(changed) != 1 else ''}: " + "; ".join(changed[:12])
+          + ("…" if len(changed) > 12 else "") + ".", "success")
+    if subs.configured():
+        for cid in touched:
+            client = Client.query.get(cid)
+            if subs.live_subscription(client) is None:
+                continue
+            try:
+                r = subs.sync_units(client)
+                if r["changed"]:
+                    flash(f"{client.name}'s subscription now bills {r['new']} units (was {r['old']}); "
+                          "the difference is on its next charge.", "success")
+            except Exception as e:
+                db.session.rollback()
+                flash(f"{client.name}'s subscription was not updated ({str(e)[:120]}); "
+                      "it catches up at the daily check.", "error")
+    return redirect(url_for("admin.billing_units"))
 
 
 @admin_bp.route("/billing/rates", methods=["POST"])

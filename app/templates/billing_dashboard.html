@@ -24,7 +24,7 @@
         <td><a href="{{ url_for('admin.owner_billing', client_id=o.client.id) }}">{{ o.client.name }}</a></td>
         {% if o.sub %}
         <td>{{ intervals[o.sub.interval][0] }} · {{ money(o.sub.cents_per_unit) }}/unit</td>
-        <td style="text-align:right">{{ o.sub.units }}{% if o.units_differ %} <span class="status-pill status-unconfigured" title="The buildings have {{ o.units }} units now">{{ o.units }} now</span>{% endif %}</td>
+        <td style="text-align:right">{{ o.sub.units }}{% if o.units_differ %} <span class="status-pill status-unconfigured" title="The properties have {{ o.units }} units now">{{ o.units }} now</span>{% endif %}</td>
         <td style="text-align:right">{{ money(o.amount) }}</td>
         <td>{% if o.sub.status == 'active' and not o.sub.cancel_at_period_end %}<span class="status-pill status-ok">active</span>{% elif o.sub.cancel_at_period_end %}<span class="status-pill status-unconfigured">ends at period end</span>{% elif o.sub.status in ('past_due', 'unpaid') %}<span class="status-pill status-err">payment overdue</span>{% else %}<span class="status-pill status-unconfigured">{{ o.sub.status|replace('_', ' ') }}</span>{% endif %}</td>
         <td>{{ o.sub.current_period_end.strftime('%b %d, %Y') if o.sub.current_period_end else '—' }}</td>
@@ -35,7 +35,7 @@
     {% endfor %}
     </tbody>
   </table>
-  <p class="card-sub" style="margin:0 0 14px">Who may subscribe and pay for an owner is a tick on each person's page (Users → Permissions → "may manage … subscription and payment"). An owner's page opens from its name.</p>
+  <p class="card-sub" style="margin:0 0 14px"><a class="btn plain" href="{{ url_for('admin.billing_units') }}" style="margin-right:8px">Unit counts</a> The units each property is billed for are set on <b>Unit counts</b>. Who may subscribe and pay for an owner is a tick on each person's page (Users → Permissions → "may manage … subscription and payment"). An owner's page opens from its name.</p>
 
   <form method="post" action="{{ url_for('admin.billing_rates') }}" style="display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;margin:0 0 28px;max-width:900px">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

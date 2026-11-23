@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .bu-wrap { max-width:1060px; }
+  .bu-table { font-size:13.5px; }
+  .bu-table td.n, .bu-table th.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .bu-table input { width:96px; margin:0; text-align:right; }
+  .bu-table input.changed { border-color:var(--accent); background:var(--info-bg); }
+  .bu-src { font-size:12px; color:var(--muted); }
+  .bu-use { font-size:12px; background:none; border:none; color:var(--accent); cursor:pointer; padding:0 0 0 6px; font:inherit; font-size:12px; }
+  .bu-diff { color:var(--warn); font-weight:600; }
+  .bu-owner { font-size:15px; margin:22px 0 8px; display:flex; gap:12px; align-items:baseline; flex-wrap:wrap; }
+  .bu-bar { position:sticky; bottom:0; background:var(--panel); border-top:1px solid var(--border); padding:10px 0; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  @media (max-width:700px) { .bu-hide-sm { display:none; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="bu-wrap">
+  <div class="page-head">
+    <h1>{{ title }}</h1>
+    <a class="btn plain" href="{{ url_for('admin.billing_dashboard') }}">Back to Billing</a>
+  </div>
+  <p class="card-sub" style="margin:-6px 0 12px">The subscription bills each owner for the apartment units of its properties
+    ({{ money(rates.month) }} per unit monthly, {{ money(rates.quarter) }} quarterly). Units are set per <b>property</b>, because
+    a "building" here is often one boiler zone of a larger building. Leave a box empty to bill the property by its
+    buildings' contracts instead. <b>Suggested</b> is what the violations portal lists for the property. Nothing is
+    charged by saving here; an owner that already subscribes is billed the new total from its next charge.</p>
+
+  <form method="post" action="{{ url_for('admin.billing_units_save') }}" id="bu-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for o in owners %}
+    <div class="bu-owner"><b>{{ o.client.name }}</b>
+      <span class="card-sub">{{ o.rows|length }} propert{{ 'ies' if o.rows|length != 1 else 'y' }} · <span data-total="{{ o.client.id }}">{{ o.total }}</span> units now ·
+        {% if o.sub %}subscribed, billed for {{ o.sub.units }}{% else %}not subscribed{% endif %}</span>
+      <a class="card-sub" href="{{ url_for('admin.owner_billing', client_id=o.client.id) }}">owner's billing page</a></div>
+    <table class="bu-table">
+      <thead><tr><th>Property</th><th class="n bu-hide-sm">Buildings</th><th class="n">Units</th><th>Where the number came from</th><th class="n">Suggested</th></tr></thead>
+      <tbody>
+      {% for r in o.rows %}
+        {% set p = r.prop %}
+        <tr>
+          <td>{{ p.name }}</td>
+          <td class="n bu-hide-sm">{{ r.buildings }}</td>
+          <td class="n"><input name="units_{{ p.id }}" value="{{ p.unit_count or '' }}" inputmode="numeric" data-owner="{{ o.client.id }}"
+                               data-orig="{{ p.unit_count or '' }}" data-contracts="{{ r.units if r.from_contracts else '' }}"
+                               placeholder="{{ r.units if r.from_contracts else '—' }}" aria-label="Units for {{ p.name }}"></td>
+          <td class="bu-src">{% if p.unit_count %}{{ p.units_source or '—' }}{% if p.units_set_by %} · {{ p.units_set_by }}, {{ p.units_set_at.strftime('%b %d, %Y') }}{% endif %}
+            {% elif r.from_contracts %}building contracts ({{ r.units }})
+            {% else %}<span class="bu-diff">not set — not billed</span>{% endif %}</td>
+          <td class="n">{% if r.suggested %}<span{% if p.unit_count and r.suggested != p.unit_count %} class="bu-diff" title="Differs from the units set"{% endif %}>{{ r.suggested }}</span>
+            {% if r.suggested != p.unit_count %}<button type="button" class="bu-use" data-for="units_{{ p.id }}" data-val="{{ r.suggested }}">use</button>{% endif %}
+            {% else %}<span class="card-sub">—</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="card-sub">No owner has an active property yet.</p>
+    {% endfor %}
+    {% if owners %}
+    <div class="bu-bar"><button type="submit" class="btn">Save unit counts</button><span class="card-sub" id="bu-n">No changes yet.</span></div>
+    {% endif %}
+  </form>
+
+  {% if recent %}
+  <h2 style="font-size:14px;margin:28px 0 8px">Recent changes</h2>
+  <table class="bu-table">
+    <thead><tr><th>When</th><th>Property</th><th class="n">From</th><th class="n">To</th><th>Source</th><th>By</th></tr></thead>
+    <tbody>
+    {% for ch in recent %}
+      <tr><td>{{ ch.at.strftime('%b %d, %Y %H:%M') }}</td><td>{{ ch.property.name if ch.property else '—' }}</td>
+        <td class="n">{{ ch.old_units or '—' }}</td><td class="n">{{ ch.new_units or 'cleared' }}</td>
+        <td class="bu-src">{{ ch.source or '—' }}</td><td>{{ ch.by or '—' }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+<script>
+(function () {
+  var form = document.getElementById('bu-form'); if (!form) return;
+  var inputs = form.querySelectorAll('input[name^="units_"]');
+  function refresh() {
+    var n = 0, totals = {};
+    inputs.forEach(function (i) {
+      var changed = i.value.trim() !== i.dataset.orig;
+      i.classList.toggle('changed', changed); if (changed) n++;
+      var v = parseInt(i.value.replace(/,/g, ''), 10) || parseInt(i.dataset.contracts, 10) || 0;
+      totals[i.dataset.owner] = (totals[i.dataset.owner] || 0) + v;
+    });
+    Object.keys(totals).forEach(function (k) {
+      var el = document.querySelector('[data-total="' + k + '"]'); if (el) el.textContent = totals[k];
+    });
+    var s = document.getElementById('bu-n');
+    if (s) s.textContent = n ? n + ' propert' + (n === 1 ? 'y' : 'ies') + ' changed — not saved yet.' : 'No changes yet.';
+  }
+  inputs.forEach(function (i) { i.addEventListener('input', refresh); });
+  form.querySelectorAll('.bu-use').forEach(function (b) {
+    b.addEventListener('click', function () { var i = form.querySelector('[name="' + b.dataset.for + '"]'); i.value = b.dataset.val; refresh(); });
+  });
+  window.addEventListener('beforeunload', function (e) {
+    if (form.dataset.saving) return;
+    if (Array.prototype.some.call(inputs, function (i) { return i.value.trim() !== i.dataset.orig; })) { e.preventDefault(); e.returnValue = ''; }
+  });
+  form.addEventListener('submit', function () { form.dataset.saving = '1'; });
+})();
+</script>
+{% endblock %}
