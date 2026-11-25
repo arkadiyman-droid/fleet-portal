@@ -15,6 +15,9 @@
   .ob-go { background:var(--accent); color:#fff; border:none; border-radius:8px; padding:11px 22px; font:inherit; font-weight:700; cursor:pointer; }
   .ob-go:hover { background:var(--accent-hover); }
   .ob-go.plain { background:var(--panel); color:inherit; border:1px solid var(--border); font-weight:600; }
+  .ob-alt { background:none; border:none; color:var(--muted, inherit); text-decoration:underline; font:inherit; cursor:pointer; margin-left:12px; padding:11px 4px; }
+  .ob-alt:hover { color:inherit; }
+  .ob-alt:disabled, .ob-go:disabled { opacity:.5; cursor:default; }
   .ob-kv { display:grid; grid-template-columns:auto 1fr; gap:6px 18px; font-size:14px; }
   .ob-kv .k { color:var(--muted); }
   .ob-kv .v { font-variant-numeric:tabular-nums; }
@@ -93,9 +96,10 @@
         </label>
         {% endfor %}
       </div>
-      <button class="ob-go" type="submit"{{ ' disabled' if not ready }}>Subscribe and add a payment method</button>
-      <div class="ob-pay"><span>Credit or debit card</span><span>Apple Pay</span><span>Google Pay</span><span>Bank account</span><span>PayPal, where offered</span></div>
-      <p class="card-sub" style="margin:10px 0 0">You go to Stripe's secure page to pay the first {{ 'period' }} and keep the payment method on file; after that it is charged automatically and you get a receipt by email each time. Card numbers never pass through this portal. The methods shown at Stripe depend on your device and what is switched on.</p>
+      <button class="ob-go" type="submit" name="method" value="bank"{{ ' disabled' if not ready }}>Subscribe — pay by bank account</button>
+      <button class="ob-alt" type="submit" name="method" value="card"{{ ' disabled' if not ready }}>Pay by card instead</button>
+      <div class="ob-pay"><span><b>Bank account (preferred)</b></span><span>Credit or debit card</span><span>Apple Pay</span><span>Google Pay</span></div>
+      <p class="card-sub" style="margin:10px 0 0">You go to Stripe's secure page to pay the first period and keep the payment method on file; after that it is charged automatically and you get a receipt by email each time. Please pay by <b>bank account</b> where you can: you sign in to your bank on Stripe's page (or confirm two small test deposits), and it is debited directly each period. "Pay by card instead" takes credit and debit cards, and Apple Pay or Google Pay on devices that support them. Bank and card details never pass through this portal.</p>
     </form>
     {% else %}
     <div class="banner unknown" style="margin:0">None of {{ client.name }}'s properties has a unit count yet, so there is nothing to price. {% if g.is_superuser %}Set them on <a href="{{ url_for('admin.billing_units') }}">Billing → Unit counts</a>.{% else %}Your EchoTherm contact sets them up.{% endif %}</div>

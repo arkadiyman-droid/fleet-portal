@@ -4046,7 +4046,8 @@ def _owner_action(client_id, do):
 @admin_bp.route("/billing/owner/<int:client_id>/subscribe", methods=["POST"])
 def owner_subscribe(client_id):
     return _owner_action(client_id, lambda subs, c: redirect(
-        subs.start_checkout(c, request.form.get("interval", ""), _public_base()), code=303))
+        subs.start_checkout(c, request.form.get("interval", ""), _public_base(),
+                            method=request.form.get("method", "bank")), code=303))
 
 
 @admin_bp.route("/billing/owner/<int:client_id>/manage", methods=["POST"])

@@ -11,9 +11,10 @@ none is set the unit counts on its buildings' current contracts
 
 THE PAYER'S SIDE. The owner's billing page (routes.owner_billing) shows the
 buildings, the units and both prices. "Subscribe" opens Stripe Checkout in
-subscription mode: Stripe shows every payment method switched on in its own
-dashboard (cards, Apple Pay and Google Pay, bank debit, PayPal where Stripe
-offers it), keeps what was used on file and charges it every period. "Manage
+subscription mode with ONE kind of payment (CHECKOUT_METHODS): the main
+button is the US bank account (ACH debit), a smaller one cards (Apple Pay and
+Google Pay ride along with cards). Stripe keeps what was used on file and
+charges it every period. "Manage
 billing" opens Stripe's Customer Portal: change the card, see and download
 invoices, cancel. No card number ever passes through the portal.
 
@@ -47,6 +48,14 @@ INTERVALS = {"month": ("Monthly", 1), "quarter": ("Quarterly", 3)}
 PRODUCT_ID = "echotherm_fleet_monitoring"
 PRODUCT_NAME = "EchoTherm building monitoring"
 LIVE = ("active", "trialing", "past_due", "unpaid", "incomplete")      # anything not over
+# How the payer can pay, one Checkout per choice. The bank account is the main
+# button on purpose: Stripe charges 0.8% capped at $5 for ACH against 2.9% + 30c
+# for a card, so on an owner's quarterly bill of thousands of dollars it saves
+# hundreds. One method per Checkout because Stripe re-orders a mixed list
+# itself (seen live 2026-11-25: card shown above the bank account). Naming the
+# methods also keeps shopper pay-later methods (Klarna, Cash App Pay...) off a
+# business subscription. Apple Pay and Google Pay come with "card".
+CHECKOUT_METHODS = {"bank": ["us_bank_account"], "card": ["card"]}
 PORTAL_TAG = "echotherm_fleet"
 
 
@@ -186,13 +195,18 @@ def api_price_id(interval, cents) -> str:
     return price.id
 
 
-def api_checkout(customer_id, price_id, units, client_id, success_url, cancel_url) -> str:
+def api_checkout(customer_id, price_id, units, client_id, success_url, cancel_url, method="bank") -> str:
     """A Stripe Checkout session that starts the subscription; returns its URL.
-    No payment_method_types: Stripe offers every method switched on in its
-    dashboard, Apple Pay, Google Pay and PayPal included."""
+    Offers only CHECKOUT_METHODS[method]: the US bank account (verified by
+    signing in to the bank where possible, by two small deposits otherwise),
+    or cards with Apple Pay and Google Pay."""
     _key()
+    extra = {}
+    if method == "bank":
+        extra["payment_method_options"] = {"us_bank_account": {"verification_method": "automatic"}}
     session = stripe.checkout.Session.create(
         mode="subscription", customer=customer_id,
+        payment_method_types=list(CHECKOUT_METHODS[method]), **extra,
         line_items=[{"price": price_id, "quantity": units}],
         client_reference_id=f"owner:{client_id}",
         subscription_data={"metadata": {"client_id": str(client_id)}},
@@ -382,10 +396,13 @@ class Refused(Exception):
     """Something the billing page should say instead of doing."""
 
 
-def start_checkout(client, interval, base_url) -> str:
-    """The Stripe Checkout URL that starts this owner's subscription."""
+def start_checkout(client, interval, base_url, method="bank") -> str:
+    """The Stripe Checkout URL that starts this owner's subscription, paid
+    by bank account (the default) or by card."""
     if interval not in INTERVALS:
         raise Refused("choose monthly or quarterly")
+    if method not in CHECKOUT_METHODS:
+        raise Refused("choose bank account or card")
     if live_subscription(client) is not None:
         raise Refused("this owner already has a subscription; change it with Manage billing")
     units = owner_units(client)
@@ -394,7 +411,8 @@ def start_checkout(client, interval, base_url) -> str:
     rate = current_rates()[interval]
     page = f"{base_url}/billing/owner/{client.id}"
     return api_checkout(api_customer(client), api_price_id(interval, rate), units, client.id,
-                        success_url=page + "?session_id={CHECKOUT_SESSION_ID}", cancel_url=page + "?cancelled=1")
+                        success_url=page + "?session_id={CHECKOUT_SESSION_ID}", cancel_url=page + "?cancelled=1",
+                        method=method)
 
 
 def finish_checkout(client, session_id):

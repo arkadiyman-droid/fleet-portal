@@ -42,11 +42,11 @@ class FakeStripe:
     def price_id(self, interval, cents):
         return f"price_{interval}_{cents}"
 
-    def checkout(self, customer_id, price_id, units, client_id, success_url, cancel_url):
+    def checkout(self, customer_id, price_id, units, client_id, success_url, cancel_url, method="bank"):
         sid = f"cs_{len(self.sessions) + 1}"
         self.sessions[sid] = {"id": sid, "mode": "subscription", "customer": customer_id, "subscription": None,
                               "client_reference_id": f"owner:{client_id}", "price": price_id, "units": units}
-        self.checkouts.append({"customer": customer_id, "price": price_id, "units": units, "client_id": client_id,
+        self.checkouts.append({"customer": customer_id, "price": price_id, "units": units, "client_id": client_id, "method": method,
                                "success_url": success_url, "cancel_url": cancel_url})
         return f"https://checkout.stripe.test/{sid}"
 
@@ -168,8 +168,9 @@ def test_the_owners_page_shows_properties_units_and_both_prices(app, owner, fake
     assert "$1,000.00 a year" in page and "$1,020.00 a year" in page
     assert "Properties and units" in page and "Acme Gardens" in page
     assert "Unit counts" not in page                              # the payer is not sent to the admin page
-    assert "Apple Pay" in page and "PayPal, where offered" in page
-    assert "Subscribe and add a payment method" in page and fake.checkouts == []
+    assert "Bank account (preferred)" in page and "Apple Pay" in page and "PayPal" not in page
+    assert page.index("Bank account (preferred)") < page.index("Credit or debit card")
+    assert "Subscribe — pay by bank account" in page and "Pay by card instead" in page and fake.checkouts == []
 
 
 # ── subscribing ──────────────────────────────────────────────────────────────
@@ -196,6 +197,36 @@ def test_subscribing_goes_to_stripe_with_the_units_and_comes_back_subscribed(app
     r = bea.post(_url(owner, "/subscribe"), data={"interval": "month"})          # a second one is refused
     assert r.status_code == 302 and len(fake.checkouts) == 1
     assert "already has a subscription" in bea.get(_url(owner)).get_data(as_text=True)
+
+
+def test_bank_account_is_the_main_way_to_pay_and_card_the_other(app, owner, fake, monkeypatch):
+    """ACH is 0.8% capped at $5, a card 2.9% + 30c. One method per Checkout,
+    because Stripe re-orders a mixed list on its own (card above bank)."""
+    import types
+    import stripe
+    bea = _as(app, user_id=owner["bea"])
+    bea.post(_url(owner, "/subscribe"), data={"interval": "quarter"})                       # no choice sent: bank
+    bea.post(_url(owner, "/subscribe"), data={"interval": "quarter", "method": "card"})
+    assert [c["method"] for c in fake.checkouts] == ["bank", "card"]
+    r = bea.post(_url(owner, "/subscribe"), data={"interval": "quarter", "method": "paypal"})
+    assert r.status_code == 302 and len(fake.checkouts) == 2                              # refused, nothing started
+
+
+def test_each_checkout_offers_only_its_own_method(app, monkeypatch):
+    import types
+    import stripe
+    seen = []
+    monkeypatch.setattr(stripe.checkout.Session, "create",
+                        lambda **kw: seen.append(kw) or types.SimpleNamespace(url="https://checkout.stripe.test/x"))
+    app.config["STRIPE_SECRET_KEY"] = "sk_test_x"
+    with app.app_context():
+        subs.api_checkout("cus_1", "price_1", 10, 6, "https://s", "https://c", method="bank")
+        subs.api_checkout("cus_1", "price_1", 10, 6, "https://s", "https://c", method="card")
+    bank, card = seen
+    assert bank["payment_method_types"] == ["us_bank_account"]
+    assert bank["payment_method_options"]["us_bank_account"]["verification_method"] == "automatic"
+    assert card["payment_method_types"] == ["card"] and "payment_method_options" not in card
+    assert bank["line_items"] == [{"price": "price_1", "quantity": 10}] and bank["mode"] == "subscription"
 
 
 def test_a_checkout_that_is_not_this_owners_is_ignored(app, owner, fake, session):
@@ -370,7 +401,7 @@ def test_payments_and_failures_arrive_by_webhook_once_each(app, owner, fake, ses
     fake.subs["sub_1"]["status"] = "canceled"
     _webhook(app, monkeypatch, {"type": "customer.subscription.deleted", "data": {"object": {"id": "sub_1"}}})
     assert subs.live_subscription(session.get(m.Client, owner["client"])) is None
-    assert "Subscribe and add a payment method" in bea.get(_url(owner)).get_data(as_text=True)    # can start again
+    assert "Subscribe — pay by bank account" in bea.get(_url(owner)).get_data(as_text=True)    # can start again
 
 
 def test_a_subscription_checkout_never_settles_an_invoice(app, owner, fake, session, monkeypatch):

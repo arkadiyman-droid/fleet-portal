@@ -363,10 +363,16 @@ subscribed is billed the new total, prorated on its next charge.
 **The payer's side.** A person given *may manage … subscription and payment*
 for an owner (Users → Permissions; `models.BillingControl`, needs no other
 right) gets **Billing** in their menu: the owner's properties, units and both
-prices. **Subscribe and add a payment method** opens Stripe Checkout, which
-shows every payment method switched on in Stripe (card, Apple Pay, Google
-Pay, bank account, PayPal where Stripe offers it), keeps the one used on file
-and charges it automatically each period. **Manage card and invoices** opens
+prices. The main button, **Subscribe — pay by bank account**, opens Stripe
+Checkout for a **US bank account (ACH debit)** only; the smaller **Pay by card
+instead** opens one for cards only (Apple Pay and Google Pay come with cards).
+The bank account is the main way on purpose: Stripe charges 0.8% capped at $5
+for ACH against 2.9% + 30¢ for a card, so on a quarterly bill of thousands of
+dollars it saves hundreds (`subscriptions.CHECKOUT_METHODS`). One method per
+Checkout because Stripe re-orders a mixed list itself (it put card above the
+bank account when both were offered), and naming the methods keeps Klarna,
+Cash App Pay and other shopper methods off a business subscription. Stripe
+keeps the method used on file and charges it automatically each period. **Manage card and invoices** opens
 Stripe's own customer page (card on file, invoices and receipts, cancel at the
 end of the paid period). Monthly ↔ quarterly is switched on the owner's page:
 the unused part of the period is credited and the new one charged. No card
