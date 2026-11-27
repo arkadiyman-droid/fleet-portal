@@ -124,13 +124,14 @@
 {% if y %}
 <div class="ut-sec">
   <h2>Utility costs by property (Yardi)</h2>
+  <p class="card-sub" style="margin:0 0 4px"><b>Click a property</b> to study its utilities: month-by-month matrices per fuel and per meter, year over year, and use against the weather.</p>
   <p class="card-sub">What was paid for electric, gas and water &amp; sewer, from Yardi's payables (accounts 512-010 to 512-050), {{ y.first.strftime('%b %Y') if y.first }} to {{ y.last.strftime('%b %Y') if y.last }}. Bills are counted in the year their service period ends; deposits are left out (money held, not use). Yardi has no kWh or therms; {% if y.usage %}the usage below comes from the utility bills Conservice keeps for each payable{% else %}usage comes with the bills and the utilities' feeds{% endif %}.
     "Apartments" = vacant-unit and owner-paid apartment electric, not the plant. {{ y.rows|length }} portal properties matched by their service addresses (or name){% if y.others %}; {{ y.others|length }} Yardi properties are not in the portal (below){% endif %}.</p>
   <div class="ut-scroll"><table class="ut">
     <thead><tr><th>Property</th>{% for yy in y.years %}<th>{{ yy }}{% if yy > y.ref %} <span class="b">to date</span>{% endif %}</th>{% endfor %}
       <th>{{ y.ref }} vs {{ y.prev }}</th><th>Per apt {{ y.ref }}</th><th>Electric</th><th>Gas</th><th>Water</th><th>Apartments</th><th>Meters on a building</th></tr></thead>
     <tbody>{% for r in y.rows %}
-      <tr><td class="l"><b>{{ r.name }}</b> <span class="b">{{ r.codes|join(', ') }}</span></td>
+      <tr><td class="l"><a href="{{ url_for('admin.utilities_property', property_id=r.id) }}" title="Open {{ r.name }}'s utilities: matrices by month, meter, year and weather"><b>{{ r.name }}</b></a> <span class="b">{{ r.codes|join(', ') }}</span></td>
         {% for yy in y.years %}<td>{{ money(r.years.get(yy)) }}</td>{% endfor %}
         <td class="{{ 'over' if r.change and r.change > 0.15 else 'under' if r.change and r.change < -0.05 }}">{% if r.change is not none %}{{ '+' if r.change > 0 }}{{ '%.0f'|format(r.change * 100) }}%{% else %}—{% endif %}</td>
         <td>{{ money(r.per_unit) }}</td>
@@ -173,7 +174,7 @@
     <thead><tr><th rowspan="2">Property</th><th colspan="4" style="text-align:center">Electric (kWh)</th><th colspan="4" style="text-align:center">Gas (therms)</th><th colspan="4" style="text-align:center">Water (kgal)</th></tr>
       <tr>{% for g in ['electric', 'gas', 'water'] %}<th>{{ y.ref }}</th><th>vs {{ y.prev }}</th><th>$ / unit</th><th>Per apt</th>{% endfor %}</tr></thead>
     <tbody>{% for r in y.rows %}{% if r.use %}
-      <tr><td class="l"><b>{{ r.name }}</b></td>{{ usecell(r, 'electric', y.ref) }}{{ usecell(r, 'gas', y.ref) }}{{ usecell(r, 'water', y.ref) }}</tr>
+      <tr><td class="l"><a href="{{ url_for('admin.utilities_property', property_id=r.id) }}"><b>{{ r.name }}</b></a></td>{{ usecell(r, 'electric', y.ref) }}{{ usecell(r, 'gas', y.ref) }}{{ usecell(r, 'water', y.ref) }}</tr>
     {% endif %}{% endfor %}</tbody>
   </table></div>
 </div>

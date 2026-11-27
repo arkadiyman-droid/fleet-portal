@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ prop.name }} utilities — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .us { --s100:#cde2fb; --s700:#0d366b; --water:#2a78d6; --gas:#eb6834; --electric:#1baf7a; --apts:#eda100;
+        --neg:#2a78d6; --pos:#e34948; --mid:#f0efec; --ink:#1a1d23; --ink2:#52514e; --line:#e2e5ea; }
+  .us-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 16px; margin:4px 0 2px; }
+  .us-head h1 { font-size:22px; margin:0; }
+  .us-sub { color:var(--muted); font-size:13px; }
+  .us-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin:12px 0 16px; }
+  .us-tile { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; min-width:0; }
+  .us-tile .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); display:flex; align-items:center; gap:6px; }
+  .us-tile .l i { width:10px; height:10px; border-radius:3px; display:inline-block; }
+  .us-tile .n { font-size:22px; font-weight:750; line-height:1.25; }
+  .us-tile .s { font-size:12px; color:var(--muted); }
+  .us-sec { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin-bottom:16px; }
+  .us-sec h2 { font-size:15px; margin:0 0 2px; }
+  .us-sec > .card-sub { margin:0 0 10px; max-width:1000px; }
+  .us-ctl { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin:6px 0 10px; font-size:12.5px; }
+  .us-ctl .grp { display:inline-flex; border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .us-ctl button { background:#fff; border:0; border-right:1px solid var(--border); padding:4px 10px; font:inherit; cursor:pointer; color:var(--ink2); }
+  .us-ctl button:last-child { border-right:0; }
+  .us-ctl button[aria-pressed="true"] { background:#1c5cab; color:#fff; }
+  .us-ctl .lab { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+  .us-scroll { overflow-x:auto; }
+  table.mx { border-collapse:separate; border-spacing:2px; font-size:11.5px; }
+  table.mx th { font-size:10.5px; color:var(--muted); font-weight:600; padding:2px 4px; text-align:center; white-space:nowrap; }
+  table.mx th.rh { text-align:left; font-size:11.5px; color:var(--ink); font-weight:600; min-width:230px; max-width:340px; white-space:normal; line-height:1.25; }
+  table.mx th.rh .b { font-weight:400; color:var(--muted); font-size:10.5px; }
+  table.mx td { min-width:44px; height:26px; text-align:center; border-radius:4px; padding:0 3px; white-space:nowrap; font-variant-numeric:tabular-nums; cursor:default; position:relative; }
+  table.mx td.tot { background:transparent !important; color:var(--ink); font-weight:650; text-align:right; padding-left:8px; }
+  table.mx td.none { background:#fafafa; color:#c4c4c4; }
+  table.mx td.part { background-image:repeating-linear-gradient(135deg, rgba(255,255,255,.55) 0 3px, transparent 3px 7px); }
+  table.mx td.open { outline:1px dashed #9ca3af; outline-offset:-2px; }
+  table.mx td.gap { background:#fff; outline:1.5px solid #d03b3b; outline-offset:-2px; color:#d03b3b; }
+  table.mx td.twice::after { content:""; position:absolute; top:2px; right:2px; width:6px; height:6px; border-radius:50%; background:#d03b3b; box-shadow:0 0 0 1.5px #fff; }
+  table.mx td.flat::before { content:"F"; position:absolute; top:0; left:3px; font-size:8.5px; font-weight:700; opacity:.75; }
+  table.mx tr.sep th, table.mx tr.sep td { border-top:8px solid transparent; }
+  .us-key { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:11.5px; color:var(--ink2); margin-top:8px; align-items:center; }
+  .us-key .sw { display:inline-block; width:14px; height:12px; border-radius:3px; vertical-align:middle; margin-right:4px; }
+  .us-ramp { display:inline-flex; align-items:center; gap:6px; }
+  .us-ramp span.bar { width:120px; height:10px; border-radius:3px; }
+  .us-tip { position:fixed; pointer-events:none; background:#111827; color:#f9fafb; font-size:12px; line-height:1.4; padding:7px 9px; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.18); z-index:50; display:none; max-width:320px; }
+  .us-chart { width:100%; }
+  .us-chart svg { display:block; width:100%; }
+  .us-legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:12px; color:var(--ink2); margin:2px 0 6px; }
+  .us-legend span i { display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:-1px; }
+  .us-two { display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:16px; }
+  .us-fit { font-size:12.5px; color:var(--ink2); margin:4px 0 0; }
+  .us-fit b { color:var(--ink); }
+  table.us-plain { font-size:12px; border-collapse:collapse; width:auto; }
+  table.us-plain th, table.us-plain td { padding:3px 8px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; }
+  table.us-plain th:first-child, table.us-plain td:first-child { text-align:left; }
+  @media (max-width:640px) { .us-two { grid-template-columns:1fr; } .us-tile .n { font-size:19px; } }
+</style>
+{% endblock %}
+{% block content %}
+<div class="us">
+  <div class="us-head">
+    <h1>{{ prop.name }}</h1>
+    <span class="us-sub">{% if prop.unit_count %}{{ '{:,}'.format(prop.unit_count) }} apartments · {% endif %}{{ s.counts.accounts }} utility accounts, {{ '{:,}'.format(s.counts.bills) }} bills from Yardi{% if s.weather %} · weather: {{ s.weather.place }}{% endif %}</span>
+  </div>
+  <p class="us-sub" style="margin:0"><a href="{{ url_for('admin.utilities_page') }}">← Utilities</a> · Bills are spread over the months they cover, by days. Months after {{ s.last_full }} are still coming in (dashed). Usage is the utility's delivery reads (supply lines, ESCO invoices and sewer repeat it); a hatched cell has usage on less than {{ '%.0f'|format(s.cover_min * 100) }}% of the utility's bills for that month.{% if s.mcp %} NYC's flat-rate water (Multi-Family Conservation Program) is billed a year ahead: those bills, and Yardi's voids and re-entries of them, are spread over the 12 months they pay for.{% endif %}</p>
+
+  <div class="us-tiles" id="us-tiles"></div>
+
+  <div class="us-sec">
+    <h2>Monthly cost by fuel</h2>
+    <p class="card-sub">Everything paid, month by month. Apartments = owner-paid apartment and vacant-unit electric, not the plant.</p>
+    <div class="us-legend" id="us-bars-legend"></div>
+    <div class="us-chart" id="us-bars"></div>
+  </div>
+
+  <div class="us-sec">
+    <h2>Year × month</h2>
+    <p class="card-sub">One fuel at a time: each row a year, each column a month, darker = more. Read across for the season, down for the trend.</p>
+    <div class="us-ctl">
+      <span class="lab">Fuel</span><span class="grp" id="ym-fuel"></span>
+      <span class="lab">Show</span><span class="grp" id="ym-metric"></span>
+    </div>
+    <div class="us-scroll"><table class="mx" id="ym"></table></div>
+    <div class="us-key" id="ym-key"></div>
+  </div>
+
+  <div class="us-sec">
+    <h2>Meters × month</h2>
+    <p class="card-sub">Every account Yardi pays for this property, month by month. Red outline = a month with no bill between the account's first and last (a gap); red dot = paid twice?; F = a flat charge with no usage on it.</p>
+    <div class="us-ctl">
+      <span class="lab">Fuel</span><span class="grp" id="mm-fuel"></span>
+      <span class="lab">Show</span><span class="grp" id="mm-metric"></span>
+      <span class="lab">Shade</span><span class="grp" id="mm-scale"></span>
+      <span class="lab">Months</span><span class="grp" id="mm-span"></span>
+    </div>
+    <div class="us-scroll"><table class="mx" id="mm"></table></div>
+    <div class="us-key" id="mm-key"></div>
+  </div>
+
+  <div class="us-sec">
+    <h2>Year over year</h2>
+    <p class="card-sub">Each cell is the year's figure; the color is the change from the year before (blue = down, red = up, gray = within 2%). A year still in progress is shown but not colored.</p>
+    <div class="us-scroll"><table class="mx" id="yoy"></table></div>
+  </div>
+
+  <div class="us-sec" id="us-wx-sec">
+    <h2>Use against the weather</h2>
+    <p class="card-sub" id="us-wx-sub"></p>
+    <div class="us-two" id="us-wx"></div>
+  </div>
+
+  <div class="us-sec">
+    <details><summary style="cursor:pointer"><b style="font-size:15px">The numbers as a table</b></summary>
+      <div class="us-scroll" id="us-table" style="margin-top:8px"></div>
+    </details>
+  </div>
+</div>
+<div class="us-tip" id="us-tip"></div>
+<script type="application/json" id="us-data">{{ s|tojson }}</script>
+<script src="{{ url_for('static', filename='js/utility_study.js') }}"></script>
+{% endblock %}

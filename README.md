@@ -573,6 +573,42 @@ exist yet.
      266 readings were dropped as data errors. From 2024 on, about 92-99% of
      electric and gas delivery cost has usage. 2023 and water are partial:
      NYC Water Board's `-MM/YY` invoices have no Conservice record.
+5. **One property's utilities, for study** (`/utilities/property/<id>`;
+   click a property on the Utilities page; `app/utility_study.py`,
+   `templates/utility_study.html`, `static/js/utility_study.js`).
+   Superuser only.
+   - **The calendar:** bills are spread over the months they cover, by
+     days, so months and years add up whatever the billing cycle. NYC's
+     flat-rate water (Multi-Family Conservation Program) is billed a year
+     ahead and filed by Yardi under one month. Where a property has such
+     bills, its NYC Water Board water lines without usage (and Yardi's voids
+     and re-entries of them) are spread over the 12 months they pay for.
+     The calendar starts where the property's bills do and ends at the
+     current month.
+   - **Tiles:** the last complete year per fuel: cost, usage, price per
+     unit, per apartment, and the change.
+   - **Monthly cost by fuel:** stacked bars. Months whose bills are still
+     coming in are faded.
+   - **Year × month matrix:** one fuel. The cells can show usage, cost,
+     $ per unit, per apartment per day, or per degree-day. A hatched cell has
+     usage on under 90% of the utility's bills that month.
+   - **Meters × month matrix:** every account. The cells show cost or usage,
+     shaded across the whole matrix or row by row. A red outline is a gap (no
+     bill between an account's first and last), a red dot is "paid twice?",
+     and F is a flat charge.
+   - **Year over year:** each figure by year, colored by the change.
+   - **Use against the weather:** gas against heating degree-days and
+     electric against cooling degree-days (65 F base), month by month. A
+     robust least-squares line gives the base load, use per degree-day, R²
+     and the weather-driven share. Months over 3.5 robust standard
+     deviations off are left out and drawn hollow.
+   - **A plain table** with the same numbers.
+   - **Weather source:** daily mean temperatures come from Open-Meteo's
+     archive (free, no key; only a city-level point is sent). They are
+     cached in `instance/weather/` for 3 days, and the cache is used when the
+     archive is down. Each property's point is in
+     `instance/weather_places.json` (`{property id: [lat, lon, "label"]}`);
+     New York City otherwise. Set `UTILITY_WEATHER=False` to turn weather off.
 
 Tables: `benchmark_properties`, `benchmark_years`, `benchmark_stats`,
 `building_benchmarks`, `utility_accounts`, `utility_account_buildings`,

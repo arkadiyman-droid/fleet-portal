@@ -2699,6 +2699,22 @@ def utilities_refresh():
     return redirect(url_for("admin.utilities_page"))
 
 
+@admin_bp.route("/utilities/property/<int:property_id>")
+def utilities_property(property_id):
+    """One property's pool of utilities as matrices (app/utility_study.py).
+    Superuser only, like the Utilities page."""
+    if not is_superuser():
+        abort(403)
+    from app import utility_study
+    prop = db.session.get(Property, property_id) or abort(404)
+    s = utility_study.study(prop, instance_path=current_app.instance_path,
+                            weather=current_app.config.get("UTILITY_WEATHER", True))
+    if s is None:
+        flash(f"No Yardi utility bills are filed under {prop.name} yet.", "error")
+        return redirect(url_for("admin.utilities_page"))
+    return render_template("utility_study.html", title=f"{prop.name} — utilities", s=s, prop=prop)
+
+
 @admin_bp.route("/utilities/link", methods=["POST"])
 def utilities_link():
     """Set by hand which LL84 property a building belongs to ('none' = it has
