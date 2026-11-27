@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Fan effect — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .fe-cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(330px, 1fr)); gap:14px; margin:12px 0 18px; }
+  .fe-card { background:var(--panel, #fff); border:1px solid var(--border); border-radius:12px; padding:14px 16px; min-width:0; }
+  .fe-card h2 { font-size:15px; margin:0 0 10px; }
+  .fe-big { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .fe-big .n { font-size:26px; font-weight:750; line-height:1.15; }
+  .fe-big .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .fe-big .s { font-size:12px; color:var(--muted); margin-top:2px; }
+  .fe-v { margin-top:10px; padding:7px 10px; border-radius:8px; font-size:13px; }
+  .fe-v.clear { background:#ecfdf5; color:#065f46; } .fe-v.unclear { background:#f3f4f6; color:#374151; } .fe-v.few { background:#fffbeb; color:#92400e; }
+  .fe-warm { color:#b45309; } .fe-cool { color:#1d4ed8; } .fe-less { color:#15803d; } .fe-more { color:#b91c1c; }
+  .fe-chart { background:var(--panel, #fff); border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin-bottom:18px; }
+  .fe-chart svg { width:100%; max-width:640px; height:auto; display:block; }
+  .fe-key { display:flex; gap:16px; font-size:12px; color:var(--muted); margin:4px 0 0; flex-wrap:wrap; }
+  .fe-key i { display:inline-block; width:18px; height:3px; vertical-align:middle; margin-right:5px; border-radius:2px; }
+  table.fe { width:100%; border-collapse:collapse; font-size:13px; }
+  table.fe th, table.fe td { padding:5px 8px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; }
+  table.fe th:first-child, table.fe td:first-child { text-align:left; white-space:normal; }
+  table.fe th { font-size:11px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
+  .fe-how { font-size:13px; line-height:1.55; max-width:860px; }
+  .fe-how li { margin:3px 0; }
+  @media (max-width: 640px) { .fe-big { grid-template-columns:1fr; } table.fe { font-size:12px; } }
+</style>
+{% endblock %}
+{% macro deg(v) %}{% if v is none %}—{% else %}{{ '%+.2f'|format(v) }}°{% endif %}{% endmacro %}
+{% macro mins(v) %}{% if v is none %}—{% else %}{{ '%+.0f'|format(v) }} min{% endif %}{% endmacro %}
+{% macro cell(x) %}{% if x %}<td>{{ x.n }}</td><td class="{{ 'fe-warm' if x.effect > 0 else 'fe-cool' }}">{{ deg(x.effect) }}</td><td class="{{ 'fe-less' if x.burner < 0 else 'fe-more' }}">{{ mins(x.burner) }}</td>{% else %}<td>0</td><td>—</td><td>—</td>{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head" style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+  <h1>Fan effect</h1>
+  <a class="card-sub" href="{{ url_for('admin.fans_page') }}">← Fans</a>
+</div>
+<p class="card-sub" style="margin:-4px 0 4px;max-width:900px">What switching the roof exhaust fans does to the apartments and to the burner.
+  Every time a building's fans switched off (or on) is compared with the same building at the same time of day on nearby days when they did not switch.
+  {% if r.since %}Fan history starts {{ local(r.since).strftime('%b %d') }}{% endif %}; {{ r.buildings_with_data }} of {{ n_sites }} fan buildings have both fan and apartment readings.
+  Worked out {{ local(r.computed_at).strftime('%I:%M %p').lstrip('0') }} (kept half an hour).</p>
+
+{% set off, on = r.off, r.on %}
+<div class="fe-cards">
+  {% for key, x, title in (('off', off, 'When the fans switch OFF'), ('on', on, 'When the fans switch ON')) %}
+  {% set v = h.verdict(x) %}
+  <div class="fe-card">
+    <h2>{{ title }}{% if x %} <span class="card-sub" style="font-weight:400">· {{ x.n }} switch{{ 'es' if x.n != 1 }} in {{ x.buildings }} building{{ 's' if x.buildings != 1 }}{% if x.out is not none %}, about {{ '%.0f'|format(x.out) }}° outside{% endif %}</span>{% endif %}</h2>
+    {% if v == 'few' %}
+      <div class="fe-v few">{% if key == 'on' %}Not measurable yet{% if x %} ({{ x.n }} usable switch{{ 'es' if x.n != 1 }}){% endif %}. The fans start at the same hours every day (most at 7am and 5pm), so there is never a comparable day when they stayed off at that hour to measure against. The "switch off" result answers the same question from the other side.{% else %}Not enough switches yet to say. It firms up as the season goes on.{% endif %}</div>
+    {% else %}
+    <div class="fe-big">
+      <div><div class="l">Apartments {{ window_h }} h later</div>
+        <div class="n {{ 'fe-warm' if x.effect > 0 else 'fe-cool' }}">{{ deg(x.effect) }}</div>
+        <div class="s">{{ 'warmer' if x.effect > 0 else 'cooler' }} than the same hours with the fans {{ 'still on' if key == 'off' else 'still off' }} · ±{{ '%.2f'|format(1.96 * (x.se or 0)) }}°</div></div>
+      <div><div class="l">Burner in those {{ window_h }} h</div>
+        <div class="n {{ 'fe-less' if x.burner < 0 else 'fe-more' }}">{{ mins(x.burner) }}</div>
+        <div class="s">{{ '%.0f'|format(x.burner_event) }} min, against {{ '%.0f'|format(x.burner_control) }} min with the fans {{ 'still on' if key == 'off' else 'still off' }} · ±{{ '%.0f'|format(1.96 * (x.burner_se or 0)) }}</div></div>
+    </div>
+    <div class="fe-v {{ v }}">{% if v == 'clear' %}A real effect: larger than its margin of error.{% else %}Not yet distinguishable from no effect: the margin of error is larger than the effect.{% endif %}
+      {% if key == 'off' and x.burner < 0 %} With the fans off the burner ran {{ '%.0f'|format(-x.burner) }} min less per {{ window_h }} hours{% if x.burner_control %} ({{ '%.0f'|format(-100 * x.burner / x.burner_control) }}% less){% endif %} while the apartments held {{ 'slightly warmer' if x.effect > 0 else 'about the same' }}.{% endif %}</div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+
+{% set ch = h.chart(off.profile) if off else none %}
+{% if ch %}
+<div class="fe-chart">
+  <h3 style="margin:0 0 4px;font-size:14px">The apartments around a switch-off, on average</h3>
+  <div class="card-sub" style="margin-bottom:6px">How far the apartment average moved from the hour before, after the fans switched off, against the same hours when they stayed on.</div>
+  <svg viewBox="0 0 {{ ch.w }} {{ ch.h }}" role="img" aria-label="Apartment temperature change around fans switching off, against the same hours with the fans on">
+    {% for y, l in ch.yticks %}<line x1="{{ ch.pad }}" x2="{{ ch.w - 10 }}" y1="{{ y }}" y2="{{ y }}" stroke="#e5e7eb" stroke-width="1"/><text x="{{ ch.pad - 4 }}" y="{{ y + 3 }}" text-anchor="end" font-size="10" fill="#6b7280">{{ l }}</text>{% endfor %}
+    <line x1="{{ ch.pad }}" x2="{{ ch.w - 10 }}" y1="{{ ch.zero }}" y2="{{ ch.zero }}" stroke="#9ca3af" stroke-width="1"/>
+    <line x1="{{ ch.switch }}" x2="{{ ch.switch }}" y1="8" y2="{{ ch.h - 22 }}" stroke="#6b7280" stroke-dasharray="4 3" stroke-width="1"/>
+    {% for x, l in ch.ticks %}<text x="{{ x }}" y="{{ ch.h - 6 }}" text-anchor="middle" font-size="10" fill="#6b7280">{{ l }}</text>{% endfor %}
+    <polyline points="{{ ch.control }}" fill="none" stroke="#6b7280" stroke-width="2" stroke-dasharray="5 4"/>
+    <polyline points="{{ ch.event }}" fill="none" stroke="#2563eb" stroke-width="2.5"/>
+  </svg>
+  <div class="fe-key"><span><i style="background:#2563eb"></i>fans switched off</span><span><i style="background:#6b7280"></i>same hours, fans stayed on</span></div>
+</div>
+{% endif %}
+
+{% if r.by_prop %}
+<div class="section" style="margin-bottom:18px">
+  <h2>By property</h2>
+  <table class="fe">
+    <thead><tr><th>Property</th><th>Switches off</th><th>Apartments</th><th>Burner</th><th>Switches on</th><th>Apartments</th><th>Burner</th></tr></thead>
+    <tbody>{% for name, v in r.by_prop.items() %}<tr><td>{{ name }}</td>{{ cell(v.off) }}{{ cell(v.on) }}</tr>{% endfor %}</tbody>
+  </table>
+  <p class="card-sub" style="margin:6px 0 0">Apartments = how much warmer (+) or cooler (−) they were {{ window_h }} h after the switch than on comparable hours; burner = minutes more (+) or less (−) in those {{ window_h }} h. A property with few switches swings a lot from one to the next.</p>
+</div>
+<details class="section" style="margin-bottom:18px">
+  <summary style="cursor:pointer;font-weight:600">By building ({{ r.by_building|length }})</summary>
+  <table class="fe" style="margin-top:8px">
+    <thead><tr><th>Building</th><th>Switches off</th><th>Apartments</th><th>Burner</th><th>Switches on</th><th>Apartments</th><th>Burner</th></tr></thead>
+    <tbody>{% for b in r.by_building %}<tr><td>{{ b.name }} <span class="card-sub">{{ b.prop or '' }}</span></td>{{ cell(b.off) }}{{ cell(b.on) }}</tr>{% endfor %}</tbody>
+  </table>
+</details>
+{% else %}
+<p class="card-sub">No switches with readings on both sides yet.</p>
+{% endif %}
+
+<div class="section fe-how">
+  <h2>How this is measured</h2>
+  <ul>
+    <li><b>A switch</b>: a building's fans going from mostly on to mostly off (or the reverse), having been the other way for the hour before, and staying the new way for the next {{ window_h }} hours. A switch may ramp over up to 20 minutes as groups start or stop one after another.</li>
+    <li><b>What is measured</b>: how far the apartment average (the building's 2010 box) moved from the hour before the switch to the last hour of the window, and how many minutes the burner ran in the window.</li>
+    <li><b>Compared with</b>: the same building, same time of day (±20 min), on other days within {{ control_days }} days either side when the fans stayed as they were, and it was within {{ control_out }}° outside. The effect is the switch minus the average of those days, so the time of day, the weather and the building's own habits cancel out.</li>
+    <li><b>Why the burner matters as much as the temperature</b>: when the fans pull heat out, the box sees cooler apartments and runs the burner longer, so much of the fans' cost shows up as fuel rather than as colder apartments.</li>
+    <li><b>The ± figures</b> are 95% margins. An effect larger than its margin is real; a smaller one may be chance. Apartment readings are whole degrees, so a few tenths of a degree only show up averaged over many switches.</li>
+  </ul>
+</div>
+{% endblock %}

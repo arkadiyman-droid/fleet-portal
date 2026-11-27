@@ -33,7 +33,7 @@
   .fn-note { font-size:12px; color:var(--muted); margin:0 0 12px; }
 
   .fn-list { background:#fff; border:1px solid var(--border); border-radius:10px; overflow:hidden; margin:0 0 14px; }
-  .fn-cols, .fn-row > summary { display:grid; grid-template-columns: 6px minmax(150px, 1.25fr) minmax(170px, 1.5fr) 56px minmax(200px, 1.5fr) 52px 262px 64px 62px; gap:10px; align-items:center; padding:6px 12px 6px 0; }
+  .fn-cols, .fn-row > summary { display:grid; grid-template-columns: 6px minmax(150px, 1.25fr) minmax(170px, 1.5fr) 56px 76px minmax(200px, 1.5fr) 52px 262px 64px 62px; gap:10px; align-items:center; padding:6px 12px 6px 0; }
   .fn-cols { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); border-bottom:1px solid var(--border); background:#fafafa; }
   .fn-prop { display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; padding:9px 14px; background:#eef2f7; border-bottom:1px solid var(--border); }
   .fn-prop h2 { margin:0; font-size:15px; }
@@ -63,6 +63,8 @@
   .fn-f { width:16px; height:16px; border-radius:3px; font-size:9px; font-weight:700; line-height:16px; text-align:center; font-variant-numeric:tabular-nums; }
 
   /* the cold schedule as a 24-hour strip */
+  .fn-apt { font-size:13px; } .fn-apt .tg { color:var(--muted); font-size:11px; margin-left:1px; }
+  .fn-apt.hot b { color:#b91c1c; } .fn-apt.warm b { color:#b45309; } .fn-apt.cool b { color:#1d4ed8; }
   .fn-cs { display:grid; grid-template-columns:52px 144px 1fr; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
   .fn-cs .want { font-weight:700; color:var(--text); white-space:nowrap; }
   .fn-cs .want.off { color:#6b7280; }
@@ -177,7 +179,11 @@
 {% macro pstrip(b, hour) %}{% if b.bits %}{% for x in b.bits %}<span class="{{ 'on' if x }} {{ 'now' if loop.index0 == hour }}"></span>{% endfor %}{% else %}{% for x in range(24) %}<span class="{{ 'now' if x == hour }}"></span>{% endfor %}{% endif %}{% endmacro %}
 {% macro strip(bits, hour) %}{% for b in bits %}<span class="{{ 'on' if b }} {{ 'now' if loop.index0 == hour }}"></span>{% endfor %}{% endmacro %}
 
-<h1>Exhaust fans</h1>
+<div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px">
+  <h1 style="margin:0">Exhaust fans</h1>
+  {% if summary.apt and summary.apt.n %}<span class="card-sub" title="Average of {{ summary.apt.n }} buildings' apartment averages, from each building's heating box">Apartments under these fans: <b style="color:var(--text)">{{ '%.1f'|format(summary.apt.avg) }}°</b> on average, target {{ '%.1f'|format(summary.apt.target) }}° ({{ summary.apt.n }} buildings)</span>{% endif %}
+  {% if manage %}<a href="{{ url_for('admin.fans_effect_page') }}" style="font-weight:600;font-size:13.5px;margin-left:auto" title="What switching the fans off or on does to the apartments and the burner, measured">Fan effect →</a>{% endif %}
+</div>
 
 <div class="fn-tiles">
   <a class="fn-tile {{ 'sel' if show == 'all' }}" href="{{ link('all') }}">
@@ -259,6 +265,7 @@
     <h2>{% if pp %}<button type="button" class="fn-ptog" aria-expanded="{{ 'true' if pp_open else 'false' }}" title="Show the plan {{ grp.name }}'s fans run on{% if manage %}, and change its hours{% endif %}">{{ grp.name }} <span aria-hidden="true">▾</span></button>{% else %}{{ grp.name }}{% endif %}</h2>{% if grp.client %}<span class="card-sub">{{ grp.client }}</span>{% endif %}
     {% if grp.want %}{% set gw = grp.want %}<span class="now {{ 'on' if gw.on else 'off' }}" title="Middle reading of {{ grp.plan_n }} outdoor sensor{{ 's' if grp.plan_n != 1 }} on this property{% if grp.out_min is not none and grp.out_min != grp.out_max %}, which read {{ t(grp.out_min) }} to {{ t(grp.out_max) }}{% endif %}{% if gw.held %}. Held on this colder schedule by hysteresis until it reads {{ t(gw.release) }}{% endif %}"><b>{{ t(grp.plan_out) }}</b> outside → <b>{{ gw.band.label }}</b> schedule{% if gw.held %} (held){% endif %}: fans should be <b class="st">{{ 'ON' if gw.on else 'OFF' }}</b>{% if gw.until %} until {{ gw.until }}{% endif %}{% if gw.pending %} · changes to the <b>{{ gw.pending.band.label }}</b> schedule in {{ gw.pending.mins }} min if the temperature stays there{% endif %}</span>{% elif grp.name %}<span class="now off">no live outdoor reading on this property</span>{% endif %}
     {{ bar(grp) }}
+    {% if grp.apt and grp.apt.n %}<span class="cnt" title="Average of {{ grp.apt.n }} building{{ 's' if grp.apt.n != 1 }}' apartment averages, against their average target">Apartments <b>{{ '%.1f'|format(grp.apt.avg) }}°</b> (target {{ '%.1f'|format(grp.apt.target) }}°)</span>{% endif %}
     <span class="cnt"><b>{{ grp.on }}</b> of {{ grp.fans }} running{% if grp.down %} · <b style="color:#dc2626">{{ grp.down }} down</b>{% endif %}{% if grp.dark %} · {{ grp.dark }} bldg{{ 's' if grp.dark != 1 }} not reporting{% endif %}{% if grp.cold %} · <b style="color:#1d4ed8">{{ grp.cold }} running in the cold</b>{% endif %}{% if grp.hand_fans %} · <b style="color:#b45309">{{ grp.hand_fans }} ignoring stop</b>{% endif %}</span>
     {% if grp.name != unfiled %}{% if manage or grp.name in run_props %}<a class="cnt" href="{{ url_for('admin.fans_property', name=grp.name) }}" style="font-weight:600" title="Load the plan's schedules for the whole property, switch its fan groups, turn automatic switching on or off">Schedules &amp; switching…</a>{% endif %}{% if grp.name in auto_props %}<span class="fn-pill cmd" title="The portal switches this property's fan groups between schedules by itself as the temperature band changes">AUTO</span>{% endif %}{% if prop_plans.get(grp.name) and prop_plans[grp.name].own %}<span class="fn-pill cmd" title="{{ grp.name }} has fan hours of its own; it does not follow the general plan. Click the property's name to see them">OWN HOURS</span>{% endif %}{% if manage and grp.behind %}<a class="fn-pill warn" href="{{ url_for('admin.fans_property', name=grp.name) }}" title="The plan's hours changed after they were loaded here. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still hold{{ 's' if grp.behind == 1 }} the old hours until you send the new ones">NEW HOURS TO SEND</a>{% elif grp.behind %}<span class="fn-pill warn" title="New hours have been set for {{ grp.name }} and have not been sent to the fans yet. {{ grp.behind }} building{{ 's' if grp.behind != 1 }} still run{{ 's' if grp.behind == 1 }} on the earlier hours; click the property's name to see both">NEW HOURS NOT SENT YET</span>{% endif %}{% endif %}
     <span class="cnt" style="margin-left:auto">{{ grp.buildings }} building{{ 's' if grp.buildings != 1 }}</span>
@@ -309,7 +316,7 @@
   </div>
   {% endif %}
   {% endif %}
-  <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span title="One square per fan, clustered by fan group">Fans</span><span class="fn-num">On</span>
+  <div class="fn-cols"><span></span><span>Building</span><span>Status</span><span class="fn-num">Outdoor</span><span class="fn-num" title="The apartments' average from the building's heating box, against the temperature it heats to (its target)">Apartments</span><span title="One square per fan, clustered by fan group">Fans</span><span class="fn-num">On</span>
     <span class="fn-cs" title="Top strip: the plan for this property's temperature. Bottom strip: what Bloom is set to do today. Then what the plan asks for this hour."><span>Plan / set</span><span class="fn-axis"><span>12a</span><span>6a</span><span>12p</span><span>6p</span></span><span>now</span></span>
     <span class="fn-num" title="Longest run time today among the fans">Run today</span><span class="fn-num" title="When the fan points were last heard from">Heard</span></div>
   {% for r in grp.rows %}
@@ -319,6 +326,7 @@
       <span class="fn-nm" title="{{ r.name }}">{{ r.name }}</span>
       <span class="fn-st" title="{{ r.flags|join(' · ') if r.flags else r.status }}">{{ r.status }}{% if r.flags|length > 1 %} <span class="card-sub">+{{ r.flags|length - 1 }}</span>{% endif %}</span>
       <span class="fn-num" {% if r.outdoor_stale %}title="Last outdoor reading {{ t(r.outdoor_last) }}, not updated since"{% elif r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) %}title="This building's sensor reads {{ '%.0f'|format(r.out_dev|abs) }}° {{ 'above' if r.out_dev > 0 else 'below' }} the property's {{ t(r.plan_out) }} — the plan uses the property's"{% endif %}><span class="{{ 'fn-odd' if r.out_dev is not none and (r.out_dev >= 5 or r.out_dev <= -5) }}">{{ t(r.outdoor) }}</span></span>
+      {% set a = r.apts %}<span class="fn-num fn-apt {{ r.apt_tone }}" title="{% if not a %}No heating box on this building in the portal{% elif not a.live %}The heating box ({{ a.box }}) is not reporting{% elif a.no_sensors %}No apartment sensor is reporting at {{ a.box }}{% else %}Apartments average {{ a.avg }}°, target {{ a.target }}° ({{ a.box }}){% endif %}">{% if r.apt_tone != 'none' %}<b>{{ a.avg }}°</b><span class="tg">/{{ a.target }}</span>{% else %}—{% endif %}</span>
       <span class="fn-fans">{% for g in r.groups %}<span class="fn-g {{ 'stop' if g.cmd is sameas false }}" title="{{ g.name }}{% if g.cmd is not none %} — commanded {{ 'START' if g.cmd else 'STOP' }}{% endif %}">{% for f in g.fans %}<span class="fn-f fn-{{ 'dark' if r.stale else f.state }}" title="{{ f.name }}: {{ 'not reporting' if r.stale else ('RUNNING while commanded off — check the switch at the fan' if f.state == 'hand' else 'running' if f.on else ('DOWN — off while commanded on' if f.fail else 'off')) }}">{{ f.num }}</span>{% endfor %}</span>{% endfor %}</span>
       <span class="fn-num">{{ "—" if r.stale else r.on }}/{{ r.total }}</span>
       {% if r.want %}{% set w = r.want %}
@@ -393,6 +401,11 @@
         <div class="fn-h-out"></div>
         <div class="card-sub" style="margin:8px 0 0 42px">Each fan · green = running</div>
         <div class="fn-h-fans"></div>
+        <div class="fn-h-aptbox" hidden>
+          <div class="card-sub" style="margin:10px 0 0 42px">Apartments under these fans · <span class="fn-h-aptsrc"></span>{% if manage %} · <a href="{{ url_for('admin.fans_effect_page') }}">what the fans do to them</a>{% endif %}</div>
+          <div class="fn-h-apt"></div>
+          <div class="fn-h-burn"></div>
+        </div>
         <p class="card-sub fn-h-note" hidden style="color:#b45309"></p>
       </div>
     </div>
@@ -430,6 +443,16 @@
         function render() {
           EchoCharts.line(box.querySelector(".fn-h-out"), {t: d.t, view, onzoom: render, unit: "°", height: 170, series: lines});
           EchoCharts.strips(box.querySelector(".fn-h-fans"), {t: d.t, view, onzoom: render, rows: d.fans});
+          const ab = box.querySelector(".fn-h-aptbox"), a = d.apt;
+          ab.hidden = !(a && a.t && a.t.length);
+          if (!ab.hidden) {
+            box.querySelector(".fn-h-aptsrc").textContent = a.box + " · " + a.res;
+            EchoCharts.line(box.querySelector(".fn-h-apt"), {t: a.t, view, onzoom: render, unit: "°", height: 150, series: [
+              {name: "Apartments' average", color: "#ea580c", data: a.avg, width: 2},
+              {name: "Target", color: "#6b7280", data: a.target, dash: "5 4", width: 1.2}]});
+            EchoCharts.strips(box.querySelector(".fn-h-burn"), {t: a.t, view, onzoom: render,
+              rows: [{name: "Burner", label: "Burner", data: a.burner}]});
+          }
         }
         render();
       })

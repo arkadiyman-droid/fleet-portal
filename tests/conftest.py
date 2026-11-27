@@ -62,8 +62,9 @@ requires_postgres = pytest.mark.skipif(
 def _fresh_heat_overnight_cache():
     """app/heat_overnight.py and app/sensor_health.py keep their answers in
     memory (they are slow to work out); a test must not see another test's."""
-    from app import abnormal, heat_overnight, sensor_health
+    from app import abnormal, fan_effect, heat_overnight, sensor_health
     abnormal.clear_cache()
+    fan_effect.clear_cache()
     heat_overnight.clear_cache()
     sensor_health.clear_cache()
     yield

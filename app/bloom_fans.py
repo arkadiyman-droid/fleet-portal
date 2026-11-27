@@ -814,6 +814,12 @@ def _natural(s):
 UNFILED = "Not filed under a property"
 
 
+def _apt_average(rows) -> dict:
+    """The apartments' average over these rows' buildings (app/fan_effect.py)."""
+    from app import fan_effect
+    return fan_effect.group_average(rows)
+
+
 def page(rows, show="all", q="", sort="property") -> dict:
     """Filter, group and total the Fans page. `rows` are summary() dicts that
     also carry `prop` / `client` (None when unfiled). Returns {groups, summary,
@@ -840,7 +846,8 @@ def page(rows, show="all", q="", sort="property") -> dict:
                 "behind": sum(1 for r in live if r.get("behind")),
                 "held": sum(1 for r in live if r.get("want") and r["want"]["held"]),
                 "fault": sum(1 for r in live if r["fail"]), "dark": sum(r["stale"] for r in rs),
-                "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None}
+                "out_min": min(outs) if outs else None, "out_max": max(outs) if outs else None,
+                "apt": _apt_average(rs)}
 
     summary = totals(rows)
     in_band = {}                                   # which properties sit in each plan band right now

@@ -440,3 +440,33 @@ def test_the_portfolio_reads_every_building_in_a_few_queries(app, world, session
 def test_the_sensors_page_says_when_it_was_checked(root, world):
     html = root.get("/sensors").get_data(as_text=True)
     assert "Checked " in html and "No sensors look faulty" in html
+
+
+def _box_reading(session, box_id, avg, target):
+    import app.models as m
+    now = dt.datetime.utcnow()
+    session.add(m.LegacyStatus(box_id=box_id, polled_at=now, ok=True, last_ok_at=now, data={
+        "read_at": now.isoformat(), "config": {"heatControlType": "11"},
+        "status": {"averageTemperature": str(avg), "targetInsideTemperature": str(target), "callForHeat": "Circ Pump",
+                   "apartmentTemperature0": str(avg), "apartmentTemperature1": str(avg),
+                   "serverTime": now.strftime("%Y-%m-%dT%H:%M:%SZ")}}))
+    session.commit()
+
+
+def test_the_fans_page_shows_the_apartments_under_the_fans(root, world, session):
+    _box_reading(session, world["box_dca"], 76, 71)                     # 18 Monroe St, under the DCA fan site
+    html = root.get("/fans").get_data(as_text=True)
+    assert ">Apartments<" in html                                       # the column
+    assert "Apartments average 76°, target 71° (18 Monroe St)" in html  # the row's reading and where it is from
+    assert "fn-apt hot" in html                                         # 5 over target
+    assert "Apartments <b>76.0°</b> (target 71.0°)" in html             # the property's average
+    assert "Fan effect →" in html
+    j = root.get(f"/fans/{world['fan_dca']}/series.json?days=1").get_json()
+    assert j["apt"]["box"] == "18 Monroe St" and j["apt"]["res"] == "every read"
+
+
+def test_the_fan_effect_page_is_the_administrators(root, pat, world):
+    html = root.get("/fans/effect").get_data(as_text=True)
+    assert "Fan effect" in html and "How this is measured" in html
+    assert "Not enough switches yet" in html or "Not measurable yet" in html
+    assert pat.get("/fans/effect").status_code == 403

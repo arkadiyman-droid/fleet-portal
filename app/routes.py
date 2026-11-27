@@ -2190,8 +2190,12 @@ def _fan_rows(now):
     cfg = current_app.config
     book = bloom_fans.plan_book(cfg)
     index, ids = _fan_index(), visible_building_ids()
+    from app import fan_effect
+    sites = BloomFanSite.query.options(joinedload(BloomFanSite.account)).all()
+    # the apartments under each building's fans, from the building's 2010 box (app/fan_effect.py)
+    apts = fan_effect.apartments([(bloom_fans.place(index, s.name, s.asset_key) or (None, None, None))[2] for s in sites])
     rows = []
-    for site in BloomFanSite.query.options(joinedload(BloomFanSite.account)).all():
+    for site in sites:
         if not site.account or not site.account.is_active:
             continue
         placed = bloom_fans.place(index, site.name, site.asset_key)
@@ -2200,6 +2204,8 @@ def _fan_rows(now):
         prop, client, _building_id, prop_id = placed or (None, None, None, None)
         s = bloom_fans.summary(site.data, now=now, cold_f=cfg.get("FAN_COLD_F", 35.0), hour=local.hour,
                                minute=local.minute, pl=book.of(prop), hyst=cfg.get("FAN_PLAN_HYST_F", 2.0))
+        a = apts.get(_building_id)
+        s.update(apts=a, apt_tone=fan_effect.tone(a))
         s.update(id=site.id, name=site.name, account=site.account.label, prop=prop, client=client, prop_id=prop_id,
                  heard=bloom_fans.age_words(s["heard_age"]),
                  url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}/fanSchedule")
@@ -2667,6 +2673,29 @@ def fans_raw(site_id):
                            bloom_url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}")
 
 
+@admin_bp.route("/fans/effect")
+def fans_effect_page():
+    """What the roof fans do to the apartments and the burner: every time a
+    building's fans switched off (or on), the next hours against the same
+    hours on nearby days when they did not switch (app/fan_effect.py).
+    Superuser only: it reads every fan building."""
+    if not is_superuser():
+        abort(403)
+    from app import bloom_fans, fan_effect, history
+    from app.models import BloomFanSite
+    index = _fan_index()
+    sites = [s for s in BloomFanSite.query.all() if s.account and s.account.is_active]
+    placed = {s.id: bloom_fans.place(index, s.name, s.asset_key) for s in sites}
+    apts = fan_effect.apartments([p[2] for p in placed.values() if p])
+    site_rows = [(s.id, s.name, placed[s.id][0] if placed[s.id] else None,
+                  (apts.get(placed[s.id][2]) or {}).get("box_id") if placed[s.id] else None) for s in sites]
+    res = fan_effect.study(site_rows, app=current_app._get_current_object())
+    return render_template("fans_effect.html", title="Fan effect", r=res, local=history.local,
+                           window_h=fan_effect.WINDOW_H, control_days=fan_effect.CONTROL_DAYS,
+                           control_out=fan_effect.CONTROL_OUT_F, n_sites=len(site_rows), h=fan_effect,
+                           n_boxes=sum(1 for x in site_rows if x[3]))
+
+
 @admin_bp.route("/fans/<int:site_id>/series.json")
 def fans_series(site_id):
     """History for one building's fans — outdoor, fans running, and an on/off
@@ -2676,6 +2705,13 @@ def fans_series(site_id):
     days = {"1": 1, "2": 2, "7": 7, "30": 30}.get(request.args.get("days", "1"), 1)
     data = bloom_fans.series(site, days)
     data["name"] = site.name
+    # the apartments and the burner of the building under these fans (app/fan_effect.py)
+    from app import fan_effect
+    placed = bloom_fans.place(_fan_index(), site.name, site.asset_key)
+    a = fan_effect.apartments([placed[2]]).get(placed[2]) if placed else None
+    data["apt"] = fan_effect.history(a["box_id"], days) if a else None
+    if a:
+        data["apt"]["box"] = a["box"]
     return jsonify(data)
 
 

@@ -458,6 +458,44 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
+### Fans: the apartments under them, and what the fans do
+
+Roof exhaust fans are read from Bloom (`app/bloom_fans.py`). Their buildings'
+heat and apartment sensors are on the building's 2010 box. A fan site is filed
+under a portal Building (`bloom_fans.place`), and `app/fan_effect.py` reads
+the box on that Building.
+
+- **Apartments column** on `/fans`: the apartments' average against the
+  temperature the box heats to (its target). Amber is 2° or more over, red
+  is 5° or more over, blue is 2° or more under. It shows a dash when the box
+  is not reporting or no apartment sensor is. Each property header and the
+  page title show the average over the buildings.
+- **History chart:** under the fan strips, the apartments' average with its
+  target and a burner on/off strip (from the box's run-minute counters),
+  zooming together with the fans.
+- **Fan effect** (`/fans/effect`, superuser): the measured effect of a switch.
+  - A switch is a building's fans going from mostly on to mostly off (or back),
+    after an hour the other way, and staying for the next 2 hours. A ramp of
+    up to 20 minutes counts.
+  - For each switch, it takes how far the apartment average moved from the
+    hour before to the second hour after, and the burner minutes in those
+    2 hours.
+  - It compares that with the same building at the same time of day, on days
+    within a week when the fans stayed as they were and it was within 6°
+    outside. The effect is the switch minus those days, averaged with a 95%
+    margin.
+  - Why not a plain on-hours vs off-hours comparison: it shows about nothing
+    (+0.01 °F/h), because the heat fights back. Cooler apartments make the box
+    run the burner longer, so much of the fans' cost is fuel.
+  - First result (2026-11-26, 156 switches in 28 buildings, about 52° out):
+    with the fans off the burner ran **10 minutes less per 2 hours**
+    (9 against 20, ±5), and the apartments ended 0.2° warmer (±0.1).
+  - Switching **on** cannot be measured yet. The fans start at the same hours
+    every day (most at 7am and 5pm), so there is never a comparable day when
+    they stayed off.
+  - The result is kept 30 minutes per worker and refreshed in the background,
+    for up to 6 hours.
+
 ### Reloads and the background readers
 
 A deploy reloads the portal (`kill -HUP`): gunicorn starts new workers and the
