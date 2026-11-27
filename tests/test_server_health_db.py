@@ -21,7 +21,7 @@ def fake(monkeypatch):
     from app import server_health as sh
     calls = []
 
-    def collect(prev=None, with_db=True):
+    def collect(prev=None, with_db=True, measure_link=False):
         calls.append(prev)
         s = snap()
         s["host"] = sh.HOST
@@ -114,7 +114,7 @@ def test_the_page_is_for_the_administrator_only(app, session, fake):
 def test_a_problem_shows_at_the_top_of_the_page(app, session, monkeypatch):
     from app import server_health as sh
 
-    def collect(prev=None, with_db=True):
+    def collect(prev=None, with_db=True, measure_link=False):
         s = snap(heat__temp_c=83.0)
         s["websites"][0].update(ok=False, code=None, error="Connection refused")
         return s
@@ -138,3 +138,27 @@ def test_another_server_is_shown_from_its_last_report(app, session, fake):
     assert r.status_code == 200 and "Server — standby-pi" in r.get_data(as_text=True)
     assert "last report" in r.get_data(as_text=True)
     assert root.get("/server?host=nobody").status_code == 404
+
+
+def test_the_network_delay_is_stored_and_shown(app, session, monkeypatch):
+    from app import server_health as sh
+    from app.models import ServerSample
+    from tests.test_server_health import _link
+    asked = []
+
+    def collect(prev=None, with_db=True, measure_link=False):
+        asked.append(measure_link)
+        s = snap()
+        s["host"], s["raw"] = sh.HOST, {"t": s["t"]}
+        s["link"] = dict(_link(138, i_avg=160), t=s["t"], wifi_retries_per_min=420)
+        return s
+    monkeypatch.setattr(sh, "collect", collect)
+    sh.sample_once(60, 30)
+    assert asked == [True]                                                  # the sampler pings, a page load doesn't
+    row = ServerSample.query.one()
+    assert row.router_ms == 138 and row.internet_ms == 160 and row.router_loss_pct == 0
+    html = _client(app, superuser=True).get("/server").get_data(as_text=True)
+    assert "Delay to router" in html and "The local network is very slow over Wi-Fi" in html
+    assert "10 of 10 back" in html and "Wi-Fi resends" not in html
+    j = _client(app, superuser=True).get("/server/history.json?hours=6").get_json()
+    assert j["router_ms"] == [138.0] and j["internet_ms"] == [160.0]

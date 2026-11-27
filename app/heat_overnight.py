@@ -24,6 +24,8 @@ ended; from 9 pm it is tonight so far.
 """
 import datetime as _dt
 import logging
+import threading
+import time
 
 log = logging.getLogger(__name__)
 
@@ -275,20 +277,63 @@ def _safe(fn, rows, start):
         log.exception("heat_overnight verdict failed")
         return _unknown()
 
+# ── cache: the Live wall reloads every minute and asks for every building ────
+# Reading the night back is the Live page's slowest part (about 3 s on the Pi for
+# ~190 boxes: tens of thousands of readings). Through the day the night is over
+# and the verdict cannot change, so it is worked out once; while the window is
+# still open (9 pm - 9 am) it is reworked at most every OPEN_TTL_S. Each gunicorn
+# worker keeps its own copy, which is fine: the answer is the same.
+OPEN_TTL_S = 180
+SETTLE = _dt.timedelta(minutes=20)      # the last reads of the night can land a poll or two after 9 am
+_cache, _cache_lock = {}, threading.Lock()
+
+
+def clear_cache():
+    with _cache_lock:
+        _cache.clear()
+
+
+def _cached(kind, ids, now, build):
+    start, end, _ = window(now)
+    at = now or _dt.datetime.utcnow()
+    key = (kind, start, tuple(sorted(ids)))
+    t = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get(key)
+        if hit is not None and (hit[0] is None or t < hit[0]):
+            return dict(hit[1])
+    val = build(start, end)
+    final = at >= end + SETTLE                       # only the daytime window has a fixed end
+    with _cache_lock:
+        for k in [k for k in _cache if k[1] != start]:
+            del _cache[k]                            # an earlier night's verdicts
+        if len(_cache) > 32:
+            _cache.clear()
+        _cache[key] = (None if final else t + OPEN_TTL_S, val)
+    return dict(val)
+
+
+# the only columns verdict_legacy reads (loading whole rows took twice as long)
+_LEGACY_COLS = ("box_id", "ts", "code", "out", "supp", "retn", "heat1", "heat2", "heat3", "heat4")
+
+
 def for_legacy(box_ids, now=None):
     from app import history
+    from app.extensions import db
     from app.models import LegacyReading
     box_ids = list(box_ids)
     if not box_ids:
         return {}
-    start, end, _ = window(now)
-    rows = (LegacyReading.query
-            .filter(LegacyReading.box_id.in_(box_ids),
-                    LegacyReading.ts >= start - history.LOOKBACK, LegacyReading.ts <= end).all())
-    by = {}
-    for r in rows:
-        by.setdefault(r.box_id, []).append(r)
-    return {bid: _safe(verdict_legacy, by.get(bid, []), start) for bid in box_ids}
+
+    def build(start, end):
+        rows = (db.session.query(*[getattr(LegacyReading, c) for c in _LEGACY_COLS])
+                .filter(LegacyReading.box_id.in_(box_ids),
+                        LegacyReading.ts >= start - history.LOOKBACK, LegacyReading.ts <= end).all())
+        by = {}
+        for r in rows:
+            by.setdefault(r.box_id, []).append(r)
+        return {bid: _safe(verdict_legacy, by.get(bid, []), start) for bid in box_ids}
+    return _cached("legacy", box_ids, now, build)
 
 
 def for_echo(ctrl_ids, now=None):
@@ -297,26 +342,31 @@ def for_echo(ctrl_ids, now=None):
     ctrl_ids = list(ctrl_ids)
     if not ctrl_ids:
         return {}
-    start, end, _ = window(now)
-    rows = (ControllerReading.query
-            .filter(ControllerReading.controller_id.in_(ctrl_ids),
-                    ControllerReading.ts >= start - ctrl_history.MAX_GAP, ControllerReading.ts <= end).all())
-    by = {}
-    for r in rows:
-        by.setdefault(r.controller_id, []).append(r)
-    return {cid: _safe(verdict_echo, by.get(cid, []), start) for cid in ctrl_ids}
+
+    def build(start, end):
+        rows = (ControllerReading.query
+                .filter(ControllerReading.controller_id.in_(ctrl_ids),
+                        ControllerReading.ts >= start - ctrl_history.MAX_GAP, ControllerReading.ts <= end).all())
+        by = {}
+        for r in rows:
+            by.setdefault(r.controller_id, []).append(r)
+        return {cid: _safe(verdict_echo, by.get(cid, []), start) for cid in ctrl_ids}
+    return _cached("echo", ctrl_ids, now, build)
 
 
 def for_bloom(asset_ids, now=None):
     from app.models import BloomSample
+    from app.extensions import db
     asset_ids = list(asset_ids)
     if not asset_ids:
         return {}
-    start, end, _ = window(now)
-    rows = (BloomSample.query
-            .filter(BloomSample.asset_id.in_(asset_ids),
-                    BloomSample.ts >= start, BloomSample.ts <= end).all())
-    by = {}
-    for r in rows:
-        by.setdefault(r.asset_id, []).append(r)
-    return {aid: _safe(verdict_bloom, by.get(aid, []), start) for aid in asset_ids}
+
+    def build(start, end):
+        rows = (db.session.query(BloomSample.asset_id, BloomSample.ts, BloomSample.data)
+                .filter(BloomSample.asset_id.in_(asset_ids),
+                        BloomSample.ts >= start, BloomSample.ts <= end).all())
+        by = {}
+        for r in rows:
+            by.setdefault(r.asset_id, []).append(r)
+        return {aid: _safe(verdict_bloom, by.get(aid, []), start) for aid in asset_ids}
+    return _cached("bloom", asset_ids, now, build)

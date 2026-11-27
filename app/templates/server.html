@@ -89,6 +89,10 @@
   <div class="tile" title="Network traffic on {{ dflt.name if dflt else '—' }}, the connection to the internet">
     <div class="l">Network</div><div class="n" style="font-size:19px;line-height:1.45">↓ {{ h.rate(dflt.rx_bps if dflt else none) }}</div>
     <div class="s">↑ {{ h.rate(dflt.tx_bps if dflt else none) }}{% if net.wifi %} · Wi-Fi {{ net.wifi.signal }}%{% endif %}</div></div>
+  {% set lk = snap.link or {} %}{% set lr = lk.router or {} %}{% set ra = lr.avg_ms %}{% set rl = lr.loss_pct or 0 %}
+  <div class="tile {{ 'crit' if (ra is number and ra >= h.ROUTER_CRIT_MS) or rl >= h.LOSS_CRIT_PCT or lr.received == 0 else 'warn' if (ra is number and ra >= h.ROUTER_WARN_MS) or rl >= h.LOSS_WARN_PCT else '' }}" title="Ping to the router ({{ lk.gateway or '?' }}): the home network itself. Healthy is 1-5 ms; every website request crosses this hop.">
+    <div class="l">Delay to router</div><div class="n">{{ '%.0f'|format(ra) if ra is number else '—' }}<span style="font-size:14px"> ms</span></div>
+    <div class="s">{% if lk %}{{ '%.0f'|format(rl) }}% lost · internet {{ '%.0f'|format(lk.internet.avg_ms) ~ ' ms' if lk.internet and lk.internet.avg_ms is number else '—' }}{% else %}measured once a minute{% endif %}</div></div>
   {% set rq = (snap.tunnels or [])|map(attribute='req_per_min')|reject('none')|list %}
   <div class="tile" title="Requests a minute arriving through the Cloudflare tunnels: every page, picture and data feed visitors load">
     <div class="l">Traffic</div><div class="n">{{ '%.0f'|format(rq|sum) if rq else '—' }}</div>
@@ -115,6 +119,8 @@
   <div class="sv-chart"><h3>Traffic <span class="cs">requests a minute through Cloudflare</span></h3><div id="ch-req"></div></div>
   <div class="sv-chart"><h3>Disk writes <span class="cs">KB/s to the {{ (st.boot_kind or 'disk').split(' /')[0] }}</span></h3><div id="ch-disk"></div></div>
   <div class="sv-chart"><h3>Temperature <span class="cs">°C</span></h3><div id="ch-temp"></div></div>
+  <div class="sv-chart"><h3>Network delay <span class="cs">ms, ping to the router and to the internet · healthy router is 1-5 ms</span></h3><div id="ch-ping"></div></div>
+  <div class="sv-chart"><h3>Lost pings <span class="cs">% of 10 a minute</span></h3><div id="ch-loss"></div></div>
 </div>
 
 <div class="sv-grid">
@@ -230,7 +236,24 @@
       <span class="k">Signal</span><span class="v">{{ net.wifi.signal }}% · {{ net.wifi.rate }}</span>
     </div>
     {% endif %}
-    <p class="sv-note">Totals run from the last restart. Dropped = packets the connection threw away; a steadily rising number on Wi-Fi means a weak or crowded link.</p>
+    {% if lk %}
+    <table class="sv" style="margin-top:10px">
+      <thead><tr><th>Ping to</th><th class="num">Average</th><th class="num">Best</th><th class="num">Worst</th><th class="num">Lost</th></tr></thead>
+      <tbody>
+      {% for lab, p in (('Router ' ~ (lk.gateway or ''), lk.router), ('Internet ' ~ h.INTERNET_PING, lk.internet)) %}
+        <tr><td>{{ lab }}</td>
+          {% if p %}<td class="num">{{ '%.0f ms'|format(p.avg_ms) if p.avg_ms is number else '—' }}</td><td class="num">{{ '%.0f ms'|format(p.min_ms) if p.min_ms is number else '—' }}</td>
+          <td class="num">{{ '%.0f ms'|format(p.max_ms) if p.max_ms is number else '—' }}</td><td class="num">{{ p.received }} of {{ p.sent }} back</td>
+          {% else %}<td class="num" colspan="4">not measured</td>{% endif %}</tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="kv" style="margin-top:6px">
+      <span class="k">Measured</span><span class="v">{{ h.ago(now - lk.t) }} ago, 10 pings each</span>
+      {# no Wi-Fi resend count: this Pi's Wi-Fi chip barely updates its counter, so it would read a false 0 #}
+    </div>
+    {% endif %}
+    <p class="sv-note">Totals run from the last restart. Dropped = packets the connection threw away; a steadily rising number on Wi-Fi means a weak or crowded link. The router ping measures the home network alone: slow there means the Wi-Fi or the router, not the server and not the internet provider.</p>
   </div>
 
   <div class="section">
@@ -307,6 +330,10 @@
     one("ch-req", "Requests / min", d.req_per_min, "", {ymin: 0});
     one("ch-disk", "Writes KB/s", d.disk_write_kbps, "", {ymin: 0});
     one("ch-temp", "Temperature", d.temp_c, "°", {ymin: 30, ymax: 80});
+    EchoCharts.line(document.getElementById("ch-ping"), {t: d.t, unit: " ms", height: 170, range, ymin: 0,
+      series: [{name: "Router (home network)", color: BLUE, data: d.router_ms}, {name: "Internet (1.1.1.1)", color: ORANGE, data: d.internet_ms}]});
+    EchoCharts.line(document.getElementById("ch-loss"), {t: d.t, unit: "%", height: 170, range, ymin: 0, ymax: 100,
+      series: [{name: "Router", color: BLUE, data: d.router_loss_pct}, {name: "Internet", color: ORANGE, data: d.internet_loss_pct}]});
     if (!d.t.length) document.getElementById("sv-hist-note").textContent = "history starts now: the first reading is stored within a minute";
   }).catch(() => { document.getElementById("sv-hist-note").textContent = "history could not be loaded"; });
   // Refresh the live numbers every minute (only while the tab is in view).

@@ -61,12 +61,16 @@ def test_a_cycle_then_the_live_page(app, session, boxes, client):
 
     page = client.get("/live").data.decode()
     assert "Outside Temp. Satisfied" in page and "10-12 Bedell St" in page
-    assert "02:59" in page and "1 of 4 reading now" in page
+    assert "02:59" in page                                             # the hot-water run time that was read
+    assert "1 of 4 reading (" in page and "1 dark" in page and "1 login refused" in page
     assert "The box refused the login" in page                         # Other Login Bldg
     assert "Another device answers at this address" in page             # Stale Address
     assert "no answer" in page                                         # Dark Building
     table = client.get("/live?view=table").data.decode()
-    assert "<th>Hi stk</th>" in table and "Outside Temp. Satisfied" in table
+    assert ">Hi stk</th>" in table and "Outside Temp. Satisfied" in table
+    # the Read column: the box that answered carries the moment of this cycle, the rest were never read
+    assert f'<td data-v="{int(st.last_ok_at.timestamp())}">just now</td>' in table
+    assert table.count('<td data-v="">never</td>') == 3
     probs = client.get("/live?show=problems").data.decode()
     assert "Dark Building" in probs and "Other Login Bldg" in probs
     box = client.get(f"/live/{boxes[0].id}").data.decode()
@@ -127,14 +131,43 @@ def test_hide_show_and_delete(app, session, boxes, client):
     assert sorted(seen) == ["8060", "8062"]
 
 
+def _delete_onclick(page):
+    """The one Delete button's onclick, as (how it is written, what a browser
+    makes of it). The two differ exactly when a quote in the name ends the
+    attribute early, which leaves a handler that cannot run and a button that
+    deletes without asking."""
+    import re
+    from html.parser import HTMLParser
+    found = []
+
+    class Buttons(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            d = dict(attrs)
+            if tag == "button" and d.get("name") == "action" and d.get("value") == "delete":
+                found.append(d.get("onclick"))
+
+    Buttons().feed(page)
+    assert len(found) == 1, found
+    written = [t for t in re.findall(r"<button\b[^>]*>", page) if 'value="delete"' in t]
+    assert len(written) == 1, written
+    return written[0], found[0]
+
+
 def test_delete_confirm_is_safe_for_any_name(app, session, boxes, client):
-    import app.models as m
+    import json
+    import re
     b = boxes[1]
-    b.name, b.is_active = "O'Brien \"Court\"", False
+    name = "O'Brien \"Court\""
+    b.name, b.is_active = name, False
     session.commit()
-    for page in (client.get("/live?view=cards&show=hidden").data.decode(), client.get(f"/live/{b.id}").data.decode()):
-        onclick = page[page.index("return confirm("):].split(">")[0]
-        assert "O\\u0027Brien" in onclick and "O" + chr(39) + "Brien" not in onclick
+    # the Hidden cards ask through lvConfirmDelete (type DELETE); the box's own page through confirm()
+    for url, call in (("/live?view=cards&show=hidden", "lvConfirmDelete"), (f"/live/{b.id}", "confirm")):
+        written, onclick = _delete_onclick(client.get(url).data.decode())
+        assert "O\\u0027Brien" in written and "O" + chr(39) + "Brien" not in written, url
+        # the browser must see one whole call whose only argument is one string holding the name
+        whole = re.fullmatch(r"return %s\((.*)\)" % call, onclick or "", re.S)
+        assert whole, (url, onclick)
+        assert name in json.loads(whole.group(1)), (url, onclick)
 
 
 def test_actions_need_the_administrator(app, session, boxes):
@@ -167,10 +200,10 @@ def test_the_badge_opens_the_building_issues(app, session, boxes, client):
     session.add(m.LegacyEvent(box_id=boxes[0].id, ts=now, kind="status", code="Safety", text="Outside Temp. Satisfied -> Safety"))
     session.commit()
     page = client.get("/live?view=cards").data.decode()
-    panels = {}
-    for raw in re.findall(r'data-issues="([^"]*)"', page):
-        d = json.loads(raw.replace("&#34;", '"').replace("&#39;", "'").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
-        panels[d["name"]] = d
+    # one JSON list for the page; each badge carries its row number into it
+    lst = json.loads(re.search(r'<script type="application/json" id="lv-issues">(.*?)</script>', page, re.S).group(1))
+    panels = {lst[int(i)]["name"]: lst[int(i)] for i in re.findall(r'class="lv-badge lv-iss-open[^"]*" data-i="(\d+)"', page)}
+    assert len(panels) == len(lst)
     bedell = panels["10-12 Bedell St"]
     assert any("Phone alert open" in p for p in bedell["problems"]) and bedell["events"][0]["kind"] == "status"
     assert panels["Dark Building"]["problems"] == ["no answer"] and panels["Dark Building"]["keys"] == "inside,out"

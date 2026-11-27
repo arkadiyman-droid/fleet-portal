@@ -426,6 +426,72 @@ def _network() -> dict:
     return {"ifaces": ifaces, "default": default, "wifi": wifi, "connections": est}
 
 
+# ── how good the network path is (router + internet delay) ──────────────────
+# A slow or lossy home network looks exactly like a dead server from outside:
+# every request crosses it, so a 150 ms Wi-Fi hop to the router makes every
+# site slow for everyone. Measured by the sampler once a minute (pinging takes
+# ~2 s, too slow for a page load) and shown from the newest stored snapshot.
+INTERNET_PING = "1.1.1.1"           # Cloudflare: the tunnels' own provider
+PING_COUNT = 10
+ROUTER_WARN_MS, ROUTER_CRIT_MS = 30, 100     # a healthy home network answers in 1-5 ms
+LOSS_WARN_PCT, LOSS_CRIT_PCT = 10, 30
+LINK_FRESH_S = 300                  # an older measurement isn't shown as "now"
+_PING_RE = re.compile(r"(\d+) packets transmitted, (\d+) (?:packets )?received")
+_RTT_RE = re.compile(r"= ([\d.]+)/([\d.]+)/([\d.]+)")
+
+
+def parse_ping(text: str):
+    """iputils `ping -q` summary -> {sent, received, loss_pct, min_ms, avg_ms, max_ms}
+    (the times None when nothing came back), or None when there is no summary."""
+    m = _PING_RE.search(text or "")
+    if not m:
+        return None
+    sent, got = int(m.group(1)), int(m.group(2))
+    r = _RTT_RE.search(text)
+    return {"sent": sent, "received": got, "loss_pct": round(100 * (sent - got) / sent, 1) if sent else None,
+            "min_ms": float(r.group(1)) if r else None, "avg_ms": float(r.group(2)) if r else None,
+            "max_ms": float(r.group(3)) if r else None}
+
+
+def gateway() -> str | None:
+    """The router's address: the default route's gateway in /proc/net/route
+    (little-endian hex)."""
+    for line in _read("/proc/net/route").splitlines()[1:]:
+        f = line.split()
+        if len(f) > 2 and f[1] == "00000000" and f[2] != "00000000":
+            try:
+                return socket.inet_ntoa(int(f[2], 16).to_bytes(4, "little"))
+            except (ValueError, OverflowError):
+                return None
+    return None
+
+
+def _ping(addr: str) -> dict | None:
+    return parse_ping(_run(["ping", "-n", "-q", "-c", str(PING_COUNT), "-i", "0.2", "-W", "1", addr],
+                           timeout=PING_COUNT * 0.2 + 4))
+
+
+def _link() -> dict:
+    """Delay and loss to the router and to the internet, measured side by side
+    (about 2 s), plus the Wi-Fi retry counter when the card reports one."""
+    gw = gateway()
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        f_gw = ex.submit(_ping, gw) if gw else None
+        f_in = ex.submit(_ping, INTERNET_PING)
+        router = f_gw.result() if f_gw else None
+        internet = f_in.result()
+    retries = None
+    for line in _read("/proc/net/wireless").splitlines()[2:]:
+        f = line.split()
+        if len(f) >= 10 and f[0].rstrip(":").startswith("wl"):
+            try:
+                retries = int(f[8])
+            except ValueError:
+                pass
+            break
+    return {"t": time.time(), "gateway": gw, "router": router, "internet": internet, "wifi_retries": retries}
+
+
 def _procs() -> list:
     """Every process: pid, name, rss bytes, the systemd unit it belongs to."""
     out = []
@@ -653,8 +719,10 @@ def _storage_io_only():
     return out
 
 
-def collect(prev=None, with_db=True) -> dict:
-    """Everything about this machine right now (see the module docstring)."""
+def collect(prev=None, with_db=True, measure_link=False) -> dict:
+    """Everything about this machine right now (see the module docstring).
+    measure_link pings the router and the internet (~2 s, the sampler does it);
+    otherwise the newest measurement is carried over from `prev` while fresh."""
     raw = _raw()
     old = (prev or {}).get("raw")
     if not old or not (0.5 <= raw["t"] - old.get("t", 0) <= RAW_KEEP_S) or not raw["cpu"]:
@@ -697,6 +765,19 @@ def collect(prev=None, with_db=True) -> dict:
         r = _per_s(t["requests"], o.get("requests") if o else None, pdt) if pdt and pdt <= RAW_KEEP_S else None
         t["req_per_min"] = round(r * 60, 1) if r is not None else None
     snap["websites"] = _websites(snap["tunnels"])
+    old_link = (prev or {}).get("link")
+    if measure_link:
+        link = _link()
+        o = old_link or {}
+        gap = link["t"] - o.get("t", 0)
+        link["wifi_retries_per_min"] = (round((link["wifi_retries"] - o["wifi_retries"]) / gap * 60)
+                                        if _num(link.get("wifi_retries")) and _num(o.get("wifi_retries"))
+                                        and 0 < gap <= RAW_KEEP_S and link["wifi_retries"] >= o["wifi_retries"] else None)
+        snap["link"] = link
+    elif old_link and raw["t"] - old_link.get("t", 0) <= LINK_FRESH_S:
+        snap["link"] = old_link
+    else:
+        snap["link"] = None
     snap["backups"] = _backups(raw["t"])
     snap["database"] = _database() if with_db else None
     return snap
@@ -709,6 +790,8 @@ def totals(snap: dict) -> dict:
     tx = [i["tx_bps"] for i in net if i.get("tx_bps") is not None]
     st = snap.get("storage", {})
     boot = st.get("disks", {}).get(st.get("boot_disk") or "", {})
+    link = snap.get("link") or {}
+    router, inet = link.get("router") or {}, link.get("internet") or {}
     reqs = [t["req_per_min"] for t in snap.get("tunnels", []) if t.get("req_per_min") is not None]
     mem = snap.get("memory", {})
     issues = checks(snap)
@@ -723,6 +806,8 @@ def totals(snap: dict) -> dict:
             "net_tx_kbps": round(sum(tx) / 1024, 1) if tx else None,
             "disk_write_kbps": round(boot["write_bps"] / 1024, 1) if boot.get("write_bps") is not None else None,
             "req_per_min": round(sum(reqs), 1) if reqs else None,
+            "router_ms": router.get("avg_ms"), "router_loss_pct": router.get("loss_pct"),
+            "internet_ms": inet.get("avg_ms"), "internet_loss_pct": inet.get("loss_pct"),
             "throttled": snap.get("heat", {}).get("throttled"),
             "problems": sum(1 for i in issues if i["level"] in ("crit", "warn"))}
 
@@ -806,6 +891,8 @@ def checks(snap: dict) -> list:
         off = b.get("offsite")
         if off and off.get("age_s") is not None and off["age_s"] > BACKUP_MAX_AGE_H * 3600:
             add("warn", "Backups", f"{b['label']}: the off-site copy is {ago(off['age_s'])} old — the nightly push is failing.")
+    for i in link_checks(snap.get("link")):
+        add(*i)
     dbi = snap.get("database") or {}
     if dbi.get("error"):
         add("crit", "Database", f"Could not read the database: {dbi['error']}")
@@ -813,6 +900,37 @@ def checks(snap: dict) -> list:
         add("warn", "Database", f"{dbi['connections']} of {dbi['max_connections']} database connections in use.")
     rank = {"crit": 0, "warn": 1, "info": 2}
     out.sort(key=lambda i: rank[i["level"]])
+    return out
+
+
+def link_checks(link) -> list:
+    """(level, area, text) for a slow or lossy network path. The router hop is
+    the home network itself (Wi-Fi or cable); the internet hop adds the
+    provider. Either one slow makes every website slow for every visitor."""
+    out = []
+    if not link:
+        return out
+    r, i = link.get("router"), link.get("internet")
+    wired = "" if (link.get("wifi_retries") is None) else " over Wi-Fi"
+    if link.get("gateway") and r and r.get("received") == 0:
+        out.append(("crit", "Network", f"The router ({link['gateway']}) did not answer at all{wired} — "
+                                       "the server is cut off from the local network."))
+    elif r:
+        avg, loss = r.get("avg_ms"), r.get("loss_pct") or 0
+        said = ((f"{avg:.0f} ms to the router on average" + (f" (up to {r['max_ms']:.0f} ms)" if _num(r.get("max_ms")) else "")
+                 if _num(avg) else "the router barely answers") + f", {loss:.0f}% lost. Normal is 1-5 ms")
+        why = (" Everything going to or from the websites crosses this hop, so every site is slow for every visitor; "
+               "other devices on the same Wi-Fi feel it too. A network cable to the router fixes it for the server.")
+        if (avg is not None and avg >= ROUTER_CRIT_MS) or loss >= LOSS_CRIT_PCT:
+            out.append(("crit", "Network", f"The local network is very slow{wired}: {said}." + why))
+        elif (avg is not None and avg >= ROUTER_WARN_MS) or loss >= LOSS_WARN_PCT:
+            out.append(("warn", "Network", f"The local network is slow{wired}: {said}." + why))
+    if i and i.get("received") == 0 and not (r and r.get("received") == 0):
+        out.append(("crit", "Network", f"The internet ({INTERNET_PING}) did not answer although the router did — "
+                                       "the internet connection is down; every site is offline from outside."))
+    elif i and (i.get("loss_pct") or 0) >= LOSS_WARN_PCT and not (r and (r.get("loss_pct") or 0) >= LOSS_WARN_PCT):
+        out.append(("warn", "Network", f"{i['loss_pct']:.0f}% of pings to the internet were lost while the router answered "
+                                       "fine — the internet connection itself is dropping packets."))
     return out
 
 
@@ -897,14 +1015,16 @@ def sample_once(interval_s=60, keep_days=30, collect_fn=None):
     if row is not None and row.seen_at and (now - row.seen_at).total_seconds() < interval_s * 0.8:
         db.session.rollback()
         return None
-    snap = collect_fn(row.snapshot if row is not None else None)
+    snap = collect_fn(row.snapshot if row is not None else None, measure_link=True)
     tot = totals(snap)
     minute = now.replace(second=0, microsecond=0)
     db.session.execute(
         text("INSERT INTO server_samples (host, at, cpu_pct, load1, mem_used_pct, mem_used_mb, swap_used_mb, "
-             "disk_used_pct, temp_c, net_rx_kbps, net_tx_kbps, disk_write_kbps, req_per_min, throttled, problems) "
+             "disk_used_pct, temp_c, net_rx_kbps, net_tx_kbps, disk_write_kbps, req_per_min, "
+             "router_ms, router_loss_pct, internet_ms, internet_loss_pct, throttled, problems) "
              "VALUES (:host, :at, :cpu_pct, :load1, :mem_used_pct, :mem_used_mb, :swap_used_mb, :disk_used_pct, "
-             ":temp_c, :net_rx_kbps, :net_tx_kbps, :disk_write_kbps, :req_per_min, :throttled, :problems) "
+             ":temp_c, :net_rx_kbps, :net_tx_kbps, :disk_write_kbps, :req_per_min, "
+             ":router_ms, :router_loss_pct, :internet_ms, :internet_loss_pct, :throttled, :problems) "
              "ON CONFLICT (host, at) DO NOTHING"),
         {"host": HOST, "at": minute, **tot})
     if row is None:
@@ -919,7 +1039,8 @@ def sample_once(interval_s=60, keep_days=30, collect_fn=None):
 
 
 SERIES = ("cpu_pct", "load1", "mem_used_pct", "swap_used_mb", "disk_used_pct", "temp_c",
-          "net_rx_kbps", "net_tx_kbps", "disk_write_kbps", "req_per_min")
+          "net_rx_kbps", "net_tx_kbps", "disk_write_kbps", "req_per_min",
+          "router_ms", "router_loss_pct", "internet_ms", "internet_loss_pct")
 
 
 def history(host: str, hours: int) -> dict:

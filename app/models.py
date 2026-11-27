@@ -1282,6 +1282,10 @@ class ServerSample(db.Model):
     net_tx_kbps = db.Column(db.Float)
     disk_write_kbps = db.Column(db.Float)
     req_per_min = db.Column(db.Float)                              # requests through the Cloudflare tunnels
+    router_ms = db.Column(db.Float)                                # ping to the router (the home network itself)
+    router_loss_pct = db.Column(db.Float)
+    internet_ms = db.Column(db.Float)                              # ping to 1.1.1.1
+    internet_loss_pct = db.Column(db.Float)
     throttled = db.Column(db.Integer)                              # vcgencmd get_throttled bits
     problems = db.Column(db.Integer)                               # warn + crit findings at that minute
 

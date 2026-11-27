@@ -1521,7 +1521,10 @@ def _legacy_rows(now, boxes=None):
     from app import heat_overnight, legacy
     rows = []
     if boxes is None:
-        boxes = LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
+        from sqlalchemy.orm import joinedload
+        # each box's status in the same query: one at a time was ~190 round trips (0.7 s on the Pi)
+        boxes = LegacyBox.query.options(joinedload(LegacyBox.status)) \
+            .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None)) \
             .order_by(LegacyBox.name).all()
     firing = _firing(now, [b.id for b in boxes])
     heat = heat_overnight.for_legacy([b.id for b in boxes], now)
@@ -1636,7 +1639,9 @@ def _bloom_live_rows(now_dt):
     for tw in RcDhwTower.query.filter(RcDhwTower.is_active.is_(True)).all():
         if tw.building_id and tw.status and tw.status.ok:
             dhw_by_building[tw.building_id] = tw.status
-    assets = (BloomAsset.query.filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
+    from sqlalchemy.orm import joinedload
+    assets = (BloomAsset.query.options(joinedload(BloomAsset.status))
+              .filter(BloomAsset.is_active.is_(True), BloomAsset.deleted_at.is_(None))
               .order_by(BloomAsset.name).all())
     from app import heat_overnight
     heat = heat_overnight.for_bloom([a.id for a in assets], now_dt)

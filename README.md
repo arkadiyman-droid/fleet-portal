@@ -458,6 +458,21 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
+### Live page speed
+
+The Live wall reloads every minute in every open tab, so its build time is
+what visitors feel. Its slowest part was the **Heat o/n** column: reading back
+the whole night for every building took 3-5 s on the Pi. `heat_overnight`
+now caches each night's verdicts per worker. Once the night is over (9 am plus
+20 minutes for late reads) the verdict cannot change and is kept until 9 pm.
+While the night is still running it is reworked at most every 3 minutes
+(`OPEN_TTL_S`). It also reads only the columns the verdict uses. Each box's
+status loads in the same query as the box. The page itself draws the flame
+icon once (`<symbol id="lv-flame">`) and sends every row's issue panel as one
+JSON list (`#lv-issues`, rows point into it by `data-i`) instead of an escaped
+copy inside each row. Result on the Pi, 2026-11-26: 6 s down to about 1.2 s
+(1.7 s on a worker's first load of the night), page 529 KB down to 435 KB.
+
 ### Server: the machine these websites run on
 
 **Server** (superuser only, `/server`) shows the Raspberry Pi the portal runs on.
@@ -482,6 +497,16 @@ It is read live each time the page opens and refreshes every minute
   On an SD card it also shows the card's name, date and maker id.
 - **Memory:** usage, plus the biggest programs.
 - **Network:** each connection, the Wi-Fi signal and dropped packets.
+- **Delay to router:** once a minute the sampler sends 10 pings to the router
+  (the default route's gateway) and 10 to the internet (`1.1.1.1`), side by
+  side, about 2 s. A page load never pings: it shows the newest measurement
+  while it is under 5 minutes old. A healthy home network answers in 1-5 ms.
+  30 ms or 10% lost is amber; 100 ms or 30% lost is red. The router hop is the
+  Wi-Fi or cable alone, so a slow router there means the home network, not the
+  server and not the internet provider. Both are charted (`router_ms`,
+  `internet_ms` and the loss in `server_samples`, migration `a4c6e8f0b2d1`).
+  The service needs no extra rights: Raspberry Pi OS allows ping for every
+  group (`net.ipv4.ping_group_range`).
 - **Database:** sizes, connections and live standby copies.
 - **Backups:** the newest file, the last nightly run and the age of the
   off-site copy, for each entry in `BACKUPS`.
@@ -489,7 +514,8 @@ It is read live each time the page opens and refreshes every minute
   from `vcgencmd get_throttled`.
 - **Problems:** `checks()` lists them worst first. A failed service, a site
   not answering, a tunnel with no links, a missing or failed backup, a disk 90%
-  full, under 5% memory left, or 80 °C or more is red.
+  full, under 5% memory left, 80 °C or more, a router more than 100 ms away
+  or not answering, or an internet connection that is down is red.
 
 **If this server fails** (`resilience()`) lists the single points of failure:
 one server, an SD-card boot disk, Wi-Fi only, no database standby, backups

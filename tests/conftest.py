@@ -58,6 +58,15 @@ requires_postgres = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _fresh_heat_overnight_cache():
+    """app/heat_overnight.py keeps each night's verdicts in memory (the Live
+    page asks every minute); a test must not see another test's night."""
+    from app import heat_overnight
+    heat_overnight.clear_cache()
+    yield
+
+
 @pytest.fixture
 def app():
     """A real app bound to the throwaway Postgres database, schema created

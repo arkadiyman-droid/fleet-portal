@@ -242,3 +242,65 @@ def test_collect_never_crashes_on_a_machine_without_proc():
     sh.checks(s)
     sh.resilience(s)
     sh.totals(s)
+
+
+# ── network path: router + internet delay ───────────────────────────────────
+PING_OK = """PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.
+
+--- 192.168.1.1 ping statistics ---
+10 packets transmitted, 9 received, 10% packet loss, time 1811ms
+rtt min/avg/max/mdev = 11.592/138.141/304.967/80.968 ms, pipe 2
+"""
+PING_DEAD = """--- 192.168.1.1 ping statistics ---
+10 packets transmitted, 0 received, +10 errors, 100% packet loss, time 2034ms
+"""
+
+
+def test_ping_summary_is_read():
+    p = sh.parse_ping(PING_OK)
+    assert p == {"sent": 10, "received": 9, "loss_pct": 10.0, "min_ms": 11.592, "avg_ms": 138.141, "max_ms": 304.967}
+    d = sh.parse_ping(PING_DEAD)
+    assert d["received"] == 0 and d["loss_pct"] == 100.0 and d["avg_ms"] is None
+    assert sh.parse_ping("") is None and sh.parse_ping("ping: unknown host") is None
+
+
+def test_the_router_address_comes_from_the_default_route(monkeypatch):
+    route = ("Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\n"
+             "wlan0\t0001A8C0\t00000000\t0001\t0\t0\t600\t00FFFFFF\n"
+             "wlan0\t00000000\t0101A8C0\t0003\t0\t0\t600\t00000000\n")
+    monkeypatch.setattr(sh, "_read", lambda path: route if path == "/proc/net/route" else "")
+    assert sh.gateway() == "192.168.1.1"
+    monkeypatch.setattr(sh, "_read", lambda path: "")
+    assert sh.gateway() is None
+
+
+def _link(r_avg, r_loss=0, i_avg=20, i_loss=0, wifi=True):
+    mk = lambda avg, loss: {"sent": 10, "received": round(10 * (100 - loss) / 100), "loss_pct": loss,
+                            "min_ms": avg and avg / 2, "avg_ms": avg, "max_ms": avg and avg * 2}
+    return {"t": 0, "gateway": "192.168.1.1", "router": mk(r_avg, r_loss), "internet": mk(i_avg, i_loss),
+            "wifi_retries": 5 if wifi else None}
+
+
+def test_a_slow_home_network_is_called_out():
+    assert sh.link_checks(_link(3)) == []                                   # healthy: 1-5 ms
+    lv = [c[0] for c in sh.link_checks(_link(45))]
+    assert lv == ["warn"]
+    crit = sh.link_checks(_link(138))
+    assert [c[0] for c in crit] == ["crit"] and "138 ms to the router" in crit[0][2] and "over Wi-Fi" in crit[0][2]
+    assert [c[0] for c in sh.link_checks(_link(3, r_loss=40))] == ["crit"]   # mostly lost
+    dead = sh.link_checks(_link(None, r_loss=100, i_avg=None, i_loss=100))
+    assert len(dead) == 1 and "did not answer at all" in dead[0][2]        # one cause, not two alarms
+    no_inet = sh.link_checks(_link(3, i_avg=None, i_loss=100))
+    assert [c[0] for c in no_inet] == ["crit"] and "internet connection is down" in no_inet[0][2]
+    lossy = sh.link_checks(_link(3, i_loss=20))
+    assert [c[0] for c in lossy] == ["warn"] and "internet connection itself" in lossy[0][2]
+    assert sh.link_checks(None) == []
+
+
+def test_the_network_findings_reach_the_page_and_the_charts():
+    snap = {"link": _link(138, i_avg=160)}
+    assert any(i["area"] == "Network" and i["level"] == "crit" for i in sh.checks(snap))
+    tot = sh.totals(snap)
+    assert tot["router_ms"] == 138 and tot["router_loss_pct"] == 0 and tot["internet_ms"] == 160
+    assert sh.totals({})["router_ms"] is None
+    assert {"router_ms", "router_loss_pct", "internet_ms", "internet_loss_pct"} <= set(sh.SERIES)
