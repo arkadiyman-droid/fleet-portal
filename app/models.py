@@ -1391,7 +1391,17 @@ class UtilityAccount(db.Model):
     notes = db.Column(db.Text)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # From an import (app/yardi_bills.py): the importer's own key for the
+    # account, the source's property code, and the portal property it matched.
+    ext_key = db.Column(db.String(300))
+    ext_property = db.Column(db.String(40))
+    property_id = db.Column(db.Integer, db.ForeignKey("properties.id", ondelete="SET NULL"))
+    kind = db.Column(db.String(12), nullable=False, default="building")   # building / unit / vacant / fee / other
+    supplier = db.Column(db.Boolean, nullable=False, default=False)       # a supply contract (ESCO), not the utility
+    links_set_by = db.Column(db.String(120))                              # a person set its buildings: keep them
+    links_set_at = db.Column(db.DateTime)
 
+    property = db.relationship("Property")
     buildings = db.relationship("UtilityAccountBuilding", cascade="all, delete-orphan", backref="account")
     bills = db.relationship("UtilityBill", cascade="all, delete-orphan", backref="account",
                             order_by="UtilityBill.period_start")
@@ -1424,3 +1434,6 @@ class UtilityBill(db.Model):
     source = db.Column(db.String(20), nullable=False, default="manual")
     source_ref = db.Column(db.String(300))                          # the file or reference it came from
     imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    lines = db.Column(db.Integer)                                   # payable lines netted into it (Yardi)
+    invoices = db.Column(db.Integer)                                # distinct invoices among them
+    flags = db.Column(db.String(40))                                # "twice" = paid twice for the period?

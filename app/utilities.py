@@ -8,8 +8,9 @@ data arrives in layers, and the page says plainly which layers exist yet:
   1. NYC benchmarking (LL84) — annual energy, water and emissions for every
      NYC property over 25,000 sq ft (app/benchmark.py). Live now.
   2. The portfolio's own utility accounts and bills (UtilityAccount /
-     UtilityBill) — from the bills on file, a Yardi payables export, and
-     later the ConEd / National Grid / DEP feeds.
+     UtilityBill) — from the Yardi payables export (app/yardi_bills.py,
+     cost only), then the bills on file and the ConEd / National Grid /
+     DEP feeds (usage).
   3. Joined with the controls (burner minutes, apartments, fans) — once
      bills exist per building.
 
@@ -117,9 +118,15 @@ def view() -> dict:
         "over30": [r for r in exposure if (r["over30"] or 0) > 0],
         "penalty24": sum(r["penalty24"] for r in exposure), "penalty30": sum(r["penalty30"] for r in exposure),
         "pathways_known": sum(1 for r in props if r["pathway"]),
-        "accounts": accounts, "bills": bills, "refreshed": refreshed,
+        "accounts": accounts, "bills": bills, "refreshed": refreshed, "yardi": _yardi(),
         "linked_ids": {bid: x.property_id for bid, x in links.items()},
     }
+
+
+def _yardi():
+    """The Yardi bills layer (app/yardi_bills.py), or None before the first import."""
+    from app import yardi_bills
+    return yardi_bills.summary()
 
 
 # ── refreshing from NYC Open Data, in the background ─────────────────────────

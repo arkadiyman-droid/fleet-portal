@@ -458,7 +458,7 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
-### Utilities: energy, water, emissions and (soon) the bills
+### Utilities: energy, water, emissions and the bills
 
 **Utilities** (superuser, `/utilities`) answers four questions per building:
 is it efficient, is it exposed under LL97, are the bills right, and did a
@@ -500,18 +500,52 @@ exist yet.
    multifamily median for the same year (`benchmark_stats`), ENERGY STAR
    score, heating fuel, electricity, and water per apartment against the
    median.
-4. **Utility accounts and bills.** The tables exist; nothing is loaded yet:
-   - `utility_accounts`, with a building share for master meters;
-   - `utility_bills`, with period, usage, cost and estimated reads.
-
-   Next: a Yardi utility payables export, then the plant-level bills on file
-   (not Skyline's: those are the tenants' submetered use, not the boilers), then the
-   DEP / Con Edison / National Grid feeds (see
-   `EMS/UTILITY_DATA_INTEGRATION.md`).
+4. **Utility accounts and bills from Yardi (cost only).** `app/yardi_bills.py`
+   reads Yardi's payables export into `utility_accounts` and `utility_bills`.
+   - **The export:** Yardi Voyager, Payable Analytics, Report Type "Expense
+     Distribution", Property `.all`, Account
+     `512-010^512-020^512-030^512-040^512-050` (electric, gas, heating oil,
+     water & sewer, sewer). One calendar year per file, Excel. Yardi is only
+     read; nothing is changed there.
+   - **What a line says:** the invoice number is `<utility account>-<Yardi
+     batch>`. The note is `<what> <from>-<to> <service address>`. Other forms
+     are read too: two-digit years, dotted dates, `acct #` in the note, and
+     NYC Water Board's `<account>-MM/YY`.
+   - **Accounts:** one per utility + account number + commodity + the building
+     the service address names. A supply contract covering three buildings
+     becomes three accounts.
+   - **Apartments and fees:** vacant-unit and owner-paid apartment electric
+     (`# 5F`, `APT 4`, "Master Unit"), fees and refunds, and lines that name no
+     meter are rolled up per property and utility.
+   - **Deposits** are counted but never billed.
+   - **Bills:** a bill is one account's lines for one service period, netted,
+     so a voided check and its reissue count once. A missing or implausible
+     period (a typo such as 2065) falls back to Yardi's posting month.
+   - **Matching to the portal:** Yardi properties match portal properties by
+     service address (number and street against the buildings), then by
+     name. What matches neither is listed under "Yardi properties not in the
+     portal", never guessed.
+   - **Re-imports** replace every Yardi account and bill. Building links a
+     person set (`links_set_by`) are kept.
+   - **"Paid twice?"** flags the same account and period paid on two invoices
+     within 2% of each other, with neither voided.
+   - **No usage:** Yardi holds no kWh or therms. Usage comes later, from the
+     plant-level bills on file (not Skyline's tenant submetering) and the
+     DEP / Con Edison / National Grid feeds (see
+     `EMS/UTILITY_DATA_INTEGRATION.md`).
+   - **Running it:** parse where the export was downloaded, because the Pi
+     has no openpyxl: `read_xlsx` + `parse_line` + `dump_lines` write a
+     `.json.gz`. On the Pi, run a quiet script (pollers off) that calls
+     `load_lines` + `import_lines`.
+   - **First import (2026-11-27):** 2023 to 2026-to-date, 200,399 lines,
+     $130,953,273 (equal to Yardi's grand totals). That made 4,536 accounts
+     and 80,101 bills. 31 Yardi properties matched 26 portal properties; 41
+     are not in the portal. 512-030 (heating oil) is empty, as it should be:
+     no property burns oil.
 
 Tables: `benchmark_properties`, `benchmark_years`, `benchmark_stats`,
 `building_benchmarks`, `utility_accounts`, `utility_account_buildings`,
-`utility_bills` (migration `b7d9f1a3c5e2`).
+`utility_bills` (migrations `b7d9f1a3c5e2`, `c8e0a2b4d6f1`).
 
 ### Fans: the apartments under them, and what the fans do
 

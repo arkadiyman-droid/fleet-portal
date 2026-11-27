@@ -117,6 +117,67 @@
     </form></details>
 </div>
 
+{% set y = v.yardi %}
+{% if y %}
+<div class="ut-sec">
+  <h2>Utility costs by property (Yardi)</h2>
+  <p class="card-sub">What was paid for electric, gas and water &amp; sewer, from Yardi's payables (accounts 512-010 to 512-050), {{ y.first.strftime('%b %Y') if y.first }} to {{ y.last.strftime('%b %Y') if y.last }}. Bills are counted in the year their service period ends; deposits are left out (money held, not use). <b>Money only:</b> Yardi has no kWh or therms; usage comes with the bills and the utilities' feeds.
+    "Apartments" = vacant-unit and owner-paid apartment electric, not the plant. {{ y.rows|length }} portal properties matched by their service addresses (or name){% if y.others %}; {{ y.others|length }} Yardi properties are not in the portal (below){% endif %}.</p>
+  <div class="ut-scroll"><table class="ut">
+    <thead><tr><th>Property</th>{% for yy in y.years %}<th>{{ yy }}{% if yy > y.ref %} <span class="b">to date</span>{% endif %}</th>{% endfor %}
+      <th>{{ y.ref }} vs {{ y.prev }}</th><th>Per apt {{ y.ref }}</th><th>Electric</th><th>Gas</th><th>Water</th><th>Apartments</th><th>Meters on a building</th></tr></thead>
+    <tbody>{% for r in y.rows %}
+      <tr><td class="l"><b>{{ r.name }}</b> <span class="b">{{ r.codes|join(', ') }}</span></td>
+        {% for yy in y.years %}<td>{{ money(r.years.get(yy)) }}</td>{% endfor %}
+        <td class="{{ 'over' if r.change and r.change > 0.15 else 'under' if r.change and r.change < -0.05 }}">{% if r.change is not none %}{{ '+' if r.change > 0 }}{{ '%.0f'|format(r.change * 100) }}%{% else %}—{% endif %}</td>
+        <td>{{ money(r.per_unit) }}</td>
+        {% set t = r.ref or 1 %}
+        <td>{{ '%.0f'|format((r.split.get('electric', 0)) / t * 100) }}%</td><td>{{ '%.0f'|format((r.split.get('gas', 0) + r.split.get('oil', 0)) / t * 100) }}%</td><td>{{ '%.0f'|format(r.split.get('water', 0) / t * 100) }}%</td>
+        <td>{% if r.apt_share is not none %}{{ '%.0f'|format(r.apt_share * 100) }}%{% else %}—{% endif %}</td>
+        <td>{% if r.meters_linked is not none %}<span title="Share of the last 12 months' building-meter cost whose service address names one of the property's buildings; the rest is on the property only">{{ '%.0f'|format(r.meters_linked * 100) }}%</span>{% else %}—{% endif %}</td></tr>
+    {% endfor %}
+      <tr><td class="l"><b>All matched properties</b></td>{% for yy in y.years %}<td><b>{{ money(y.totals.get(yy)) }}</b></td>{% endfor %}<td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    </tbody>
+  </table></div>
+  <details style="margin-top:8px"><summary style="cursor:pointer;font-size:13px">The meters behind each property — the last 12 months ({{ y.cut_lo.strftime('%b %Y') }} to {{ y.cut_hi.strftime('%b %Y') }})</summary>
+    {% for r in y.rows %}{% if r.meters %}
+    <details style="margin:6px 0 0 12px"><summary style="cursor:pointer;font-size:12.5px"><b>{{ r.name }}</b> <span class="b">{{ r.meters|length }} account{{ 's' if r.meters|length != 1 }}, {{ money(r.meters|sum(attribute='cost')) }}</span></summary>
+      <div class="ut-scroll"><table class="ut" style="margin:4px 0 8px">
+        <thead><tr><th>Service address</th><th>Building</th><th>Utility</th><th>Account</th><th>What</th><th>Bills</th><th>12 months</th></tr></thead>
+        <tbody>{% for m in r.meters[:40] %}
+          <tr><td class="l">{{ m.address or '—' }}</td><td class="l">{{ m.buildings|join(', ') or '—' }}</td>
+            <td class="l">{{ m.utility }}{% if m.supplier %} <span class="b">supply</span>{% endif %}</td><td class="l">{{ m.number or '—' }}</td>
+            <td>{{ m.commodity }}{% if m.kind != 'building' %} <span class="b">{{ m.kind }}</span>{% endif %}</td><td>{{ m.bills }}</td><td>{{ money(m.cost) }}</td></tr>
+        {% endfor %}{% if r.meters|length > 40 %}<tr><td class="l b" colspan="7">+{{ r.meters|length - 40 }} smaller accounts</td></tr>{% endif %}</tbody>
+      </table></div></details>
+    {% endif %}{% endfor %}
+  </details>
+</div>
+
+{% if y.checks %}
+<div class="ut-sec">
+  <h2>Bills to check: paid twice?</h2>
+  <p class="card-sub">The same account and service period paid on two invoices for about the same money (within 2%), and both still counted — neither voided. Some are budget-billing installments or a rebill booked as new; the rest are money to recover. {{ y.checks|length }} bill{{ 's' if y.checks|length != 1 }}, about {{ money(y.check_total) }} paid a second time.</p>
+  <div class="ut-scroll"><table class="ut">
+    <thead><tr><th>Property</th><th>Service address</th><th>Utility</th><th>Account</th><th>What</th><th>Period</th><th>Invoices</th><th>Paid</th></tr></thead>
+    <tbody>{% for c in y.checks[:60] %}
+      <tr><td class="l">{{ c.property }}</td><td class="l">{{ c.address }}</td><td class="l">{{ c.utility }}</td><td class="l">{{ c.number or '—' }}</td>
+        <td>{{ c.commodity }}</td><td>{{ c.start.strftime('%m/%d/%y') }}–{{ c.end.strftime('%m/%d/%y') }}</td><td>{{ c.invoices }}</td><td class="warn-t">{{ money(c.cost) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if y.others %}
+<div class="ut-sec">
+  <details><summary style="cursor:pointer"><b style="font-size:15px">Yardi properties not in the portal</b> <span class="card-sub">{{ y.others|length }} codes, {{ money(y.others_ref) }} in {{ y.ref }}</span></summary>
+    <p class="card-sub" style="margin-top:6px">Their service addresses match none of the portal's buildings and their names match no property, so they are counted here and nowhere else. Add the property (and its buildings) to the portal and the next import files them.</p>
+    <div class="ut-miss">{% for o in y.others %}<div><b>{{ o.code }}</b> <span class="b">{{ money(o.ref) }} in {{ y.ref }} · {{ money(o.total) }} all years</span></div>{% endfor %}</div>
+  </details>
+</div>
+{% endif %}
+{% endif %}
+
 <div class="ut-sec">
   <h2>Utility accounts and bills</h2>
   {% if not v.accounts %}
