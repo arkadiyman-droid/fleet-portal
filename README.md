@@ -458,6 +458,45 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
+### Abnormal boxes
+
+`app/abnormal.py` flags a 2010 box doing something its own settings cannot
+explain. Each finding is a warning: it gives the row an amber stripe, appears
+in the building's issue panel and on its own page, and the Live wall gets an
+**Abnormal** filter. It is never critical on its own. The checks:
+
+- **Indoor target (DIT) not from the box's tables.** The box's reported
+  `targetInsideTemperature` is compared with what its own hourly tables give.
+  That follows the firmware: weekday, Saturday or Sunday per `useHolidayDITs`
+  and `dayStartHour`, then Auto-DIT (`autoDITAdjHigh`/`Low` past
+  `autoDITTempHigh`/`Low`), the hour either side allowed, 1° of slack. On a
+  vacuum-steam box (type 5) whose gap equals `vacuumSteam.dccCompensation`,
+  the warning says so. Found 2026-11-26: 801 South St reported 150° / 97°
+  for weeks because a stray DCC compensation (+79 / +26, outside the box's own
+  -20..20) was added to a 70-71° table. The boxes never reached Inside
+  Satisfied and overheated the apartments.
+- **DCC compensation** set on a vacuum-steam box. Other boxes hold junk in
+  this field and ignore it.
+- **Hourly target table** with an hour outside 60-80°, and **every day on
+  the Saturday or Sunday table** (`useHolidayDITs` 2 / 3).
+- **Outdoor cutoff** outside 40-70°, and a **heat-off point** below the
+  highest sensible hourly target (heat stops before the apartments get
+  there).
+- **Summer mode in November-March**, by the box's own season dates (the
+  firmware's test) or its status.
+- **Clock** 15 minutes or more off: its hourly schedule runs at the wrong
+  times.
+- **Unknown heating-system type.**
+- **Overheating:** the apartments averaged 5° or more over target, never
+  under 3° over, for the last 3 hours, while the burner ran 30 minutes or
+  more. This reads the stored readings in one query.
+
+The settings come from the hourly snapshots (`setting_snapshots`). Only the
+~90 keys the checks use are read, and they are kept 5 minutes per worker.
+A box that is not answering is not checked, since its last read may be stale.
+When added, the fleet showed no false alarms from the settings checks, and 3
+overheating buildings.
+
 ### Live page speed
 
 The Live wall reloads every minute in every open tab, so its build time is

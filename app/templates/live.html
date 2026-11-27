@@ -131,8 +131,8 @@
       <a class="f {{ 'on' if source == key }}" href="{{ url_for('admin.live_page', show=show, source=key, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
-    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings)] + ([('noheat', 'No heat o/n ' ~ summary.noheat)] if heat_badge else []) + [('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
-      <a class="f {{ 'f-crit' if key in ('problems', 'noheat') else 'f-warn' if key == 'warnings' else '' }} {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
+    {% for key, label in [('all', 'All ' ~ summary.shown_total), ('problems', 'Problems ' ~ summary.problems), ('warnings', 'Warnings ' ~ summary.warnings)] + ([('noheat', 'No heat o/n ' ~ summary.noheat)] if heat_badge else []) + ([('abnormal', 'Abnormal ' ~ summary.abnormal)] if summary.abnormal else []) + [('calling', 'Calling ' ~ summary.calling), ('dark', 'Dark ' ~ (summary.dark + summary.login)), ('steam', 'Steam ' ~ summary.steam), ('hotwater', 'Hot water ' ~ summary.hotwater)] + ([('hidden', 'Hidden ' ~ summary.hidden)] if summary.hidden else []) %}
+      <a class="f {{ 'f-crit' if key in ('problems', 'noheat') else 'f-warn' if key in ('warnings', 'abnormal') else '' }} {{ 'on' if show == key }}" href="{{ url_for('admin.live_page', show=key, source=source, sort=sort, view=view, q=q) }}">{{ label }}</a>
     {% endfor %}
     <span class="lv-sep"></span>
     <span class="card-sub">Sort:</span>
@@ -153,6 +153,7 @@
     {% if heat_badge %}<span class="lv-sep"></span><span>Heat o/n — {{ heat_window_label }} (9pm–9am), frozen through the day:</span><span><span class="ho ho-ok">Ran</span></span><span><span class="ho ho-crit">No heat</span> needed heat, never fired</span><span><span class="ho ho-idle">Idle</span> mild, none needed</span>{% endif %}
     <span class="lv-sep"></span><span>Row stripe:</span><span><i style="background:#dc2626"></i>problem</span><span><i style="background:#f59e0b"></i>warning</span><span><i style="background:#3b82f6"></i>heat call</span><span><i style="background:#22c55e"></i>ok</span><span><i style="background:#9ca3af"></i>dark</span></div>{% endif %}
   {% if show == 'hidden' %}<p class="card-sub" style="margin:0 0 10px">Hidden boxes are not read and not counted. Bring one back, or delete it for good.</p>
+  {% elif show == 'abnormal' %}<p class="card-sub" style="margin:0 0 10px">2010 boxes doing something their own settings do not explain — an indoor target that is not in their tables, a clock running off, a setting that stops them heating properly — or heating a building that is already well over target. Click a building's status for the details.</p>
   {% elif show == 'dark' %}<p class="card-sub" style="margin:0 0 10px">Boxes you know are gone: hide them (they can come back) or delete them. In the table view, tick several and act on all at once.</p>{% endif %}
   {% if not rows %}<div class="card-sub">Nothing to show{% if q or show != 'all' %} for this filter{% endif %}.</div>{% endif %}
 

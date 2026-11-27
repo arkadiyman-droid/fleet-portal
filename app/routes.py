@@ -1499,6 +1499,8 @@ def _issues(row, now, events, alert_state):
         problems.append(a.issue)
     elif row["state"] == "live" and c.get("loop_cold"):
         problems.append(c["loop_cold"])               # supply / return under 80 F while calling, right now
+    for o in row.get("abnormal") or []:
+        problems.append(o["text"])                    # app/abnormal.py: a warning, never critical on its own
     if a and a.alerting:
         problems.append(f"Phone alert open since {history.local(a.opened_at).strftime('%b %d %I:%M %p').replace(' 0', ' ')}"
                         if a.opened_at else "Phone alert open")
@@ -1535,6 +1537,9 @@ def _legacy_rows(now, boxes=None):
     firing = _firing(now, [b.id for b in boxes])
     heat = heat_overnight.for_legacy([b.id for b in boxes], now)
     events, astates = _issue_context(now, [b.id for b in boxes])
+    from app import abnormal
+    odd_settings = abnormal.settings_for([b.id for b in boxes])
+    overheated = abnormal.overheating([b.id for b in boxes], now)
     for b in boxes:
         st = b.status
         c = legacy.card(st.data, guard_out=True) if st and st.data else None   # live display: drop a railed OAT to "—"
@@ -1566,6 +1571,12 @@ def _legacy_rows(now, boxes=None):
                      "firing": firing.get(b.id) if state == "live" else None,
                      "heat": heat.get(b.id),
                      "age": fleet_health.ago((now - last_ok).total_seconds()) if last_ok else None})
+        # what the box does that its own settings cannot explain (app/abnormal.py); a box that is not
+        # answering is judged on its last read, which may be stale, so only live boxes are checked
+        odd = abnormal.checks(st.data, odd_settings.get(b.id), now) if state == "live" and st and st.data else []
+        if state == "live" and b.id in overheated:
+            odd.append({"kind": "hot", "text": overheated[b.id]})
+        rows[-1]["abnormal"] = odd
         rows[-1]["issues"] = _issues(rows[-1], now, events.get(b.id, []), astates.get(b.id))
         rows[-1]["problem"] = rows[-1]["problem"] or bool(rows[-1]["issues"]["problems"])
     return rows
@@ -1626,7 +1637,7 @@ def _other_row(name, source, box_id, c, state, last_ok, now_dt, detail_url, prob
     age = fleet_health.ago((now_dt - last_ok).total_seconds()) if last_ok else None
     return {"box": types.SimpleNamespace(name=name, id=box_id, hidden_by=None),
             "source": source, "detail_url": detail_url, "c": c, "state": state, "why": why, "heat": heat,
-            "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing,
+            "last_ok": last_ok, "age": age, "alarm": None, "recent_alarm": None, "firing": firing, "abnormal": [],
             "problem": bool(problems) or state != "live",
             "critical": (state != "live") or bool(c and c.get("tone") == "crit"),
             "issues": {"name": name, "problems": list(problems or []), "notes": [], "events": [],
@@ -1762,7 +1773,8 @@ def live_page():
                  ("calling", lambda r: r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"),
                  ("dark", lambda r: r["state"] == "dark"), ("login", lambda r: r["state"] == "login"),
                  ("steam", lambda r: (r["c"] or {}).get("system") == "steam"),
-                 ("hotwater", lambda r: (r["c"] or {}).get("system") == "hot water")):
+                 ("hotwater", lambda r: (r["c"] or {}).get("system") == "hot water"),
+                 ("abnormal", lambda r: bool(r.get("abnormal")))):
         summary[k] = sum(1 for r in rows if f(r))
     if show == "problems":
         rows = [r for r in rows if r["critical"]]
@@ -1774,6 +1786,8 @@ def live_page():
         rows = [r for r in rows if r["state"] in ("dark", "login", "other")]
     elif show == "calling":
         rows = [r for r in rows if r["c"] and r["c"]["tone"] == "heat" and r["state"] == "live"]
+    elif show == "abnormal":
+        rows = [r for r in rows if r.get("abnormal")]
     elif show == "hidden":
         rows = _tag_legacy_rows(_legacy_rows(now, hidden))
     elif show in ("steam", "hotwater"):
