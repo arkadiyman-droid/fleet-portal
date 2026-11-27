@@ -32,7 +32,7 @@ import requests
 from requests.auth import HTTPDigestAuth
 from sqlalchemy import text
 
-from app import history
+from app import history, shutdown
 
 log = logging.getLogger(__name__)
 
@@ -531,6 +531,8 @@ def poll_one(box: dict, now=None) -> dict:
         extra = (["obix/systemnames"] if box.get("names_due") else []) + \
                 (["obix/emsConfig"] if box.get("names_due") or box.get("config_due") else [])
         for i, path in enumerate(["obix/status", "obix/alarm"] + extra):
+            if i and shutdown.stopping():
+                break                                # the worker is exiting: no further requests
             if i:
                 time.sleep(PAUSE)
             r = s.get(f"{box['url']}/{path}", timeout=TIMEOUT)
@@ -564,6 +566,8 @@ def poll_one(box: dict, now=None) -> dict:
         got = {}
         try:
             for name in SETTINGS_PATHS:
+                if shutdown.stopping():
+                    break
                 time.sleep(PAUSE)
                 r = s.get(f"{box['url']}/obix/{name}", timeout=TIMEOUT)
                 if r.status_code != 200:
@@ -605,8 +609,17 @@ def poll_all(app, now=None, poll=poll_one, workers=None) -> int:
                      "settings_due": b.id in settings_due})
     # Boxes read side by side (LEGACY_POLL_WORKERS, default 16: a cycle of
     # ~186 boxes took ~2 min at 8, 2026-10-15). Pacing stays per box.
+    def job(j):
+        # A box still queued when the worker starts exiting is skipped, not read
+        # (app/shutdown.py: otherwise the exit waits for the whole round).
+        return None if shutdown.stopping() else poll(j, now)
+
     with ThreadPoolExecutor(max_workers=workers or app.config.get("LEGACY_POLL_WORKERS", 16)) as pool:
-        results = list(pool.map(lambda j: poll(j, now), jobs))
+        results = [r for r in pool.map(job, jobs) if r is not None]
+    if shutdown.stopping():
+        log.info("Legacy boxes: round cut short by a worker exit (%d of %d read, not saved); "
+                 "the next worker reads them again", len(results), len(jobs))
+        return 0
     answered = 0
     readings, events = [], []
     for res in results:
@@ -671,7 +684,7 @@ class LegacyPoller:
     def _run(self, app):
         interval = app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300)
         time.sleep(20)                        # let the app finish starting
-        while True:
+        while not shutdown.stopping():
             started = time.monotonic()
             try:
                 with app.app_context():

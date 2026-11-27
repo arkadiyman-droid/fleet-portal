@@ -29,6 +29,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import Controller, ControllerStatus
+from app import shutdown
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ class FleetPoller:
 
     def _run(self, app) -> None:
         interval = app.config.get("FLEET_POLL_INTERVAL_SECONDS", 60)
-        while True:
+        while not shutdown.stopping():         # app/shutdown.py: no new round while the worker exits
             try:
                 self._run_cycle(app)
             except Exception as e:

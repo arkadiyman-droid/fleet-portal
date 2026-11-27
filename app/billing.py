@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.extensions import db
 from app.models import Building, Contract, Invoice, Payment
+from app import shutdown
 
 log = logging.getLogger(__name__)
 
@@ -142,7 +143,7 @@ class BillingScheduler:
 
     def _run(self, app) -> None:
         interval = app.config.get("BILLING_SCHEDULER_INTERVAL_SECONDS", 86400)  # daily
-        while True:
+        while not shutdown.stopping():         # app/shutdown.py: no new round while the worker exits
             try:
                 self._run_cycle(app)
             except Exception as e:

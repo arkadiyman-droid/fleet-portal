@@ -458,6 +458,27 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
+### Reloads and the background readers
+
+A deploy reloads the portal (`kill -HUP`): gunicorn starts new workers and the
+old ones exit. An exiting Python process waits for every thread pool to finish
+everything queued on it. The 2010-box reader queues about 186 boxes on 16
+threads, so a reload landing mid-round made the old worker run the rest of the
+round first, and once that took over gunicorn's 60 s limit and the worker was
+killed. `app/shutdown.py` raises a "stopping" flag at the very start of the
+exit, before Python waits for the pools:
+
+- boxes still queued skip themselves;
+- a box being read stops after the request it is waiting on (at most
+  `legacy.TIMEOUT`, 30 s);
+- the cut-short round saves nothing (the new worker reads every box again
+  within minutes);
+- the fleet, Bloom, hot-water, billing and server-sampler loops start no new
+  round.
+
+Measured: a child process with 40 queued half-second jobs exits at once with
+the flag, and after 21 s without it.
+
 ### Abnormal boxes
 
 `app/abnormal.py` flags a 2010 box doing something its own settings cannot

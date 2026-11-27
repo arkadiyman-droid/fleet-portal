@@ -42,6 +42,7 @@ import requests
 from sqlalchemy import text
 
 from app.extensions import db
+from app import shutdown
 
 log = logging.getLogger(__name__)
 
@@ -724,7 +725,7 @@ class BloomPoller:
 
     def _run(self, app) -> None:
         interval = app.config.get("BLOOM_POLL_INTERVAL_SECONDS", 60)
-        while True:
+        while not shutdown.stopping():         # app/shutdown.py: no new round while the worker exits
             try:
                 self._run_cycle(app)
             except Exception as e:

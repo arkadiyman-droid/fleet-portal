@@ -43,6 +43,8 @@ def create_app():
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(enroll_bp)
+    from app import shutdown
+    shutdown.install()                # background work stops promptly when this worker exits (app/shutdown.py)
     from app import compress
     compress.init_app(app)            # gzip pages before they cross the server's own link (app/compress.py)
 

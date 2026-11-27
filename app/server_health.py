@@ -42,6 +42,7 @@ import subprocess
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from app import shutdown
 
 log = logging.getLogger(__name__)
 
@@ -1080,7 +1081,7 @@ class ServerSampler:
         interval = app.config.get("SERVER_SAMPLE_SECONDS", 60)
         keep = app.config.get("SERVER_KEEP_DAYS", 30)
         time.sleep(10)                # let the app finish starting
-        while True:
+        while not shutdown.stopping():         # app/shutdown.py: no new round while the worker exits
             try:
                 with app.app_context():
                     sample_once(interval, keep)
