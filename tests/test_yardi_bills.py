@@ -206,4 +206,16 @@ def test_usage_lands_on_the_bills_once_and_data_errors_are_dropped():
     assert by["52487-85000-1"]["usage"] == 6000.0                           # paid twice, used once
     assert "usage" not in by["2100-1858-54-3"]                              # $0.00015 per kWh: not real
     assert "usage" not in by["644660-80133"]                                # the ESCO's copy of the kWh
-    assert out["bills"] == 3 and out["with_usage"] == 2 and len(out["dropped"]) == 1
+    assert out["bills"] == 3 and out["with_usage"] == 2 and out["flat"] == 0 and len(out["dropped"]) == 1
+
+
+def test_a_water_charge_with_no_usage_is_a_flat_charge():
+    mcp = [["water", "10-20 RICHMAN PZ", "CA", 523260.44, 0, "Gal"]]          # NYC MCP: per apartment, a year ahead
+    assert yb.invoice_usage(mcp, "water", "10-20 RICHMAN PZ") == (0.0, "flat", 523260.44)
+    assert yb.invoice_usage([["electric", "1 Main St", "CA", 900.0, 0, "kWh"]], "electric", "1 Main St")[1] == "kWh"  # missing, not flat
+    lines = [yb.parse_line(row("Water 07/01/2025-07/31/2025 10-20 RICHMAN PZ", 523260.44, payee="NYC Water Board",
+                               inv="9000167642001-HTX25070900129", gl="512-040"))]
+    res = yb.build(lines, {}, {})
+    out = yb.attach_usage(res["accounts"], yb.usage_index([["9000167642001", "HTX25070900129", mcp]]))
+    b = list(res["accounts"][0]["bills"].values())[0]
+    assert out["flat"] == 1 and b["unit"] == "flat" and "usage" not in b

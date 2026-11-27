@@ -544,9 +544,20 @@ exist yet.
      - A reading whose own items price it below $0.02/kWh, $0.05/therm or
        $0.50/kgal is a utility data error (36M kWh on a $5,497 bill) and is
        dropped and counted.
-     The page's "Usage by property" shows a property's price per unit (all-in:
-     supply and sewer included) and usage per apartment only where usage is
-     on at least 90% of that utility's bills (by cost) for the year.
+     - A water bill with a charge but no usage at all is a flat charge
+       (unit `flat`): NYC's Multi-Family Conservation Program bills per
+       apartment, a year ahead. It counts as covered.
+     The page's "Usage by property" shows a property's price per unit and
+     usage per apartment only where usage (or a flat charge) is on at least
+     90% of that utility's bills (by cost, each account netted over the year,
+     so a payment voided later in the year adds nothing). The price is
+     all-in: everything paid for the fuel that year, supply, sewer and lines
+     re-entered with no meter named included; apartments' own electric is not.
+   - **Usage fixes checked against the bills:** `yardi-utilities/usage_corrections.py`
+     corrects Conservice's records where the utility's bill says otherwise
+     (River Park: a 7-year meter read on a 1-year bill, and readings in
+     10 CF / 100 CF taken as CF). It writes the `.gz` the import uses;
+     `raw/` is never changed.
    - **Running it:** parse where the export was downloaded, because the Pi
      has no openpyxl: `read_xlsx` + `parse_line` + `dump_lines` write a
      `.json.gz`. On the Pi, run a quiet script (pollers off) that calls

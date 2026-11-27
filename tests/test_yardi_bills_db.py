@@ -97,7 +97,7 @@ def test_usage_on_the_bills_and_the_page(app, session, world):
     from app import yardi_bills as yb
     from tests.test_yardi_bills import _usage
     res = yb.import_lines(_lines(), usage=_usage())
-    assert res["usage"] == {"bills": 5, "with_usage": 3, "dropped": 0}       # garden 2025, Longwood gas, the water
+    assert res["usage"] == {"bills": 5, "with_usage": 3, "flat": 0, "dropped": 0}       # garden 2025, Longwood gas, the water
     garden = m.UtilityAccount.query.filter_by(account_number="26271-11000-4").one()
     got = {b.period_end.year: (b.usage, b.unit) for b in garden.bills}
     assert got == {2025: (100000.0, "kWh"), 2026: (None, None)}
@@ -116,3 +116,28 @@ def test_usage_on_the_bills_and_the_page(app, session, world):
     yb.import_lines(_lines())
     assert yb.summary(today=dt.date(2026, 11, 27))["usage"] is None
     assert "Usage by property" not in c.get("/utilities").get_data(as_text=True)
+
+
+def test_a_flat_rate_property_and_a_payment_voided_in_the_year(app, session, world):
+    """River Park, 2025: the meter's usage is on one NYC Water Board account,
+    the others are flat per-apartment charges, and a payment voided later in
+    the year adds nothing. All of it is covered; the price is all it paid
+    for water over the meter's usage."""
+    from app import yardi_bills as yb
+    from tests.test_yardi_bills import row
+    w = dict(prop="longwood", gl="512-040", payee="NYC Water Board")
+    lines = [yb.parse_line(r) for r in [
+        row("Water 06/09/2024-06/08/2025 775 SOUTHERN BLVD", 1000.0, inv="7000167639001-HTX25070900127", **w),
+        row("Water 07/01/2025-07/31/2025 775 SOUTHERN BLVD", 3000.0, inv="9000167642001-HTX25070900129", **w),
+        row("Water 07/01/2025-07/31/2025 775 SOUTHERN BLVD", 2000.0, inv="4000167641001-07/25", **w),
+        row("Water 12/01/2025-12/31/2025 775 SOUTHERN BLVD", -2000.0, inv="4000167641001-12/25", **w),
+    ]]
+    usage = yb.usage_index([
+        ["7000167639001", "HTX25070900127", [["water", "775 SOUTHERN BLVD", "CA", 1000.0, 100000, "Gal"]]],
+        ["9000167642001", "HTX25070900129", [["water", "775 SOUTHERN BLVD", "CA", 3000.0, 0, "Gal"]]],
+    ])
+    res = yb.import_lines(lines, usage=usage)
+    assert res["usage"]["with_usage"] == 1 and res["usage"]["flat"] == 1
+    lw = {r["name"]: r for r in yb.summary(today=dt.date(2026, 11, 27))["rows"]}["Longwood"]
+    x = lw["use"]["water"]
+    assert x["ref"] == 100.0 and x["cover"] == 1.0 and x["price"] == 40.0          # $4,000 / 100 kgal

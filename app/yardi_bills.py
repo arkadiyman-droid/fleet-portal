@@ -411,7 +411,8 @@ def import_lines(lines, source_ref="yardi", usage=None):
     unmatched = sorted(c for c, (pid, _) in pmap.items() if not pid)
     return {"lines": len(lines), "accounts": len(res["accounts"]), "bills": n_bills, "skipped": res["skipped"],
             "deposits": round(sum(res["deposits"].values()), 2),
-            "usage": ({"bills": used["bills"], "with_usage": used["with_usage"], "dropped": len(used["dropped"])}
+            "usage": ({"bills": used["bills"], "with_usage": used["with_usage"], "flat": used["flat"],
+                       "dropped": len(used["dropped"])}
                       if used else None),
             "matched": {c: pid for c, (pid, _) in pmap.items() if pid}, "unmatched": unmatched,
             "how": {c: how for c, (_, how) in pmap.items()}}
@@ -456,11 +457,14 @@ def load_usage(path):
 def invoice_usage(items, commodity, address):
     """(usage, unit, amount) that one invoice's delivery items show for
     this commodity and service address, or None. An invoice that covers
-    several buildings (one account, several addresses) gives each its own."""
+    several buildings (one account, several addresses) gives each its own.
+    A water invoice that charges money but shows no usage at all is a flat
+    charge (NYC's Multi-Family Conservation Program bills per apartment, a
+    year ahead): (0, "flat", amount). It has no usage to miss."""
     want = DELIVERY.get(commodity)
     if not want:
         return None
-    its = [i for i in items if i[0] in want and i[4] is not None and str(i[5] or "").strip().lower() in UNITS]
+    its = [i for i in items if i[0] in want]
     if not its:
         return None
     if len({street_key(i[1]) or str(i[1]).upper() for i in its}) > 1:
@@ -468,30 +472,39 @@ def invoice_usage(items, commodity, address):
         its = [i for i in its if k and street_key(i[1]) == k]
         if not its:
             return None
+    amount = round(sum(float(i[3] or 0) for i in its), 2)
+    if commodity == "water" and amount > 0 and not any(i[4] for i in its):
+        return 0.0, "flat", amount
+    its = [i for i in its if i[4] is not None and str(i[5] or "").strip().lower() in UNITS]
+    if not its:
+        return None
     units = {UNITS[str(i[5]).strip().lower()] for i in its}
     if len(units) != 1:
         return None
     unit, f = units.pop()
-    return (round(sum(float(i[4]) for i in its) * f, 3), unit,
-            round(sum(float(i[3] or 0) for i in its), 2))
+    return round(sum(float(i[4]) for i in its) * f, 3), unit, amount
 
 
 def attach_usage(accounts, index):
     """Put usage on the building bills build() made. A bill paid on two
     invoices (a duplicate, a rebill) shows its usage on both: the larger one
-    is the bill's, never the sum. Returns counts and the dropped data errors."""
-    out = {"bills": 0, "with_usage": 0, "dropped": []}
+    is the bill's, never the sum. A bill with only flat charges gets unit
+    "flat" and no usage. Returns counts and the dropped data errors."""
+    out = {"bills": 0, "with_usage": 0, "flat": 0, "dropped": []}
     for a in accounts:
         if a["kind"] != "building" or a["supplier"]:
             continue
         for b in a["bills"].values():
             out["bills"] += 1
-            best = None
+            best, flat = None, False
             for inv, amt in b["inv"].items():
                 if amt <= 0.005:
                     continue
                 items = index.get((norm_account(account_number(inv)), batch_of(inv) or ""))
                 u = invoice_usage(items, a["commodity"], a["service_address"]) if items else None
+                if u and u[1] == "flat":
+                    flat = True
+                    continue
                 if not u or u[0] <= 0:
                     continue
                 if u[2] / u[0] < FLOOR[u[1]]:
@@ -503,6 +516,9 @@ def attach_usage(accounts, index):
             if best:
                 b["usage"], b["unit"] = best[0], best[1]
                 out["with_usage"] += 1
+            elif flat:
+                b["unit"] = "flat"
+                out["flat"] += 1
     return out
 
 
@@ -541,33 +557,45 @@ COVER_MIN = 0.9          # a price per unit only where usage covers this share o
 
 def _usage(rows, ref, prev, yr):
     """Usage per property (electric kWh, gas therms, water kgal) for the
-    reference year and the one before, the all-in price per unit (supply
-    and sewer included) and per apartment. Each row gets r["use"]; returns
-    the portfolio totals, or None when no bill has usage. App context assumed."""
+    reference year and the one before, the all-in price per unit and per
+    apartment. Each row gets r["use"]; returns the portfolio totals, or None
+    when no bill has usage. App context assumed.
+      all-in cost  = everything the property paid for that fuel in the year,
+                     net: supply, sewer, and lines Yardi re-entered with no
+                     meter named (a voided and reissued payment); apartments'
+                     own electric is not the plant and is left out.
+      cover        = share of the utility's own bills that carry usage or
+                     are flat charges with none, each account netted over
+                     the year first (a payment voided later in the year,
+                     or a void of last year's, adds nothing)."""
     from sqlalchemy import case, func
     from app.extensions import db
     from app.models import UtilityAccount, UtilityBill
     if not ref:
         return None
-    q = (db.session.query(UtilityAccount.property_id, UtilityAccount.commodity, UtilityAccount.supplier, yr,
+    covered = UtilityBill.usage.isnot(None) | (UtilityBill.unit == "flat")
+    q = (db.session.query(UtilityAccount.id, UtilityAccount.property_id, UtilityAccount.commodity,
+                          UtilityAccount.supplier, UtilityAccount.kind, yr,
                           func.sum(UtilityBill.cost_cents),
-                          func.sum(case((UtilityBill.usage.isnot(None), UtilityBill.cost_cents), else_=0)),
+                          func.sum(case((covered, UtilityBill.cost_cents), else_=0)),
                           func.sum(UtilityBill.usage))
          .join(UtilityBill, UtilityBill.account_id == UtilityAccount.id)
-         .filter(UtilityAccount.source == "yardi", UtilityAccount.kind == "building",
+         .filter(UtilityAccount.source == "yardi", UtilityAccount.kind.in_(("building", "other", "fee")),
                  UtilityAccount.property_id.isnot(None), yr.in_([ref, prev] if prev else [ref]))
-         .group_by(UtilityAccount.property_id, UtilityAccount.commodity, UtilityAccount.supplier, yr))
+         .group_by(UtilityAccount.id, UtilityAccount.property_id, UtilityAccount.commodity,
+                   UtilityAccount.supplier, UtilityAccount.kind, yr))
     acc = defaultdict(lambda: {"usage": 0.0, "all": 0.0, "own": 0.0, "cov": 0.0})
     any_use = False
-    for pid, com, sup, y, cents, cov_cents, used in q:
+    for _aid, pid, com, sup, kind, y, cents, cov_cents, used in q:
         g = GROUP.get(com, com)
         if g not in USE_UNIT:
             continue
         x = acc[(pid, int(y), g)]
         x["all"] += (cents or 0) / 100
-        if not sup and com != "sewer":
-            x["own"] += (cents or 0) / 100
-            x["cov"] += (cov_cents or 0) / 100
+        if kind == "building" and not sup and com != "sewer":
+            net = max((cents or 0) / 100, 0.0)
+            x["own"] += net
+            x["cov"] += min(max((cov_cents or 0) / 100, 0.0), net)
         if used:
             x["usage"] += used
             any_use = True

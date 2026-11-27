@@ -151,7 +151,7 @@
           <tr><td class="l">{{ m.address or '—' }}</td><td class="l">{{ m.buildings|join(', ') or '—' }}</td>
             <td class="l">{{ m.utility }}{% if m.supplier %} <span class="b">supply</span>{% endif %}</td><td class="l">{{ m.number or '—' }}</td>
             <td>{{ m.commodity }}{% if m.kind != 'building' %} <span class="b">{{ m.kind }}</span>{% endif %}</td><td>{{ m.bills }}</td><td>{{ money(m.cost) }}</td>
-            <td>{% if m.usage %}{{ n0(m.usage) }} <span class="b">{{ m.unit }}</span>{% else %}—{% endif %}</td></tr>
+            <td>{% if m.usage %}{{ n0(m.usage) }} <span class="b">{{ m.unit }}</span>{% elif m.unit == 'flat' %}<span class="b" title="A flat charge with no usage on it (NYC's Multi-Family Conservation Program bills per apartment, a year ahead)">flat rate</span>{% else %}—{% endif %}</td></tr>
         {% endfor %}{% if r.meters|length > 40 %}<tr><td class="l b" colspan="8">+{{ r.meters|length - 40 }} smaller accounts</td></tr>{% endif %}</tbody>
       </table></div></details>
     {% endif %}{% endfor %}
@@ -162,7 +162,7 @@
 {% set U = y.usage %}
 <div class="ut-sec">
   <h2>Usage by property, {{ y.ref }} (utility bills)</h2>
-  <p class="card-sub">kWh, therms and water from the utilities' own bills, which Conservice keeps for every payable. Only the utility's delivery charges are counted: the supply line on the same bill, an ESCO's own invoice (Direct Energy and the like) and the sewer charge repeat the same kWh, therms or gallons. The price per unit is all-in: what was paid for that fuel in {{ y.ref }} (supply and sewer included) divided by the usage. It and "per apt" are shown only where usage is on at least 90% of the utility's bills; a number marked * is a partial year. Readings that price out impossibly low (a utility's data error, e.g. 36M kWh on a $5,497 bill) are left out.</p>
+  <p class="card-sub">kWh, therms and water from the utilities' own bills, which Conservice keeps for every payable. Only the utility's delivery charges are counted: the supply line on the same bill, an ESCO's own invoice (Direct Energy and the like) and the sewer charge repeat the same kWh, therms or gallons. The price per unit is all-in: what was paid for that fuel in {{ y.ref }} (supply and sewer included) divided by the usage. It and "per apt" are shown only where usage is on at least 90% of the utility's bills; a number marked * is a partial year. Readings that price out impossibly low (a utility's data error, e.g. 36M kWh on a $5,497 bill) are left out. A water bill with a charge but no usage at all is a flat charge (NYC's Multi-Family Conservation Program bills per apartment, a year ahead): it counts as covered, and its cost is in the price, so a flat-rate property's price per kgal is what its water really costs it per kgal used.</p>
   <div class="ut-tiles">
     {% for g, lab in [('electric', 'Electric'), ('gas', 'Gas'), ('water', 'Water')] %}{% set t = U[g] %}
     <div class="ut-tile"><div class="l">{{ lab }} {{ y.ref }}</div><div class="n">{{ n0(t.ref) }} <span style="font-size:13px">{{ t.unit }}{{ 's' if t.unit == 'therm' }}</span></div>
