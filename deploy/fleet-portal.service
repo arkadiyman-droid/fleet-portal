@@ -17,8 +17,16 @@ EnvironmentFile=/home/pi/fleet-portal/.env
 # Beverly compliance platform, the TurboGen dashboard and Postgres. The
 # portal is a low-traffic admin UI for one operator, so it gets a small
 # fixed share rather than sizing itself to the box.
+#
+# Four threads per worker (gthread): the pollers and the server sampler are
+# threads inside these same two workers, and with plain sync workers one slow
+# page (or a page waiting on the database) held a whole worker, so the next
+# visitor queued behind it. With threads, up to 8 requests are served at once.
+# The app is thread-safe for this: one database session per request, and the
+# in-memory caches and shared dicts are guarded by locks (added 2026-11-26).
 ExecStart=/home/pi/fleet-portal/.venv/bin/gunicorn \
     --workers 2 \
+    --threads 4 \
     --bind 127.0.0.1:8090 \
     --timeout 60 \
     --access-logfile - \
