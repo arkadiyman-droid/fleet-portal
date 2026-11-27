@@ -185,6 +185,7 @@
       {% if g.is_superuser %}<a href="{{ url_for('admin.list_users') }}">Users</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.directory_page') }}" title="Managers and properties from the violations portal: who should see what">Directory</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.billing_dashboard') }}">Billing</a>{% elif pays_for %}<a href="{{ url_for('admin.my_billing') }}" title="Your subscription: plan, card on file, invoices">Billing</a>{% endif %}
+      {% if g.is_superuser %}<a href="{{ url_for('admin.utilities_page') }}" title="Energy, water and emissions per building: NYC benchmarking, LL97 exposure, and the utility accounts and bills">Utilities</a>{% endif %}
       {% if g.is_superuser %}<a href="{{ url_for('admin.server_page') }}" title="The server these websites run on: CPU, memory, storage, traffic, services, backups">Server</a>{% endif %}
     </nav>
     <span class="identity">{% if g.is_superuser %}Superuser{% elif g.user %}<a href="{{ url_for('admin.account_page') }}" style="color:inherit" title="Your account: what you can see, change your password">{{ g.user.name }}</a>{% if view_only %} · {{ 'view, and fan control' if runs_fans else 'view only' }}{% endif %}{% endif %}</span>

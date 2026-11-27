@@ -2673,6 +2673,61 @@ def fans_raw(site_id):
                            bloom_url=f"{site.account.base_url.rstrip('/')}/property/{site.asset_key}")
 
 
+@admin_bp.route("/utilities")
+def utilities_page():
+    """Energy, water, emissions and (as they arrive) the bills, per building:
+    NYC benchmarking first (app/benchmark.py), the portfolio's own utility
+    accounts and bills after (app/utilities.py). Superuser only."""
+    if not is_superuser():
+        abort(403)
+    from app import benchmark, history, utilities
+    v = utilities.view()
+    return render_template("utilities.html", title="Utilities", v=v, state=utilities.refresh_state(),
+                           local=history.local, bm=benchmark)
+
+
+@admin_bp.route("/utilities/refresh", methods=["POST"])
+def utilities_refresh():
+    """Download the NYC LL84 data again and re-match (in the background)."""
+    if not is_superuser():
+        abort(403)
+    from app import utilities
+    if utilities.start_refresh(current_app._get_current_object()):
+        flash("Downloading the NYC benchmarking data. It takes a minute or two; reload this page to see it.", "success")
+    else:
+        flash("A refresh is already running.", "info")
+    return redirect(url_for("admin.utilities_page"))
+
+
+@admin_bp.route("/utilities/link", methods=["POST"])
+def utilities_link():
+    """Set by hand which LL84 property a building belongs to ('none' = it has
+    no benchmarking report; 'auto' = go back to automatic matching)."""
+    if not is_superuser():
+        abort(403)
+    from app.models import BenchmarkProperty, BuildingBenchmark
+    b = Building.query.get_or_404(_parse_int(request.form.get("building_id", "")) or 0)
+    choice = (request.form.get("property_id") or "").strip()
+    x = db.session.get(BuildingBenchmark, b.id)
+    if choice == "auto":
+        if x is not None:
+            db.session.delete(x)
+        db.session.commit()
+        flash(f"{b.name} goes back to automatic matching at the next refresh.", "success")
+        return redirect(url_for("admin.utilities_page"))
+    if choice != "none" and not db.session.get(BenchmarkProperty, choice):
+        flash("That NYC property id is not among the downloaded properties. Refresh first, or check the id "
+              "(it is the Portfolio Manager property id in the city's data).", "error")
+        return redirect(url_for("admin.utilities_page"))
+    x = x or BuildingBenchmark(building_id=b.id)
+    x.property_id = None if choice == "none" else choice
+    x.how, x.alternates, x.set_by, x.set_at = ("none" if choice == "none" else "manual"), None, _who_named(), datetime.utcnow()
+    db.session.add(x)
+    db.session.commit()
+    flash(f"{b.name}: {'marked as having no NYC benchmarking report' if choice == 'none' else 'linked to NYC property ' + choice}.", "success")
+    return redirect(url_for("admin.utilities_page"))
+
+
 @admin_bp.route("/fans/effect")
 def fans_effect_page():
     """What the roof fans do to the apartments and the burner: every time a

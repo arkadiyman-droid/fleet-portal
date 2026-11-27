@@ -458,6 +458,60 @@ verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
 
+### Utilities: energy, water, emissions and (soon) the bills
+
+**Utilities** (superuser, `/utilities`) answers four questions per building:
+is it efficient, is it exposed under LL97, are the bills right, and did a
+change save money. The data comes in layers, and the page says which ones
+exist yet.
+
+1. **NYC benchmarking (LL84), live.** Every NYC property over 25,000 sq ft
+   reports its annual energy, water and emissions, and the city publishes it
+   on NYC Open Data (dataset `5zyy-y8am`, calendar 2022 on).
+   - `app/benchmark.py` downloads the whole dataset (only the columns used)
+     and matches it here, so our building list never goes to an outside
+     service.
+   - Matching uses house number and street. A building name's number range
+     must overlap on the same side of the street. Only residential property
+     types count. A property's buildings settle on one borough together, and a
+     lone hit in a big property is dropped. The most specific report wins:
+     an exact number, then the fewest buildings, then the newest
+     registration.
+   - Links a person sets ("Link a building by hand", or `none`) are never
+     changed by a refresh. "Refresh NYC data" downloads again in the
+     background.
+   - First run (2026-11-27): 146,275 rows; 53 of 225 buildings linked to 42
+     NYC properties. DCA's brownstones (under 25,000 sq ft) and everything
+     outside NYC have no report.
+2. **LL97 exposure.** Emissions are worked out with LL97's own coefficients,
+   not the EPA figure LL84 reports:
+   - 2024-29 coefficients: electricity 0.000288962 t/kWh; gas 0.00005311,
+     #2 oil 0.00007421, #4 oil 0.00007529, steam 0.00004493 t/kBtu.
+   - Multifamily limit: 0.00675 t/sq ft for 2024-29. For 2030 the page uses
+     **0.00334664**, the 2023 rule's figure; other sources say 0.00407, so 2030
+     is labelled an estimate.
+   - Penalty: $268 a tonne over the limit.
+   - **Every figure assumes the standard path (Article 320).** Rent-regulated
+     and HUD buildings often follow Article 321 (prescriptive measures) or
+     start in 2035. The city's Covered Buildings List carries each building's
+     path (CP0-CP4) by BBL; `benchmark.load_cbl()` stores it.
+     nyc.gov blocks automated downloads, so a person downloads `cbl26.xlsx`.
+3. **Efficiency:** weather-normalised site energy per sq ft against the NYC
+   multifamily median for the same year (`benchmark_stats`), ENERGY STAR
+   score, heating fuel, electricity, and water per apartment against the
+   median.
+4. **Utility accounts and bills.** The tables exist; nothing is loaded yet:
+   - `utility_accounts`, with a building share for master meters;
+   - `utility_bills`, with period, usage, cost and estimated reads.
+
+   Next: a Yardi utility payables export, then the bills on file, then the
+   DEP / Con Edison / National Grid feeds (see
+   `EMS/UTILITY_DATA_INTEGRATION.md`).
+
+Tables: `benchmark_properties`, `benchmark_years`, `benchmark_stats`,
+`building_benchmarks`, `utility_accounts`, `utility_account_buildings`,
+`utility_bills` (migration `b7d9f1a3c5e2`).
+
 ### Fans: the apartments under them, and what the fans do
 
 Roof exhaust fans are read from Bloom (`app/bloom_fans.py`). Their buildings'

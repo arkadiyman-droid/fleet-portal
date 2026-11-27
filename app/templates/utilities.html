@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}Utilities — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .ut-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px; margin:10px 0 16px; }
+  .ut-tile { background:var(--panel, #fff); border:1px solid var(--border); border-radius:10px; padding:10px 12px; min-width:0; }
+  .ut-tile .l { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .ut-tile .n { font-size:24px; font-weight:750; line-height:1.2; }
+  .ut-tile .s { font-size:12px; color:var(--muted); }
+  .ut-tile.warn .n { color:#b45309; } .ut-tile.crit .n { color:#b91c1c; } .ut-tile.ok .n { color:#15803d; }
+  .ut-sec { background:var(--panel, #fff); border:1px solid var(--border); border-radius:12px; padding:12px 16px; margin-bottom:16px; }
+  .ut-sec h2 { font-size:15px; margin:0 0 4px; }
+  .ut-sec > .card-sub { margin:0 0 10px; max-width:980px; }
+  .ut-scroll { overflow-x:auto; }
+  table.ut { width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.ut th, table.ut td { padding:5px 8px; border-bottom:1px solid var(--border); text-align:right; white-space:nowrap; vertical-align:top; }
+  table.ut th:first-child, table.ut td:first-child, table.ut .l { text-align:left; white-space:normal; }
+  table.ut th { font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); font-weight:600; }
+  table.ut .b { font-size:11.5px; color:var(--muted); }
+  .over { color:#b91c1c; font-weight:650; } .under { color:#15803d; } .warn-t { color:#b45309; font-weight:650; }
+  .ut-bar { display:inline-block; height:9px; border-radius:3px; background:#e5e7eb; width:110px; vertical-align:middle; position:relative; overflow:hidden; }
+  .ut-bar i { position:absolute; left:0; top:0; bottom:0; border-radius:3px; }
+  .ut-spark { display:inline-flex; gap:2px; align-items:flex-end; height:18px; vertical-align:middle; }
+  .ut-spark i { display:inline-block; width:7px; background:#93c5fd; border-radius:1px; }
+  .ut-pill { display:inline-block; font-size:11px; padding:1px 7px; border-radius:9px; background:#f3f4f6; color:#374151; }
+  .ut-pill.p3 { background:#ecfdf5; color:#065f46; } .ut-pill.unk { background:#fffbeb; color:#92400e; }
+  .ut-miss { columns:3 260px; font-size:12.5px; }
+  .ut-miss div { break-inside:avoid; margin-bottom:8px; }
+  .ut-steps li { margin:4px 0; }
+  .ut-link input[type=text] { width:110px; padding:2px 5px; font-size:12px; }
+  @media (max-width:640px) { .ut-tile .n { font-size:20px; } }
+</style>
+{% endblock %}
+{% macro n0(v) %}{% if v is none %}—{% else %}{{ '{:,.0f}'.format(v) }}{% endif %}{% endmacro %}
+{% macro n1(v) %}{% if v is none %}—{% else %}{{ '{:,.1f}'.format(v) }}{% endif %}{% endmacro %}
+{% macro money(v) %}{% if not v %}—{% else %}${{ '{:,.0f}'.format(v) }}{% endif %}{% endmacro %}
+{% macro pathway(r) %}{% if r.pathway %}<span class="ut-pill {{ 'p3' if r.pathway == 'CP3' }}" title="{{ r.pathway_words }}">{{ r.pathway }}</span>{% else %}<span class="ut-pill unk" title="Not known until the city's Covered Buildings List is loaded. Rent-regulated and HUD buildings often follow Article 321 (prescriptive measures) instead of the limits.">unknown</span>{% endif %}{% endmacro %}
+{% macro bldgs(r) %}<div class="b">{% for nm, pr in r.buildings[:4] %}{{ nm }}{{ ', ' if not loop.last }}{% endfor %}{% if r.buildings|length > 4 %} +{{ r.buildings|length - 4 }}{% endif %} · {{ r.buildings[0][1] if r.buildings }}</div>{% endmacro %}
+
+{% block content %}
+<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+  <h1 style="margin:0">Utilities</h1>
+  <span class="card-sub">Energy, water and emissions per building — and, as they arrive, the accounts and bills behind them.</span>
+  <form method="post" action="{{ url_for('admin.utilities_refresh') }}" style="margin-left:auto">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn plain" type="submit" {{ 'disabled' if state.running }} title="Download NYC's benchmarking data again and re-match the buildings">{{ 'Refreshing…' if state.running else 'Refresh NYC data' }}</button>
+  </form>
+</div>
+{% if state.error %}<div class="banner crit" style="margin-top:8px">The last refresh failed: {{ state.error }}</div>{% endif %}
+
+<div class="ut-tiles">
+  <div class="ut-tile"><div class="l">Buildings with NYC data</div><div class="n">{{ v.n_linked }} <small style="font-size:13px;font-weight:500">of {{ v.n_buildings }}</small></div>
+    <div class="s">{{ v.n_props }} benchmarked properties{% if v.refreshed %} · data from {{ local(v.refreshed).strftime('%b %d') }}{% endif %}</div></div>
+  <div class="ut-tile {{ 'crit' if v.over24 else 'ok' }}" title="If these properties are on the standard LL97 path"><div class="l">Over the LL97 limit now</div><div class="n">{{ v.over24|length }}</div>
+    <div class="s">{% if v.penalty24 %}{{ money(v.penalty24) }} a year if on the standard path{% else %}none over the 2024–2029 limit{% endif %}</div></div>
+  <div class="ut-tile {{ 'warn' if v.over30 else 'ok' }}"><div class="l">Over the 2030 limit</div><div class="n">{{ v.over30|length }}</div>
+    <div class="s">{% if v.penalty30 %}≈ {{ money(v.penalty30) }} a year at today's use (estimate){% else %}none at today's use{% endif %}</div></div>
+  <div class="ut-tile {{ 'warn' if not v.pathways_known }}"><div class="l">LL97 pathway known</div><div class="n">{{ v.pathways_known }} <small style="font-size:13px;font-weight:500">of {{ v.n_props }}</small></div>
+    <div class="s">{{ 'needs the city\'s Covered Buildings List' if not v.pathways_known else 'from the Covered Buildings List' }}</div></div>
+  <div class="ut-tile {{ 'warn' if not v.accounts }}"><div class="l">Utility accounts</div><div class="n">{{ v.accounts }}</div>
+    <div class="s">{{ v.bills }} bill{{ 's' if v.bills != 1 }} on file</div></div>
+</div>
+
+{% if v.exposure %}
+<div class="ut-sec">
+  <h2>LL97 exposure</h2>
+  <p class="card-sub">Emissions worked out with LL97's own coefficients from what each property reported for its latest year, against its limit (gross floor area × the multifamily limit). Penalty $268 per tonne over.
+    <b>Shown as if every property were on the standard path:</b> rent-regulated and HUD buildings often follow Article 321 (prescriptive measures) or start in 2035 instead, so a figure here is exposure to check, not a bill. The 2030 limit for multifamily differs between sources (0.00335 or 0.00407 t/sq ft); this uses 0.00335, the 2023 rule's figure, and today's use (the cleaner 2030 electricity factor would lower it somewhat).</p>
+  <div class="ut-scroll"><table class="ut">
+    <thead><tr><th>Property (NYC)</th><th>Pathway</th><th>Sq ft</th><th>Year</th><th>Emissions t</th><th>2024–29 limit</th><th>Over / under</th><th>2030 limit</th><th>Over 2030</th><th>≈ 2030 penalty / yr</th></tr></thead>
+    <tbody>{% for r in v.exposure %}
+      <tr><td class="l"><b>{{ r.address }}</b> <span class="b">{{ r.borough }}</span>{{ bldgs(r) }}</td>
+        <td>{{ pathway(r) }}</td><td>{{ n0(r.gfa) }}</td><td>{{ r.year }}</td><td>{{ n0(r.ll97) }}</td><td>{{ n0(r.limit24) }}</td>
+        <td class="{{ 'over' if r.over24 > 0 else 'under' }}">{{ '+' if r.over24 > 0 }}{{ n0(r.over24) }}</td>
+        <td>{{ n0(r.limit30) }}</td><td class="{{ 'warn-t' if r.over30 > 0 else 'under' }}">{{ '+' if r.over30 > 0 }}{{ n0(r.over30) }}</td>
+        <td>{{ money(r.penalty30) }}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
+{% if v.efficiency %}
+<div class="ut-sec">
+  <h2>Efficiency against NYC's multifamily median</h2>
+  <p class="card-sub">Weather-normalised site energy per square foot (kBtu/sq ft), against the median of every NYC multifamily property that reported {{ v.median_year }} ({{ n1(v.median.wn_site_eui) if v.median else '—' }} kBtu/sq ft{% if v.median %}, {{ '{:,}'.format(v.median.n) }} properties{% endif %}). 1.0× is typical; above 1.3× is worth a look. Water is kgal per apartment a year.</p>
+  <div class="ut-scroll"><table class="ut">
+    <thead><tr><th>Property (NYC)</th><th>Year</th><th>Energy / sq ft</th><th>× median</th><th></th><th>ENERGY STAR</th><th>Heating fuel</th><th>Electric kWh</th><th>Water / apt</th><th>2022→latest</th></tr></thead>
+    <tbody>{% for r in v.efficiency %}
+      {% set x = r.eui_x %}
+      <tr><td class="l"><b>{{ r.address }}</b> <span class="b">{{ r.borough }}</span>{{ bldgs(r) }}</td>
+        <td>{{ r.year }}{% if r.estimated %} <span class="b" title="Some of this year's figures were estimated in Portfolio Manager">est.</span>{% endif %}</td>
+        <td>{{ n1(r.wn_site_eui) }}</td>
+        <td class="{{ 'over' if x >= 1.3 else 'warn-t' if x >= 1.1 else 'under' }}">{{ '%.2f'|format(x) }}×</td>
+        <td><span class="ut-bar"><i style="width:{{ [x / 2 * 100, 100]|min }}%;background:{{ '#dc2626' if x >= 1.3 else '#f59e0b' if x >= 1.1 else '#16a34a' }}"></i></span></td>
+        <td>{{ r.energy_star if r.energy_star is not none else '—' }}</td>
+        <td>{{ r.fuel or '—' }}</td><td>{{ n0(r.elec_kwh) }}</td>
+        <td>{% if r.water_per_unit %}<span class="{{ 'over' if r.median_water and r.water_per_unit > 1.5 * r.median_water }}">{{ n1(r.water_per_unit) }}</span>{% else %}—{% endif %}</td>
+        <td>{% set eu = r.trend|map(attribute='site_eui')|select|list %}{% if eu %}{% set mx = eu|max %}<span class="ut-spark" title="{% for t in r.trend %}{{ t.year }}: {{ n1(t.site_eui) }}{{ '; ' if not loop.last }}{% endfor %}">{% for t in r.trend %}<i style="height:{{ ((t.site_eui or 0) / mx * 18)|round(0, 'ceil')|int if t.site_eui else 1 }}px"></i>{% endfor %}</span>{% else %}—{% endif %}</td></tr>
+    {% endfor %}</tbody>
+  </table></div>
+  {% if v.median and v.median.water_per_unit %}<p class="card-sub" style="margin:6px 0 0">NYC multifamily median water: {{ n1(v.median.water_per_unit) }} kgal per apartment a year; red = over 1.5× that.</p>{% endif %}
+</div>
+{% endif %}
+
+<div class="ut-sec">
+  <h2>Buildings with no NYC benchmarking report</h2>
+  <p class="card-sub">Outside NYC (Hempstead, Yonkers, New Jersey, Connecticut, Massachusetts, Ohio…), under 25,000 sq ft (most brownstones), or written differently from the city's address. Their energy and water come from the bills instead (below). If one should match, give it the city's property id (Portfolio Manager id) — or mark it as having none.</p>
+  <div class="ut-miss">{% for prop, bs in v.missing.items() %}<div><b>{{ prop }}</b> <span class="b">({{ bs|length }})</span><br>
+    <span class="card-sub">{% for b in bs[:12] %}{{ b.name }}{{ ', ' if not loop.last }}{% endfor %}{% if bs|length > 12 %} +{{ bs|length - 12 }} more{% endif %}</span></div>{% endfor %}</div>
+  <details style="margin-top:6px"><summary style="cursor:pointer;font-size:13px">Link a building by hand</summary>
+    <form method="post" action="{{ url_for('admin.utilities_link') }}" class="ut-link" style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <select name="building_id">{% for prop, bs in v.missing.items() %}<optgroup label="{{ prop }}">{% for b in bs %}<option value="{{ b.id }}">{{ b.name }}</option>{% endfor %}</optgroup>{% endfor %}</select>
+      <input type="text" name="property_id" placeholder="NYC property id" required>
+      <button class="btn plain" type="submit">Link</button>
+      <span class="card-sub">or type <b>none</b> (no report) · <b>auto</b> (back to automatic)</span>
+    </form></details>
+</div>
+
+<div class="ut-sec">
+  <h2>Utility accounts and bills</h2>
+  {% if not v.accounts %}
+  <p class="card-sub">None yet. This is the layer that answers "are the bills right" and "did a change save money", per building and per month, and covers the buildings the city's data does not.</p>
+  <ol class="ut-steps card-sub" style="font-size:13px">
+    <li><b>Yardi utility payables export</b> (vendor, account number, property, invoice period, amount; last 2–3 years): becomes the account list and the cost history for the whole portfolio.</li>
+    <li><b>The bills already on file</b> (Skyline, Chip, Garden Spires, the water analyses): monthly usage where the files have it.</li>
+    <li><b>Automatic feeds</b>: NYC DEP water (enrol by email), Con Edison and National Grid (registration + data security agreement, then each account holder approves the connection).</li>
+    <li><b>Joined with the controls</b>: burner minutes against gas therms per building, savings after each change, leaks from water against hot-water run time.</li>
+  </ol>
+  {% else %}
+  <p class="card-sub">{{ v.accounts }} account{{ 's' if v.accounts != 1 }}, {{ v.bills }} bill{{ 's' if v.bills != 1 }}.</p>
+  {% endif %}
+</div>
+{% endblock %}

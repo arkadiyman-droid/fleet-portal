@@ -1299,3 +1299,128 @@ class ServerHost(db.Model):
     role = db.Column(db.String(40))                                # e.g. primary / standby, set when there are several
     seen_at = db.Column(db.DateTime)
     snapshot = db.Column(JSONB)
+
+
+# ── Utilities: NYC benchmarking (LL84), and the portfolio's own accounts and bills ──
+
+class BenchmarkProperty(db.Model):
+    """One property as NYC's Local Law 84 benchmarking data names it (ENERGY
+    STAR Portfolio Manager property id). Refreshed from NYC Open Data
+    (app/benchmark.py). Only properties some portal building matched are kept."""
+    __tablename__ = "benchmark_properties"
+
+    id = db.Column(db.String(20), primary_key=True)                 # Portfolio Manager property id
+    name = db.Column(db.String(300))
+    address = db.Column(db.String(300))
+    borough = db.Column(db.String(20))
+    postal_code = db.Column(db.String(10))
+    bbl = db.Column(db.String(20))
+    bin = db.Column(db.String(200))
+    property_type = db.Column(db.String(120))
+    gfa = db.Column(db.Float)                                       # self-reported gross floor area, sq ft
+    units = db.Column(db.Integer)                                   # residential units, where reported as a count
+    n_buildings = db.Column(db.Integer)
+    ll97_pathway = db.Column(db.String(10))                         # CP0..CP4 from the city's Covered Buildings List, when loaded
+    refreshed_at = db.Column(db.DateTime)
+
+
+class BenchmarkYear(db.Model):
+    """One calendar year of a benchmarked property's energy, water and
+    emissions, as reported to the city."""
+    __tablename__ = "benchmark_years"
+
+    property_id = db.Column(db.String(20), db.ForeignKey("benchmark_properties.id", ondelete="CASCADE"), primary_key=True)
+    year = db.Column(db.Integer, primary_key=True)
+    site_eui = db.Column(db.Float)                                  # kBtu / sq ft
+    wn_site_eui = db.Column(db.Float)                               # weather-normalised
+    source_eui = db.Column(db.Float)
+    energy_star = db.Column(db.Integer)
+    gas_kbtu = db.Column(db.Float)
+    oil2_kbtu = db.Column(db.Float)
+    oil4_kbtu = db.Column(db.Float)
+    oil56_kbtu = db.Column(db.Float)
+    steam_kbtu = db.Column(db.Float)
+    elec_kwh = db.Column(db.Float)
+    water_kgal = db.Column(db.Float)
+    ghg_t = db.Column(db.Float)                                     # as reported (EPA factors), tCO2e
+    estimated_energy = db.Column(db.Boolean)
+    estimated_water = db.Column(db.Boolean)
+
+
+class BenchmarkStat(db.Model):
+    """NYC-wide medians for one property type and year, to compare against."""
+    __tablename__ = "benchmark_stats"
+
+    property_type = db.Column(db.String(120), primary_key=True)
+    year = db.Column(db.Integer, primary_key=True)
+    n = db.Column(db.Integer)
+    site_eui = db.Column(db.Float)
+    wn_site_eui = db.Column(db.Float)
+    ghg_per_sf = db.Column(db.Float)                                # LL97 coefficients, tCO2e / sq ft
+    water_per_unit = db.Column(db.Float)                            # kgal / unit / year
+
+
+class BuildingBenchmark(db.Model):
+    """Which LL84 property a portal building is part of. `how`: exact / range
+    (matched automatically by address) or manual (set by a person, never
+    overwritten by a refresh) or none (a person said it has none). Several
+    buildings can share one property."""
+    __tablename__ = "building_benchmarks"
+
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="CASCADE"), primary_key=True)
+    property_id = db.Column(db.String(20), db.ForeignKey("benchmark_properties.id", ondelete="CASCADE"))
+    how = db.Column(db.String(10), nullable=False)
+    alternates = db.Column(JSONB)                                   # other LL84 ids that also matched
+    set_by = db.Column(db.String(120))
+    set_at = db.Column(db.DateTime)
+
+
+class UtilityAccount(db.Model):
+    """One utility account (or delivery contract, for oil): who supplies what
+    to which building. The inventory everything else hangs on."""
+    __tablename__ = "utility_accounts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    utility = db.Column(db.String(80), nullable=False)              # Con Edison, National Grid, NYC DEP, an oil company...
+    commodity = db.Column(db.String(12), nullable=False)            # electric / gas / water / oil / steam
+    account_number = db.Column(db.String(60))
+    meter_number = db.Column(db.String(60))
+    service_address = db.Column(db.String(300))
+    customer_of_record = db.Column(db.String(200))                  # who may authorise a data feed
+    source = db.Column(db.String(20), nullable=False, default="manual")   # manual / bill / yardi / feed
+    notes = db.Column(db.Text)
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    buildings = db.relationship("UtilityAccountBuilding", cascade="all, delete-orphan", backref="account")
+    bills = db.relationship("UtilityBill", cascade="all, delete-orphan", backref="account",
+                            order_by="UtilityBill.period_start")
+
+
+class UtilityAccountBuilding(db.Model):
+    """A building an account serves, and its share of the account (a master
+    meter over three buildings is three rows of 1/3)."""
+    __tablename__ = "utility_account_buildings"
+
+    account_id = db.Column(db.Integer, db.ForeignKey("utility_accounts.id", ondelete="CASCADE"), primary_key=True)
+    building_id = db.Column(db.Integer, db.ForeignKey("buildings.id", ondelete="CASCADE"), primary_key=True)
+    share = db.Column(db.Float, nullable=False, default=1.0)
+
+
+class UtilityBill(db.Model):
+    """One bill (or delivery) on an account: the period, how much, what it cost."""
+    __tablename__ = "utility_bills"
+    __table_args__ = (db.UniqueConstraint("account_id", "period_start", "period_end", name="uq_utility_bill_period"),)
+
+    id = db.Column(db.Integer, primary_key=True)
+    account_id = db.Column(db.Integer, db.ForeignKey("utility_accounts.id", ondelete="CASCADE"), nullable=False)
+    period_start = db.Column(db.Date, nullable=False)
+    period_end = db.Column(db.Date, nullable=False)
+    usage = db.Column(db.Float)                                     # in `unit`
+    unit = db.Column(db.String(12))                                 # kWh / therm / ccf / kgal / gal
+    cost_cents = db.Column(db.Integer)
+    demand_kw = db.Column(db.Float)
+    estimated = db.Column(db.Boolean, nullable=False, default=False)   # an estimated read, not a real one
+    source = db.Column(db.String(20), nullable=False, default="manual")
+    source_ref = db.Column(db.String(300))                          # the file or reference it came from
+    imported_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
