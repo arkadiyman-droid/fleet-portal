@@ -140,22 +140,24 @@ def home_page():
     status, whatever reads it, and the property's roof fans. Read-only. The
     administrator sees every filed building here (Portfolio is the fuller view)."""
     import time as _time
-    from sqlalchemy.orm import joinedload
+    from sqlalchemy.orm import joinedload, selectinload
     from app import home, portfolio
     now_dt, now = datetime.utcnow(), _time.time()
-    q = Building.query.options(joinedload(Building.property).joinedload(Property.client)) \
+    q = Building.query.options(joinedload(Building.property).joinedload(Property.client),
+                               selectinload(Building.controllers).joinedload(Controller.status)) \
         .filter(Building.is_active.is_(True))
     ids = visible_building_ids()
     if ids is not None:
         q = q.filter(Building.id.in_(ids or [-1]))
-    buildings, rc_dhw = [], portfolio.rc_dhw_by_building()
+    # every building's Bloom asset / 2010 box up front: one query per building was the slow part
+    buildings, rc_dhw, found = [], portfolio.rc_dhw_by_building(), portfolio.drivers()
     for b in q.all():
         p = b.property
         if p is None or not p.is_active or (p.client is not None and not p.client.is_active):
             continue
         buildings.append({"client": p.client.name if p.client else None, "client_id": p.client_id,
                           "prop": p.name, "prop_id": p.id,
-                          "entry": portfolio.building_entry(b, now, now_dt, rc_dhw)})
+                          "entry": portfolio.building_entry(b, now, now_dt, rc_dhw, found)})
     data = home.assemble(buildings, _fan_rows(now_dt))
     return render_template("home.html", title="My properties", guide=home.GUIDE,
                            run_props=fan_control_names() or set(), **data)

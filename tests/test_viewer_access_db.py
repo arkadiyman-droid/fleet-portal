@@ -396,3 +396,42 @@ def test_my_properties_explains_itself(pat, world, session):
     assert ">Not reporting</span>" in row and "The controller has not answered since " in row
     assert portfolio._silent(None) == "The controller has never answered"
     assert portfolio._silent(dt.datetime(2026, 11, 15, 18, 36)) == "The controller has not answered since Nov 15, 1:36 PM"
+
+
+def test_the_portfolio_reads_every_building_in_a_few_queries(app, world, session):
+    """Portfolio and My properties fetch every building's driver up front
+    (portfolio.drivers()) instead of ~4 queries a building: same entries, and
+    the query count does not grow with the fleet."""
+    import time
+    from sqlalchemy import event
+    from app import portfolio
+    from app.extensions import db
+    from app.models import Building
+    now, now_dt = time.time(), dt.datetime.utcnow()
+    rc, found = portfolio.rc_dhw_by_building(), portfolio.drivers()
+    for b in Building.query.all():
+        assert portfolio.building_entry(b, now, now_dt, rc, found) == portfolio.building_entry(b, now, now_dt, rc), b.name
+    by_name = {e["name"]: e for o in portfolio.tree() for p in o["props"] for e in p["b"]}
+    assert by_name["9 Elsewhere Ave"]["source"] == "Bloom"            # Bloom wins over the 2010 box, as before
+    assert by_name["50 South 9 St"]["source"] == "2010" and by_name["440 Berry St"]["source"] == "Bloom"
+    n = [0]
+    count = lambda *a, **k: n.__setitem__(0, n[0] + 1)
+    event.listen(db.engine, "before_cursor_execute", count)
+    try:
+        db.session.expunge_all()
+        portfolio.tree()
+        few = n[0]
+        import app.models as m
+        prop = m.Property.query.filter_by(name="DCA").one()
+        for i in range(12):                                         # a dozen more buildings, each with a box
+            bl = m.Building(property_id=prop.id, name=f"{i} New St")
+            session.add(bl); session.flush()
+            session.add(m.LegacyBox(name=f"{i} New St", host="203.0.113.78", port=9000 + i, identity="gateway",
+                                    login_id=m.LegacyLogin.query.first().id, building_id=bl.id))
+        session.commit()
+        db.session.expunge_all()
+        n[0] = 0
+        assert len([e for o in portfolio.tree() for p in o["props"] for e in p["b"]]) == 16
+        assert n[0] == few <= 12, (few, n[0])
+    finally:
+        event.remove(db.engine, "before_cursor_execute", count)

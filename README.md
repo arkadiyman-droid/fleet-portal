@@ -473,6 +473,14 @@ JSON list (`#lv-issues`, rows point into it by `data-i`) instead of an escaped
 copy inside each row. Result on the Pi, 2026-11-26: 6 s down to about 1.2 s
 (1.7 s on a worker's first load of the night), page 529 KB down to 435 KB.
 
+**Portfolio and My properties** build one entry per building
+(`portfolio.building_entry`). Looking up each building's controller, Bloom
+asset, 2010 box and status one at a time cost about 900 queries (3 s on the
+Pi). `portfolio.drivers()` now fetches every Bloom asset and 2010 box with
+its status in two queries, and the buildings come with their controllers
+already loaded. Portfolio dropped from 4.2 s to about 0.3 s, with the same
+entries for all 225 buildings, checked against live data.
+
 ### Server: the machine these websites run on
 
 **Server** (superuser only, `/server`) shows the Raspberry Pi the portal runs on.

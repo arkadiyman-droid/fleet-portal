@@ -143,30 +143,48 @@ def _legacy_entry(name, box, now_dt):
 def rc_dhw_by_building() -> dict:
     """{building id: hot-water supply} from the Reliable Controls scrape
     (app/rc_dhw.py), for the buildings whose hot water no controller reads."""
+    from sqlalchemy.orm import joinedload
     out = {}
-    for tw in RcDhwTower.query.filter(RcDhwTower.is_active.is_(True)).all():
+    for tw in RcDhwTower.query.options(joinedload(RcDhwTower.status)).filter(RcDhwTower.is_active.is_(True)).all():
         st = tw.status
         if tw.building_id and st and st.ok and st.supply_f is not None:
             out[tw.building_id] = st.supply_f
     return out
 
 
-def building_entry(b, now, now_dt, rc_dhw=None):
+def drivers() -> dict:
+    """Every building's Bloom asset and 2010 box, each with its status, in two
+    queries: {"bloom": {building id: asset}, "legacy": {building id: box}}.
+    A caller building many entries passes this to building_entry(); asking per
+    building was ~4 queries each (900 for the Portfolio page, 3 s on the Pi).
+    Where a building has two of one kind, the lowest id wins, as before."""
+    from sqlalchemy.orm import joinedload
+    out = {"bloom": {}, "legacy": {}}
+    for kind, model in (("bloom", BloomAsset), ("legacy", LegacyBox)):
+        for x in (model.query.options(joinedload(model.status))
+                  .filter(model.building_id.isnot(None), model.is_active.is_(True), model.deleted_at.is_(None))
+                  .order_by(model.id).all()):
+            out[kind].setdefault(x.building_id, x)
+    return out
+
+
+def building_entry(b, now, now_dt, rc_dhw=None, found=None):
     """One building -> a unified status entry, by whatever drives it. A managed
     EchoTherm controller wins, then a Bloom asset, then a linked 2010 box.
     Carries building_id + kind="building" so the page can move it. `rc_dhw` is
     rc_dhw_by_building(), fetched once by a caller that builds many entries:
     where the building's own controller has no hot-water reading, the Reliable
-    Controls one is used."""
+    Controls one is used. `found` is drivers(), fetched once the same way;
+    without it each building is looked up on its own."""
     ctrl = next((c for c in b.controllers if c.is_active), None)
     if ctrl:
         e = _echo_entry(b.name, ctrl, now, now_dt)
     else:
-        ba = BloomAsset.query.filter_by(building_id=b.id, is_active=True, deleted_at=None).first()
+        ba = found["bloom"].get(b.id) if found is not None else             BloomAsset.query.filter_by(building_id=b.id, is_active=True, deleted_at=None).order_by(BloomAsset.id).first()
         if ba:
             e = _bloom_entry(b.name, ba)
         else:
-            lb = LegacyBox.query.filter_by(building_id=b.id, is_active=True, deleted_at=None).first()
+            lb = found["legacy"].get(b.id) if found is not None else                 LegacyBox.query.filter_by(building_id=b.id, is_active=True, deleted_at=None).order_by(LegacyBox.id).first()
             e = _legacy_entry(b.name, lb, now_dt) if lb else _blank(
                 b.name, "—", None, "No controller is connected to this building yet")
     if e.get("dhw") is None and rc_dhw and rc_dhw.get(b.id) is not None:
@@ -180,13 +198,18 @@ def building_entry(b, now, now_dt, rc_dhw=None):
 
 def tree():
     """Owners -> properties -> building entries, for the page's left tree."""
+    from sqlalchemy.orm import joinedload, selectinload
+    from app.models import Controller, Property
     now, now_dt = _time.time(), _dt.datetime.utcnow()
-    rc_dhw = rc_dhw_by_building()
+    rc_dhw, found = rc_dhw_by_building(), drivers()
     owners = []
-    for cl in Client.query.filter_by(is_active=True).order_by(Client.name).all():
+    clients = (Client.query.options(selectinload(Client.properties).selectinload(Property.buildings)
+                                    .selectinload(Building.controllers).joinedload(Controller.status))
+               .filter_by(is_active=True).order_by(Client.name).all())
+    for cl in clients:
         props = []
         for p in sorted(cl.properties, key=lambda x: x.name.lower()):
-            bs = [building_entry(b, now, now_dt, rc_dhw) for b in sorted(p.buildings, key=lambda x: x.name.lower())]
+            bs = [building_entry(b, now, now_dt, rc_dhw, found) for b in sorted(p.buildings, key=lambda x: x.name.lower())]
             props.append({"id": p.id, "name": p.name, "loc": p.address or "", "b": bs})
         owners.append({"id": cl.id, "name": cl.name, "props": props})
     return owners
@@ -195,7 +218,8 @@ def tree():
 def unassigned():
     """2010 oBIX boxes not yet filed into a property — the bucket to sort."""
     now_dt = _dt.datetime.utcnow()
-    boxes = (LegacyBox.query
+    from sqlalchemy.orm import joinedload
+    boxes = (LegacyBox.query.options(joinedload(LegacyBox.status))
              .filter(LegacyBox.building_id.is_(None), LegacyBox.is_active.is_(True),
                      LegacyBox.deleted_at.is_(None))
              .order_by(LegacyBox.name).all())
