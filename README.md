@@ -504,7 +504,8 @@ exist yet.
    - `utility_accounts`, with a building share for master meters;
    - `utility_bills`, with period, usage, cost and estimated reads.
 
-   Next: a Yardi utility payables export, then the bills on file, then the
+   Next: a Yardi utility payables export, then the plant-level bills on file
+   (not Skyline's: those are the tenants' submetered use, not the boilers), then the
    DEP / Con Edison / National Grid feeds (see
    `EMS/UTILITY_DATA_INTEGRATION.md`).
 
