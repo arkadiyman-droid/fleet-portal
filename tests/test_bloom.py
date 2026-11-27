@@ -186,3 +186,38 @@ def test_detail_view_filters_apartments_and_plant():
     assert "PDT BLDG B SUPPLY" in names_b and "PDT BLDG A SUPPLY" not in names_b
     assert "PDT DIFFERENTIAL PRESSURE" in names_a and "PDT DIFFERENTIAL PRESSURE" in names_b  # shared
     assert da["alarms"] and not db_["alarms"]
+
+
+def test_the_stored_copy_is_slim_and_reads_the_same():
+    """BloomStatus.data keeps only what the portal reads (bloom.slim): every
+    page built from it comes out the same, the Settings button still finds a
+    setting's id, and Bloom's bulk (ids, units, screen layout) is dropped.
+    The same check passed on all 38 live buildings on 2026-11-26."""
+    import copy
+    from app import bloom_settings, setting_audit
+    setting = next(iter(bloom_settings.BY_KEY))
+    full = copy.deepcopy(BLD)
+    full["localConfig"] = {"big": "x" * 2000}
+    full["ui"] = {"layout": ["y"] * 200}
+    full["equipment"] = [{"id": "pump-1"}]
+    for i, s in enumerate(full["sensors"]):
+        s.update(_id=f"id{i}", unit=29, config={}, label="L", pollTs="2026-11-26T15:04:10.211Z")
+    full["sensors"].append(_s(setting, 72, Z, _id="settable", unit=29, pollTs="2026-11-26T15:04:10.211Z"))
+
+    small = bloom.slim(full)
+    assert set(small) == {"_id", "locid", "name", "accounts", "sensors"}
+    assert all("unit" not in s and "config" not in s and "label" not in s for s in small["sensors"])
+    assert all("_id" not in s for s in small["sensors"] if s["type"] != setting)
+    assert next(s for s in small["sensors"] if s["type"] == setting)["_id"] == "settable"
+    assert len(str(small)) < len(str(full)) / 2
+
+    a, b = {"asset": full, "alarms": []}, {"asset": small, "alarms": []}
+    assert bloom.card(a) == bloom.card(b)
+    assert bloom.detail(a) == bloom.detail(b)
+    assert bloom.history_sample(a) == bloom.history_sample(b)
+    assert setting_audit.bloom_snapshot(full) == setting_audit.bloom_snapshot(small)
+    assert bloom_settings.offered(full) == bloom_settings.offered(small) >= 1
+    at = __import__("datetime").datetime(2026, 11, 26, 16, 0)
+    assert bloom_settings.heard_age(full, now=at) == bloom_settings.heard_age(small, now=at)
+    assert round(bloom_settings.heard_age(small, now=at), 1) == 55.8
+    assert bloom.asset_key(small) == "928-alan-page-dr" and bloom.is_skyline(small)

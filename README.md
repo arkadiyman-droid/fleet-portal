@@ -251,6 +251,20 @@ holds what the preview showed. It is read back and logged
 (`bloom_setting_writes`). A setting Bloom lists twice on a building is not
 offered there.
 
+The poller does **not** store Bloom's whole building object. `bloom.slim()`
+keeps only what the portal reads from `BloomStatus.data`:
+
+- the building's `_id`, `locid`, `name` and `accounts`;
+- each sensor's `type`, `pv`, `name`, `assoc`, `stats` and `pollTs`;
+- the `_id` of settable points, which the Settings link needs.
+
+Bloom sends about 24 KB a building, and the row is rewritten every minute, so
+the full object was ~0.4 GB a day of SD-card writes. Slimming halves what is
+stored. Settings writes are unaffected: they always fetch the building live.
+A field newly read from the stored copy must be added to `_KEEP_SENSOR` or
+`_KEEP_BUILDING`; `test_the_stored_copy_is_slim_and_reads_the_same` checks
+the pages built from it.
+
 **The other kinds of box** have the same page, reached from **Change
 settings…** in the *Settings changes* card of the box's own page, and built on
 one shared form (`app/box_settings.py`, `templates/box_settings.html`): the
@@ -443,6 +457,54 @@ Directory page says whether the token on the administrator's own request
 verifies, so a wrong audience tag shows up before anyone is invited. Log out
 is respected (the next page does not sign the person straight back in), and
 accounts with a password keep working as before.
+
+### Server: the machine these websites run on
+
+**Server** (superuser only, `/server`) shows the Raspberry Pi the portal runs on.
+It is read live each time the page opens and refreshes every minute
+(`app/server_health.py`). It reads `/proc`, `/sys` and a few commands
+(`systemctl`, `ss`, `vcgencmd`, `nmcli`) and needs no extra package.
+
+- **Headline numbers:** CPU, memory, main-disk space, temperature, network
+  speed, requests a minute through the Cloudflare tunnels, websites
+  answering, and uptime.
+- **History charts:** 6 hours, 24 hours, 7 days or 30 days, from
+  `server_samples`. One row is written a minute by `ServerSampler`, kept
+  `SERVER_KEEP_DAYS` (30). A gap in a chart means the server was off.
+- **Websites:** every hostname in every running `cloudflared` config, checked
+  locally with a GET of `/` using that Host header. Redirects are not followed,
+  so a sign-in redirect counts as answering. Each tunnel's own `/ready` and
+  `/metrics` give its links to Cloudflare and its request and error counts.
+- **Services:** the units in `WATCH`, both system and `--user`, each with its
+  state, how long it has run, crash restarts, memory and CPU. Memory counts
+  shared database memory once.
+- **Storage:** used and free space, write speed, and average writes a day.
+  On an SD card it also shows the card's name, date and maker id.
+- **Memory:** usage, plus the biggest programs.
+- **Network:** each connection, the Wi-Fi signal and dropped packets.
+- **Database:** sizes, connections and live standby copies.
+- **Backups:** the newest file, the last nightly run and the age of the
+  off-site copy, for each entry in `BACKUPS`.
+- **System:** hardware, OS and clock sync. Under-voltage and throttling come
+  from `vcgencmd get_throttled`.
+- **Problems:** `checks()` lists them worst first. A failed service, a site
+  not answering, a tunnel with no links, a missing or failed backup, a disk 90%
+  full, under 5% memory left, or 80 °C or more is red.
+
+**If this server fails** (`resilience()`) lists the single points of failure:
+one server, an SD-card boot disk, Wi-Fi only, no database standby, backups
+with no off-site copy, and power. They are the to-do list for adding servers.
+
+**Several servers.** Every sample and snapshot carries the host name.
+`server_hosts` keeps each server's newest whole snapshot, and the page shows a
+picker as soon as a second host appears. Only the machine the portal runs on is
+read live. Another server will report by running the same `collect()` and
+storing its snapshot. That reporting path is not built yet.
+
+The two gunicorn workers both run the sampler. A transaction-level advisory
+lock (`875_219_006`), plus "sampled under 48 s ago? skip", keeps it to one
+snapshot a minute. The unique `(host, at)` row is the last guard.
+`SERVER_SAMPLER_ENABLED=0` turns sampling off.
 
 ---
 

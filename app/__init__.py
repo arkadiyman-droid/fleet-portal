@@ -78,6 +78,9 @@ def create_app():
     from app.rc_dhw import rc_dhw_poller
     rc_dhw_poller.start(app)
 
+    from app.server_health import server_sampler
+    server_sampler.start(app)
+
     @app.cli.command("hash-password")
     def hash_password():
         """Prompt for a password and print its werkzeug hash, for pasting into .env as ADMIN_PASSWORD_HASH."""

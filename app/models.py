@@ -1260,3 +1260,38 @@ class DirectoryState(db.Model):
     error = db.Column(db.Text)
     org = db.Column(db.String(200))
     n = db.Column(db.Integer)
+
+
+class ServerSample(db.Model):
+    """One minute of one server's vital signs — the Server page's charts
+    (app/server_health.py). Kept SERVER_KEEP_DAYS (30) days."""
+    __tablename__ = "server_samples"
+    __table_args__ = (db.UniqueConstraint("host", "at", name="uq_server_samples_host_at"),)
+
+    id = db.Column(db.BigInteger, primary_key=True)
+    host = db.Column(db.String(80), nullable=False)
+    at = db.Column(db.DateTime, nullable=False)                     # UTC, the whole minute
+    cpu_pct = db.Column(db.Float)
+    load1 = db.Column(db.Float)
+    mem_used_pct = db.Column(db.Float)
+    mem_used_mb = db.Column(db.Float)
+    swap_used_mb = db.Column(db.Float)
+    disk_used_pct = db.Column(db.Float)
+    temp_c = db.Column(db.Float)
+    net_rx_kbps = db.Column(db.Float)
+    net_tx_kbps = db.Column(db.Float)
+    disk_write_kbps = db.Column(db.Float)
+    req_per_min = db.Column(db.Float)                              # requests through the Cloudflare tunnels
+    throttled = db.Column(db.Integer)                              # vcgencmd get_throttled bits
+    problems = db.Column(db.Integer)                               # warn + crit findings at that minute
+
+
+class ServerHost(db.Model):
+    """Every server that reports to the Server page, with its newest whole
+    snapshot (app/server_health.collect). One row today; one per Pi later."""
+    __tablename__ = "server_hosts"
+
+    host = db.Column(db.String(80), primary_key=True)
+    role = db.Column(db.String(40))                                # e.g. primary / standby, set when there are several
+    seen_at = db.Column(db.DateTime)
+    snapshot = db.Column(JSONB)

@@ -214,8 +214,10 @@ class RcDhwPoller:
         from app.models import RcController
         with app.app_context():
             conn = db.engine.connect()
+            got_lock = False
             try:
-                if not conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar():
+                got_lock = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar()
+                if not got_lock:
                     return
                 for ctrl in RcController.query.filter(RcController.is_active.is_(True)).all():
                     try:
@@ -224,7 +226,8 @@ class RcDhwPoller:
                         db.session.rollback()
                         log.warning("RC DHW poll failed for controller %s (%s): %s", ctrl.id, ctrl.label, e)
             finally:
-                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
+                if got_lock:      # releasing a lock this worker never got makes Postgres log a warning
+                    conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
                 conn.close()
 
 

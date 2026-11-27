@@ -152,6 +152,7 @@ class BillingScheduler:
     def _run_cycle(self, app) -> None:
         with app.app_context():
             conn = db.engine.connect()
+            got_lock = False
             try:
                 got_lock = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _ADVISORY_LOCK_KEY}).scalar()
                 if not got_lock:
@@ -179,7 +180,8 @@ class BillingScheduler:
                         len(created), period_start,
                     )
             finally:
-                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ADVISORY_LOCK_KEY})
+                if got_lock:      # releasing a lock this worker never got makes Postgres log a warning
+                    conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _ADVISORY_LOCK_KEY})
                 conn.close()
 
 

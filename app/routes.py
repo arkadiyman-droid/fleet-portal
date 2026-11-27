@@ -1790,6 +1790,49 @@ def live_page():
                            hhmm=legacy.hhmm, poll_min=round(current_app.config.get("LEGACY_POLL_INTERVAL_SECONDS", 300) / 60))
 
 
+@admin_bp.route("/server")
+def server_page():
+    """How the server the portal runs on is doing: CPU, memory, storage,
+    temperature, network and traffic, every website and service on it, the
+    database and backups, and what would take every site down at once
+    (app/server_health.py). Superuser only: it names ports and folders."""
+    if not is_superuser():
+        abort(403)
+    from app import server_health as sh
+    from app.models import ServerHost
+    hosts = ServerHost.query.order_by(ServerHost.host).all()
+    host = request.args.get("host") or sh.HOST
+    stored = next((h for h in hosts if h.host == host), None)
+    if host == sh.HOST:
+        snap, live = sh.live(), True
+    elif stored is not None and stored.snapshot:
+        snap, live = stored.snapshot, False
+    else:
+        abort(404)
+    issues = sh.checks(snap)
+    names = sorted({h.host for h in hosts} | {sh.HOST})
+    hours = request.args.get("hours", "24")
+    return render_template("server.html", title="Server", snap=snap, live=live, host=host, hosts=names,
+                           issues=issues, level=sh.level(issues),
+                           resilience=sh.resilience(snap, len(names)),
+                           seen_at=stored.seen_at if stored is not None else None,
+                           hours=hours if hours in ("6", "24", "168", "720") else "24",
+                           now=datetime.now(timezone.utc).timestamp(), h=sh)
+
+
+@admin_bp.route("/server/history.json")
+def server_history():
+    """The Server page's charts: one server's samples, averaged into buckets."""
+    if not is_superuser():
+        abort(403)
+    from app import server_health as sh
+    try:
+        hours = int(request.args.get("hours", "24"))
+    except ValueError:
+        hours = 24
+    return jsonify(sh.history(request.args.get("host") or sh.HOST, hours))
+
+
 @admin_bp.route("/sensors")
 def sensor_health_page():
     """Bad sensors across the 2010 boxes — stuck high, frozen, dropped out or

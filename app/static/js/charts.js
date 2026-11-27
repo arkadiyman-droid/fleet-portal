@@ -172,6 +172,8 @@
       }
       let lo = Infinity, hi = -Infinity;
       shown.forEach(s => s.data.forEach(v => { if (v !== null) { lo = Math.min(lo, v); hi = Math.max(hi, v); } }));
+      if (o.ymin != null) lo = Math.min(lo, o.ymin);     // e.g. a percentage chart always shows 0-100
+      if (o.ymax != null) hi = Math.max(hi, o.ymax);
       const yt = niceTicks(lo, hi, 5);
       const vw = o.view;
       const t0 = vw ? vw.t0 : (o.range ? o.range[0] : t[0]);

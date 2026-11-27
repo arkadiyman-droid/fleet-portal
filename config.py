@@ -143,6 +143,12 @@ class Config:
         self.CF_ACCESS_TEAM_DOMAIN = os.environ.get("CF_ACCESS_TEAM_DOMAIN", "").strip().lower()
         self.CF_ACCESS_AUD = os.environ.get("CF_ACCESS_AUD", "").strip()
 
+        # The Server page (app/server_health.py): one snapshot of this machine
+        # a minute for the charts, kept this many days.
+        self.SERVER_SAMPLER_ENABLED = os.environ.get("SERVER_SAMPLER_ENABLED", "1") not in ("0", "false", "False")
+        self.SERVER_SAMPLE_SECONDS = int(os.environ.get("SERVER_SAMPLE_SECONDS", "60"))
+        self.SERVER_KEEP_DAYS = int(os.environ.get("SERVER_KEEP_DAYS", "30"))
+
         # Billing (Phase 4) — see app/billing.py.
         self.BILLING_SCHEDULER_ENABLED = os.environ.get("BILLING_SCHEDULER_ENABLED", "1") not in ("0", "false", "False")
         self.BILLING_SCHEDULER_INTERVAL_SECONDS = int(os.environ.get("BILLING_SCHEDULER_INTERVAL_SECONDS", "86400"))

@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+{% block title %}Server — Fleet Portal{% endblock %}
+{% block head %}
+<style>
+  .sv-head { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin-bottom:6px; }
+  .sv-head h1 { font-size:18px; margin:0; }
+  .tiles .tile { min-width:0; }
+  .tile .s { color:var(--muted); font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .sv-charts { display:grid; grid-template-columns:repeat(auto-fit, minmax(340px, 1fr)); gap:14px; margin-bottom:18px; }
+  .sv-chart { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px 4px; min-width:0; }
+  .sv-chart h3 { font-size:13px; margin:0 0 2px; font-weight:650; }
+  .sv-chart .cs { color:var(--muted); font-size:12px; font-weight:400; }
+  .sv-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(560px, 1fr)); gap:14px; margin-bottom:14px; }
+  .status-pill { white-space:nowrap; }
+  .sv-grid .section { min-width:0; overflow-x:auto; }
+  table.sv { background:none; font-size:13px; }
+  table.sv th, table.sv td { padding:6px 8px; }
+  table.sv td.num, table.sv th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  table.sv .u { color:var(--muted); font-size:11.5px; }
+  .bar { position:relative; height:8px; background:#eef0f3; border-radius:4px; min-width:80px; }
+  .bar > i { position:absolute; left:0; top:0; bottom:0; border-radius:4px; background:var(--accent); }
+  .bar.warn > i { background:var(--warn-line); } .bar.crit > i { background:var(--crit); }
+  .res { list-style:none; margin:0; padding:0; }
+  .res li { display:flex; gap:10px; padding:7px 0; border-bottom:1px solid var(--border); font-size:13px; }
+  .res li:last-child { border-bottom:none; }
+  .res .ic { flex:none; width:20px; height:20px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+             font-weight:700; font-size:12px; color:#fff; }
+  .res .ic.ok { background:var(--ok); } .res .ic.no { background:var(--warn-line); color:#1f1300; }
+  .res b { display:block; }
+  .pill-ok { color:var(--ok); background:var(--ok-bg); } .pill-bad { color:var(--crit); background:var(--crit-bg); }
+  .pill-warn { color:var(--warn); background:var(--warn-bg); }
+  .sv-note { color:var(--muted); font-size:12px; margin:6px 0 0; }
+  @media (max-width: 640px) { .sv-grid { grid-template-columns:1fr; } .sv-charts { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set sysi = snap.system or {} %}
+{% set mem = snap.memory or {} %}
+{% set st = snap.storage or {} %}
+{% set root = st.root or {} %}
+{% set heat = snap.heat or {} %}
+{% set net = snap.network or {} %}
+{% set dflt = (net.ifaces or [])|selectattr('default')|first %}
+{% set sites = snap.websites or [] %}
+{% set up_sites = sites|selectattr('ok')|list|length %}
+{% set boot = (st.disks or {}).get(st.boot_disk or '', {}) %}
+
+<div class="sv-head">
+  <h1>Server — {{ host }}</h1>
+  <span class="card-sub">{{ sysi.model or '' }}{% if live %} · read live just now, the page refreshes every minute{% else %} · last report {{ h.ago(now - (snap.t or now)) }} ago (not this machine, so not read live){% endif %}</span>
+</div>
+{% if hosts|length > 1 %}
+<div class="filters">
+  {% for x in hosts %}<a class="chip-link{% if x == host %} sel{% endif %}" href="{{ url_for('admin.server_page', host=x) }}">{{ x }}</a>{% endfor %}
+</div>
+{% endif %}
+
+{% if level == 'crit' %}
+  <div class="banner crit">{{ issues|selectattr('level', 'equalto', 'crit')|list|length }} problem{{ 's' if issues|selectattr('level', 'equalto', 'crit')|list|length != 1 }} need{{ '' if issues|selectattr('level', 'equalto', 'crit')|list|length != 1 else 's' }} attention now</div>
+{% elif level == 'warn' %}
+  <div class="banner warn">Running, with {{ issues|selectattr('level', 'equalto', 'warn')|list|length }} thing{{ 's' if issues|selectattr('level', 'equalto', 'warn')|list|length != 1 }} to look at</div>
+{% else %}
+  <div class="banner ok">All good: {{ up_sites }} of {{ sites|length }} websites answer, every service is running, last night's backups are in.</div>
+{% endif %}
+{% if issues %}
+  <ul class="issues" style="margin:-4px 0 14px">
+    {% for i in issues %}<li class="{{ i.level }}"><b>{{ i.area }}:</b> {{ i.text }}</li>{% endfor %}
+  </ul>
+{% endif %}
+
+<div class="tiles">
+  {% set c = (snap.cpu or {}).pct %}
+  <div class="tile {{ 'crit' if c is number and c >= 90 else 'warn' if c is number and c >= 70 else '' }}" title="How busy the processor is, averaged over the last {{ snap.interval_s }} s">
+    <div class="l">CPU</div><div class="n">{{ '%.0f'|format(c) if c is number else '—' }}%</div>
+    <div class="s">load {{ (sysi.load or ['—'])[0] }} · {{ sysi.cores }} cores{% if sysi.cpu_mhz %} · {{ sysi.cpu_mhz }} MHz{% endif %}</div></div>
+  {% set m = mem.used_pct %}
+  <div class="tile {{ 'crit' if m is number and m >= 95 else 'warn' if m is number and m >= 85 else '' }}" title="Memory in use by programs (file cache, which the system gives back as needed, is not counted)">
+    <div class="l">Memory</div><div class="n">{{ '%.0f'|format(m) if m is number else '—' }}%</div>
+    <div class="s">{{ h.size(mem.used) }} of {{ h.size(mem.total) }}</div></div>
+  {% set d = root.used_pct %}
+  <div class="tile {{ 'crit' if d is number and d >= 90 else 'warn' if d is number and d >= 80 else '' }}" title="The main disk ({{ root.device }})">
+    <div class="l">Storage</div><div class="n">{{ '%.0f'|format(d) if d is number else '—' }}%</div>
+    <div class="s">{{ h.size(root.free) }} free · {{ (st.boot_kind or '').split(' /')[0] }}</div></div>
+  {% set t = heat.temp_c %}
+  <div class="tile {{ 'crit' if t is number and t >= 80 else 'warn' if t is number and t >= 70 else '' }}" title="Processor temperature; it slows itself down at 80 °C">
+    <div class="l">Temperature</div><div class="n">{{ '%.0f'|format(t) if t is number else '—' }}°C</div>
+    <div class="s">{{ 'throttled: ' ~ heat.now|join(', ') if heat.now else 'not throttled' }}</div></div>
+  <div class="tile" title="Network traffic on {{ dflt.name if dflt else '—' }}, the connection to the internet">
+    <div class="l">Network</div><div class="n" style="font-size:19px;line-height:1.45">↓ {{ h.rate(dflt.rx_bps if dflt else none) }}</div>
+    <div class="s">↑ {{ h.rate(dflt.tx_bps if dflt else none) }}{% if net.wifi %} · Wi-Fi {{ net.wifi.signal }}%{% endif %}</div></div>
+  {% set rq = (snap.tunnels or [])|map(attribute='req_per_min')|reject('none')|list %}
+  <div class="tile" title="Requests a minute arriving through the Cloudflare tunnels: every page, picture and data feed visitors load">
+    <div class="l">Traffic</div><div class="n">{{ '%.0f'|format(rq|sum) if rq else '—' }}</div>
+    <div class="s">requests / min · {{ net.connections }} connections</div></div>
+  <div class="tile {{ 'ok' if up_sites == sites|length and sites else 'crit' }}">
+    <div class="l">Websites</div><div class="n">{{ up_sites }}/{{ sites|length }}</div>
+    <div class="s">answering</div></div>
+  <div class="tile" title="Time since the last restart">
+    <div class="l">Up for</div><div class="n" style="font-size:21px;line-height:1.35">{{ h.ago(sysi.uptime_s) }}</div>
+    <div class="s">since the last restart</div></div>
+</div>
+
+<div class="filters" style="margin-bottom:8px">
+  <b style="font-size:13px;margin-right:4px">History</b>
+  {% for v, lab in (('6', '6 hours'), ('24', '24 hours'), ('168', '7 days'), ('720', '30 days')) %}
+    <a class="chip-link{% if hours == v %} sel{% endif %}" href="{{ url_for('admin.server_page', host=host if host != h.HOST else none, hours=v) }}">{{ lab }}</a>
+  {% endfor %}
+  <span class="refresh-note" id="sv-hist-note">one reading a minute, kept 30 days · gaps = the server was off</span>
+</div>
+<div class="sv-charts">
+  <div class="sv-chart"><h3>CPU <span class="cs">% busy</span></h3><div id="ch-cpu"></div></div>
+  <div class="sv-chart"><h3>Memory <span class="cs">% in use</span></h3><div id="ch-mem"></div></div>
+  <div class="sv-chart"><h3>Network <span class="cs">KB/s, not counting Tailscale</span></h3><div id="ch-net"></div></div>
+  <div class="sv-chart"><h3>Traffic <span class="cs">requests a minute through Cloudflare</span></h3><div id="ch-req"></div></div>
+  <div class="sv-chart"><h3>Disk writes <span class="cs">KB/s to the {{ (st.boot_kind or 'disk').split(' /')[0] }}</span></h3><div id="ch-disk"></div></div>
+  <div class="sv-chart"><h3>Temperature <span class="cs">°C</span></h3><div id="ch-temp"></div></div>
+</div>
+
+<div class="sv-grid">
+  <div class="section">
+    <h2>Websites on this server</h2>
+    <table class="sv">
+      <thead><tr><th>Website</th><th>Answers</th><th class="num">Time</th><th>Behind it</th></tr></thead>
+      <tbody>
+      {% for w in sites %}
+        <tr>
+          <td><a href="https://{{ w.hostname }}" target="_blank" rel="noopener">{{ w.hostname }}</a></td>
+          <td>{% if w.ok %}<span class="status-pill pill-ok">{{ w.code }} OK</span>{% else %}<span class="status-pill pill-bad" title="{{ w.error or '' }}">{{ w.code or 'no answer' }}</span>{% endif %}</td>
+          <td class="num">{{ w.ms }} ms</td>
+          <td class="u">port {{ w.port }} · tunnel {{ w.tunnel }}</td>
+        </tr>
+      {% else %}<tr><td colspan="4" class="u">No Cloudflare tunnel is running on this machine.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    <p class="sv-note">Checked here on the server itself, straight to each site's program (a sign-in redirect such as 302 counts as answering). Cloudflare carries each one to the internet through a tunnel:</p>
+    <table class="sv" style="margin-top:4px">
+      <thead><tr><th>Tunnel</th><th class="num">Links to Cloudflare</th><th class="num">Requests</th><th class="num">/ min</th><th class="num">Errors</th></tr></thead>
+      <tbody>
+      {% for tn in snap.tunnels or [] %}
+        <tr><td>{{ tn.name }} <span class="u">{{ (tn.tunnel or '')[:8] }}</span></td>
+          <td class="num">{% if tn.ready is none %}<span class="status-pill pill-warn">?</span>{% elif tn.ready == 0 %}<span class="status-pill pill-bad">0 — offline</span>{% else %}{{ tn.ready }}{% endif %}</td>
+          <td class="num">{{ '{:,.0f}'.format(tn.requests) if tn.requests is number else '—' }}</td>
+          <td class="num">{{ tn.req_per_min if tn.req_per_min is number else '—' }}</td>
+          <td class="num">{{ '{:,.0f}'.format(tn.errors) if tn.errors is number else '—' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="sv-note">Request and error counts run from when each tunnel last started.</p>
+  </div>
+
+  <div class="section">
+    <h2>Services</h2>
+    <table class="sv">
+      <thead><tr><th>Service</th><th>State</th><th class="num">Running for</th><th class="num">Restarts</th><th class="num">Memory</th><th class="num">CPU</th></tr></thead>
+      <tbody>
+      {% for s in snap.services or [] %}
+        <tr><td>{{ s.label }}<div class="u">{{ s.unit }}{% if s.scope == 'user' %} (user){% endif %}</div></td>
+          <td>{% if s.state == 'active' %}<span class="status-pill pill-ok">running</span>{% else %}<span class="status-pill pill-bad">{{ s.state }}</span>{% endif %}</td>
+          <td class="num">{{ h.ago(now - s.since) if s.since else '—' }}</td>
+          <td class="num">{{ s.restarts if s.restarts is number else '—' }}</td>
+          <td class="num">{{ h.size(s.rss) if s.rss else '—' }}</td>
+          <td class="num">{{ '%.1f'|format(s.cpu_pct) ~ '%' if s.cpu_pct is number else '—' }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <p class="sv-note">Restarts = times systemd brought a crashed service back on its own. Memory counts shared database memory once. CPU is of the whole machine, over the last minute.</p>
+  </div>
+
+  <div class="section">
+    <h2>Storage</h2>
+    <table class="sv">
+      <thead><tr><th>Where</th><th>Disk</th><th style="width:30%">Used</th><th class="num">Free</th></tr></thead>
+      <tbody>
+      {% for m in st.mounts or [] %}
+        <tr><td>{{ m.mount }}<div class="u">{{ m.device }} · {{ m.fs }}</div></td><td>{{ m.kind }}</td>
+          <td><div class="bar {{ 'crit' if (m.used_pct or 0) >= 90 else 'warn' if (m.used_pct or 0) >= 80 else '' }}"><i style="width:{{ m.used_pct or 0 }}%"></i></div>
+              <div class="u">{{ h.size(m.used) }} of {{ h.size(m.total) }} ({{ '%.0f'|format(m.used_pct or 0) }}%)</div></td>
+          <td class="num">{{ h.size(m.free) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="kv" style="margin-top:10px">
+      {% if boot %}
+      <span class="k">Writing now</span><span class="v">{{ h.rate(boot.write_bps) }} (reading {{ h.rate(boot.read_bps) }})</span>
+      <span class="k">Written a day</span><span class="v">{{ h.size(boot.written_per_day) }} on average since the last restart</span>
+      <span class="k">Written since restart</span><span class="v">{{ h.size((boot.io or {}).written) }}</span>
+      {% if boot.card %}<span class="k">The card</span><span class="v">{{ boot.card.name or '?' }}, made {{ boot.card.made or '?' }} · maker id {{ boot.card.maker_id or '?' }}{% if boot.card.maker_id in ('0x000000', '0x0') %} (not a recognised brand){% endif %}</span>{% endif %}
+      {% endif %}
+    </div>
+    {% if st.boot_kind == 'SD card / eMMC' %}<p class="sv-note">SD cards have a limited number of writes in them and usually die without warning — the databases write all day. Moving the system to an SSD is the single best reliability upgrade for this machine.</p>{% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Memory</h2>
+    <div class="kv">
+      <span class="k">In use by programs</span><span class="v">{{ h.size(mem.used) }} of {{ h.size(mem.total) }} ({{ mem.used_pct }}%)</span>
+      <span class="k">Free for more</span><span class="v">{{ h.size(mem.available) }}</span>
+      <span class="k">File cache</span><span class="v">{{ h.size(mem.cached) }} <span class="u">— borrowed to speed up the disk, handed back when needed</span></span>
+      <span class="k">Swap</span><span class="v">{{ h.size(mem.swap_used) }} of {{ h.size(mem.swap_total) }} used</span>
+    </div>
+    <table class="sv" style="margin-top:10px">
+      <thead><tr><th>Biggest programs</th><th>Service</th><th class="num">Memory</th></tr></thead>
+      <tbody>
+      {% for p in (snap.top or [])[:8] %}
+        <tr><td>{{ p.name }} <span class="u">pid {{ p.pid }}</span></td><td class="u">{{ (p.unit or '—')|replace('.service', '') }}</td><td class="num">{{ h.size(p.rss) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Network</h2>
+    <table class="sv">
+      <thead><tr><th>Connection</th><th>State</th><th>Address</th><th class="num">In</th><th class="num">Out</th><th class="num">Dropped</th></tr></thead>
+      <tbody>
+      {% for i in net.ifaces or [] %}
+        <tr><td>{{ i.name }}<div class="u">{{ i.kind }}{% if i.default %} · to the internet{% endif %}</div></td>
+          <td>{% if i.state == 'up' or (i.state == 'unknown' and i.addrs) %}<span class="status-pill pill-ok">up</span>{% elif i.state == 'down' %}<span class="status-pill status-unconfigured">unplugged</span>{% else %}{{ i.state }}{% endif %}</td>
+          <td class="u">{{ i.addrs|join(', ') or '—' }}</td>
+          <td class="num">{{ h.rate(i.rx_bps) }}<div class="u">{{ h.size(i.rx) }} total</div></td>
+          <td class="num">{{ h.rate(i.tx_bps) }}<div class="u">{{ h.size(i.tx) }} total</div></td>
+          <td class="num">{{ '{:,}'.format((i.rx_drop or 0) + (i.tx_drop or 0)) }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if net.wifi %}
+    <div class="kv" style="margin-top:10px">
+      <span class="k">Wi-Fi network</span><span class="v">{{ net.wifi.ssid }} · channel {{ net.wifi.channel }}</span>
+      <span class="k">Signal</span><span class="v">{{ net.wifi.signal }}% · {{ net.wifi.rate }}</span>
+    </div>
+    {% endif %}
+    <p class="sv-note">Totals run from the last restart. Dropped = packets the connection threw away; a steadily rising number on Wi-Fi means a weak or crowded link.</p>
+  </div>
+
+  <div class="section">
+    <h2>Database</h2>
+    {% set dbi = snap.database or {} %}
+    {% if dbi.error %}<div class="banner crit" style="font-weight:500">{{ dbi.error }}</div>{% else %}
+    <div class="kv">
+      <span class="k">PostgreSQL</span><span class="v">{{ dbi.version }}{% if dbi.is_standby %} · a STANDBY copy{% endif %}</span>
+      <span class="k">Running for</span><span class="v">{{ h.ago(now - dbi.started) if dbi.started else '—' }}</span>
+      <span class="k">Connections</span><span class="v">{{ dbi.connections }} of {{ dbi.max_connections }}</span>
+      <span class="k">Live standby copies</span><span class="v">{{ dbi.standbys }}{% if not dbi.standbys %} <span class="u">— none: see "If this server fails"</span>{% endif %}</span>
+    </div>
+    <table class="sv" style="margin-top:10px">
+      <thead><tr><th>Database</th><th class="num">Size</th></tr></thead>
+      <tbody>{% for d in dbi.databases or [] %}<tr><td>{{ d.name }}</td><td class="num">{{ h.size(d.size) }}</td></tr>{% endfor %}</tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>Backups</h2>
+    {% for b in snap.backups or [] %}
+      <div style="margin-bottom:12px">
+        <b>{{ b.label }}</b>
+        <div class="kv" style="margin-top:4px">
+          <span class="k">Newest</span><span class="v">{% if b.age_s is number %}{{ h.ago(b.age_s) }} ago · {{ h.size(b.size) }}{% else %}<span class="status-pill pill-bad">none found</span>{% endif %}</span>
+          <span class="k">Last nightly run</span><span class="v">{% if b.result == 'success' %}<span class="status-pill pill-ok">worked</span>{% elif b.result %}<span class="status-pill pill-bad">{{ b.result }}</span>{% else %}—{% endif %}</span>
+          <span class="k">Kept here</span><span class="v">{{ b.count }} copies, {{ h.size(b.total) }} · <span class="u">{{ b.folder }}</span></span>
+          <span class="k">Off-site</span><span class="v">{% if b.offsite and b.offsite.at %}encrypted copy pushed {{ h.ago(b.offsite.age_s) }} ago{% else %}<span class="status-pill pill-warn">none</span> <span class="u">only on this disk</span>{% endif %}</span>
+        </div>
+      </div>
+    {% else %}<p class="u">No backups are set up on this machine.</p>{% endfor %}
+  </div>
+
+  <div class="section">
+    <h2>System</h2>
+    <div class="kv">
+      <span class="k">Name</span><span class="v">{{ sysi.host }}</span>
+      <span class="k">Hardware</span><span class="v">{{ sysi.model or '—' }}</span>
+      <span class="k">Operating system</span><span class="v">{{ sysi.os or '—' }}</span>
+      <span class="k">Kernel</span><span class="v">{{ sysi.kernel or '—' }}</span>
+      <span class="k">Up for</span><span class="v">{{ h.ago(sysi.uptime_s) }}</span>
+      <span class="k">Load (1 / 5 / 15 min)</span><span class="v">{{ (sysi.load or [])|join(' / ') }} on {{ sysi.cores }} cores</span>
+      <span class="k">Clock</span><span class="v">{{ 'synchronised to internet time' if sysi.clock_synced else 'NOT synchronised' if sysi.clock_synced == false else '—' }}</span>
+      <span class="k">Power / heat limits</span><span class="v">{% if heat.since_boot %}since restart: {{ heat.since_boot|join(', ') }}{% else %}never hit since the last restart{% endif %}</span>
+      <span class="k">Restart needed</span><span class="v">{{ 'yes, for installed updates' if sysi.reboot_required else 'no' }}</span>
+    </div>
+  </div>
+
+  <div class="section" style="grid-column:1 / -1">
+    <h2>If this server fails</h2>
+    <p class="card-sub" style="margin:-4px 0 6px">What would take every website down at once — each orange item is a single point of failure. More servers fix the first one; the rest are cheap fixes on this machine.</p>
+    <ul class="res">
+      {% for r in resilience %}
+        <li><span class="ic {{ 'ok' if r.ok else 'no' }}">{{ '✓' if r.ok else '!' }}</span><span><b>{{ r.what }}</b>{{ r.detail }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/charts.js') }}?v=ymax1"></script>
+<script>
+(function () {
+  const BLUE = "#2563eb", ORANGE = "#ea580c";
+  const q = new URLSearchParams({hours: {{ hours|tojson }}{% if host != h.HOST %}, host: {{ host|tojson }}{% endif %}});
+  fetch({{ url_for('admin.server_history')|tojson }} + "?" + q).then(r => r.json()).then(d => {
+    const now = Date.now(), range = [now - d.hours * 3600e3, now];
+    const one = (id, name, data, unit, o) => EchoCharts.line(document.getElementById(id),
+      Object.assign({t: d.t, unit, height: 170, range, series: [{name, color: BLUE, data}]}, o || {}));
+    one("ch-cpu", "CPU", d.cpu_pct, "%", {ymin: 0, ymax: 100});
+    one("ch-mem", "Memory", d.mem_used_pct, "%", {ymin: 0, ymax: 100});
+    EchoCharts.line(document.getElementById("ch-net"), {t: d.t, unit: "", height: 170, range, ymin: 0,
+      series: [{name: "In (download)", color: BLUE, data: d.net_rx_kbps}, {name: "Out (upload)", color: ORANGE, data: d.net_tx_kbps}]});
+    one("ch-req", "Requests / min", d.req_per_min, "", {ymin: 0});
+    one("ch-disk", "Writes KB/s", d.disk_write_kbps, "", {ymin: 0});
+    one("ch-temp", "Temperature", d.temp_c, "°", {ymin: 30, ymax: 80});
+    if (!d.t.length) document.getElementById("sv-hist-note").textContent = "history starts now: the first reading is stored within a minute";
+  }).catch(() => { document.getElementById("sv-hist-note").textContent = "history could not be loaded"; });
+  // Refresh the live numbers every minute (only while the tab is in view).
+  {% if live %}setInterval(() => { if (!document.hidden) location.reload(); }, 60000);{% endif %}
+})();
+</script>
+{% endblock %}

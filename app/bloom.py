@@ -218,6 +218,36 @@ def asset_key(building):
     return str(v) if v is not None else None
 
 
+# What the portal keeps of each building in BloomStatus.data. Bloom sends ~24 KB
+# a building (ids, units, its own screen layout and local config), and the
+# poller rewrites the row every minute, so the full object cost the SD card
+# ~0.4 GB a day. These are the only fields anything reads from the stored copy:
+# card()/detail()/_points(), the settings ledger (type + pv), the Settings
+# button (a setting point's _id), and fan/settings freshness (pollTs). Writes
+# to Bloom never use this copy: they fetch the building live first.
+_KEEP_BUILDING = ("_id", "locid", "name", "accounts")
+_KEEP_SENSOR = ("type", "pv", "name", "assoc", "stats", "pollTs")
+
+
+def slim(building: dict) -> dict:
+    """The stored copy of one Bloom building: _KEEP_BUILDING plus each sensor's
+    _KEEP_SENSOR, and the _id only on points the Settings page can change.
+    Measured 2026-11-26: 3.3 KB -> 1.7 KB a building as stored."""
+    from app import bloom_settings
+    building = building or {}
+    out = {k: building[k] for k in _KEEP_BUILDING if k in building}
+    sensors = []
+    for s in building.get("sensors") or []:
+        if not isinstance(s, dict):
+            continue
+        kept = {k: s[k] for k in _KEEP_SENSOR if k in s}
+        if s.get("type") in bloom_settings.BY_KEY and "_id" in s:
+            kept["_id"] = s["_id"]
+        sensors.append(kept)
+    out["sensors"] = sensors
+    return out
+
+
 def norm_name(s):
     """Squash a name for forgiving matching: '631 Alan Page Dr' -> '631alanpagedr'."""
     return "".join(ch for ch in (s or "").lower() if ch.isalnum())
@@ -705,8 +735,10 @@ class BloomPoller:
         from app.models import BloomAccount
         with app.app_context():
             conn = db.engine.connect()
+            got_lock = False
             try:
-                if not conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar():
+                got_lock = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": _LOCK_KEY}).scalar()
+                if not got_lock:
                     return
                 for acct in BloomAccount.query.filter(BloomAccount.is_active.is_(True)).all():
                     try:
@@ -726,7 +758,8 @@ class BloomPoller:
                     db.session.rollback()
                     log.warning("Bloom sample prune failed: %s", e)
             finally:
-                conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
+                if got_lock:      # releasing a lock this worker never got makes Postgres log a warning
+                    conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": _LOCK_KEY})
                 conn.close()
 
     def _maybe_prune(self, app):
@@ -797,7 +830,7 @@ def poll_account(app, account):
             st.ok = True
             st.error = None
             st.last_ok_at = now
-            st.data = {"asset": b, "alarms": alarms.get(str(asset_key(b)), [])}
+            st.data = {"asset": slim(b), "alarms": alarms.get(str(asset_key(b)), [])}
         db.session.add(st)
     db.session.commit()
     # The settings ledger: a setting that differs from the poll before was
