@@ -435,3 +435,8 @@ def test_the_portfolio_reads_every_building_in_a_few_queries(app, world, session
         assert n[0] == few <= 12, (few, n[0])
     finally:
         event.remove(db.engine, "before_cursor_execute", count)
+
+
+def test_the_sensors_page_says_when_it_was_checked(root, world):
+    html = root.get("/sensors").get_data(as_text=True)
+    assert "Checked " in html and "No sensors look faulty" in html

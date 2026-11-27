@@ -21,6 +21,9 @@ Faults, highest-confidence first (every threshold is a tunable constant):
 scan(now) returns one finding per bad (box, sensor), worst-first.
 """
 import datetime as _dt
+import itertools
+import threading
+import time
 
 WINDOW_DAYS = 3
 FLAT_HOURS = 8                 # a frozen / dead run must last at least this long
@@ -70,13 +73,13 @@ def _runs(times, vals):
     v0 = s = e = None
     n = 0
     for t, v in zip(times, vals):
-        if _present(v) and v == v0 and (t - e) <= MAX_GAP:
+        if v and v == v0 and (t - e) <= MAX_GAP:         # `v` true = _present(v): not None, not 0
             e = t
             n += 1
         else:
             if v0 is not None and n >= 2:
                 yield s, e, v0, n
-            if _present(v):
+            if v:
                 v0, s, e, n = v, t, t, 1
             else:
                 v0, n = None, 0
@@ -88,7 +91,7 @@ def fault(times, vals, ch, now):
     """The worst fault for one channel of one box, or None. `times`/`vals` are
     the window's reads in order (vals may hold None / 0 for missing / no sensor)."""
     attr, label, ceiling, floor, prio, faults, wireless = ch
-    live = [(t, v) for t, v in zip(times, vals) if _present(v)]
+    live = [(t, v) for t, v in zip(times, vals) if v]           # present: not None, not 0
     nlive = len(live)
     why = lambda w, wired: f" — {w}" if wireless else f" — {wired}"
 
@@ -109,15 +112,16 @@ def fault(times, vals, ch, now):
                        + why("the wireless Inovonics probe is shorted or failed", "a shorted or miscalibrated probe"))
 
     if "dropped" in faults and nlive >= MIN_READS:
-        last_i = max((i for i, v in enumerate(vals) if _present(v)), default=None)
-        if last_i is not None and last_i < len(vals) - 1 and all(not _present(v) for v in vals[last_i + 1:]):
+        last_i = next((i for i in range(len(vals) - 1, -1, -1) if vals[i]), None)   # the last present read
+        if last_i is not None and last_i < len(vals) - 1:            # ...followed only by absent ones
             dead = now - times[last_i]
             if dead >= _dt.timedelta(hours=FLAT_HOURS):
                 return _mk("dropped", label, prio + 1, times[last_i], now,
                            f"was reading, then nothing for {_hrs(dead)} (last {vals[last_i]}°)"
                            + why("the wireless Inovonics probe stopped reporting", "the sensor stopped reporting"))
 
-    if "frozen" in faults:
+    # a frozen run needs a hot reading somewhere in the window: skip the walk when there is none
+    if "frozen" in faults and any(FROZEN_HOT <= v <= ceiling for _t, v in live):
         best = None
         for s, e, val, n in _runs(times, vals):
             # only a HOT flat line is a fault; a loop idling at ~70-90 F sits flat for real
@@ -156,29 +160,88 @@ def _box_findings(box_id, box_name, d, now):
     return out
 
 
-def scan(now=None):
+# The /sensors page reads three days of every box (~150,000 reads) and walks them:
+# about 3 s on the Pi. The boxes are read every 5 minutes and every fault here
+# needs hours of evidence, so a slightly older answer says the same thing:
+#   * under FRESH_S old        -> shown as is
+#   * under STALE_S old        -> shown at once, and worked out again in the
+#                                 background for the next visit
+#   * older, or none yet       -> worked out now (the visitor waits)
+# Each gunicorn worker keeps its own copy. The page shows when it was checked.
+FRESH_S = 300
+STALE_S = 1800
+_cache, _cache_lock = {}, threading.Lock()
+_refreshing = threading.Event()
+
+
+def clear_cache():
+    with _cache_lock:
+        _cache.clear()
+
+
+def _store(out, mono, at):
+    with _cache_lock:
+        _cache["scan"] = (mono, out, at)
+
+
+def _refresh_in_background(app):
+    def run():
+        try:
+            with app.app_context():
+                at = _dt.datetime.utcnow()
+                _store(_scan(at), time.monotonic(), at)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("sensor scan refresh failed")
+        finally:
+            _refreshing.clear()
+    threading.Thread(target=run, name="sensor-scan", daemon=True).start()
+
+
+def scan(now=None, with_time=False):
     """Every bad (box, sensor) across the 2010 boxes, worst-first (control
-    sensors and the longest-standing faults on top)."""
+    sensors and the longest-standing faults on top). Without `now` a recent
+    answer is reused (see above); with_time=True also returns when it was
+    worked out (naive UTC)."""
+    if now is not None:
+        out = _scan(now)
+        return (out, now) if with_time else out
+    t = time.monotonic()
+    with _cache_lock:
+        hit = _cache.get("scan")
+    if hit and t - hit[0] < STALE_S:
+        if t - hit[0] >= FRESH_S and not _refreshing.is_set():
+            from flask import current_app
+            _refreshing.set()
+            _refresh_in_background(current_app._get_current_object())
+        out, at = [dict(f) for f in hit[1]], hit[2]
+    else:
+        at = _dt.datetime.utcnow()
+        res = _scan(at)
+        _store(res, t, at)
+        out = [dict(f) for f in res]
+    return (out, at) if with_time else out
+
+
+def _scan(now):
+    from sqlalchemy import text
     from app.extensions import db
-    from app.models import LegacyBox, LegacyReading
-    now = now or _dt.datetime.utcnow()
+    from app.models import LegacyBox
     cutoff = now - _dt.timedelta(days=WINDOW_DAYS)
-    cols = [getattr(LegacyReading, a) for a in ATTRS]
-    rows = (db.session.query(LegacyReading.box_id, LegacyReading.ts, *cols)
-            .filter(LegacyReading.ts >= cutoff)
-            .order_by(LegacyReading.box_id, LegacyReading.ts).all())
+    # plain tuples, already in box/time order: grouping and turning rows into
+    # columns is then one zip per box instead of a list append per value
+    # enough sort memory for ~150k rows, or Postgres sorts them on disk (this query only)
+    db.session.execute(text("SET LOCAL work_mem = '32MB'"))
+    rows = db.session.execute(text(
+        f"SELECT box_id, ts, {', '.join(ATTRS)} FROM legacy_readings "
+        "WHERE ts >= :cutoff ORDER BY box_id, ts"), {"cutoff": cutoff}).all()
     live_boxes = {b.id: b.name for b in LegacyBox.query.filter(LegacyBox.deleted_at.is_(None)).all()}
-    by_box = {}
-    for r in rows:
-        bid = r[0]
+    out = []
+    for bid, grp in itertools.groupby(rows, key=lambda r: r[0]):
         if bid not in live_boxes:
             continue
-        d = by_box.setdefault(bid, {"t": [], **{a: [] for a in ATTRS}})
-        d["t"].append(r[1])
-        for j, a in enumerate(ATTRS):
-            d[a].append(r[2 + j])
-    out = []
-    for bid, d in by_box.items():
+        cols = list(zip(*grp))
+        d = {"t": list(cols[1]), **{a: list(cols[2 + j]) for j, a in enumerate(ATTRS)}}
         out.extend(_box_findings(bid, live_boxes[bid], d, now))
     out.sort(key=lambda f: (f["priority"], f["since"]))     # control first, then longest-standing
     return out

@@ -100,7 +100,10 @@ def portfolio(key, now=None, poll_min=5):
     cur = q(start, end)
     prev = q(start - (end - start), start)
     since = db.session.execute(text("SELECT min(hour) FROM legacy_hourly")).scalar()
-    boxes = {b.id: b for b in LegacyBox.query.filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None))}
+    from sqlalchemy.orm import joinedload
+    # each box's status with the box: one query apiece was ~180 round trips
+    boxes = {b.id: b for b in LegacyBox.query.options(joinedload(LegacyBox.status))
+             .filter(LegacyBox.is_active.is_(True), LegacyBox.deleted_at.is_(None))}
     ev = {}
     for r in db.session.execute(text(
             "SELECT box_id, kind, code, count(*) AS c FROM legacy_events WHERE ts >= :s AND ts < :e "
@@ -174,13 +177,15 @@ def portfolio(key, now=None, poll_min=5):
 def law_detail(box_ids, start, end):
     """Per building with sensor-hours under the minimum: which sensors, how
     many hours, how cold, and when it last happened."""
-    from app.models import LegacyHourly
+    from app.extensions import db
+    from app.models import LegacyHourly as H
     out = {}
     if not box_ids:
         return out
-    for h in LegacyHourly.query.filter(LegacyHourly.box_id.in_(box_ids), LegacyHourly.hour >= start,
-                                       LegacyHourly.hour < end, LegacyHourly.law_low > 0) \
-            .order_by(LegacyHourly.hour).all():
+    # only the four columns used below: whole hourly rows took ~0.4 s on the Pi
+    for h in db.session.query(H.box_id, H.hour, H.law_req, H.apt_avg) \
+            .filter(H.box_id.in_(box_ids), H.hour >= start, H.hour < end, H.law_low > 0) \
+            .order_by(H.hour).all():
         d = out.setdefault(h.box_id, {"sensors": {}, "last": None, "night": 0, "day": 0})
         d["last"] = h.hour
         d["night" if h.law_req == history.NIGHT_MIN else "day"] += 1

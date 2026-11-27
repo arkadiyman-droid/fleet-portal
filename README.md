@@ -481,6 +481,34 @@ its status in two queries, and the buildings come with their controllers
 already loaded. Portfolio dropped from 4.2 s to about 0.3 s, with the same
 entries for all 225 buildings, checked against live data.
 
+**The other slow pages** (measured on the Pi, 2026-11-26):
+
+- **Sensors** read three days of every box (about 150,000 reads) and walked
+  them on every visit, taking about 5 s. The walk is faster now (no function
+  call per read, and no frozen-run search on a channel that never ran hot).
+  The read sorts in memory (`SET LOCAL work_mem`). It found the same 42
+  faults as before on live data. The answer is also reused: under 5 minutes
+  old it is shown as is; under 30 minutes it is shown at once and worked out
+  again in the background; older, it is worked out while the visitor waits
+  (about 3.7 s, normally only the first visit after a reload). The page says
+  when it was checked.
+- **Analytics** fetched each box's status one at a time (180 queries).
+  The status now comes with the box, and the cold-apartment detail reads
+  only the columns it uses. It went from 1.4-1.9 s to about 0.9 s.
+- **Buildings** looked up each building's open contract and property
+  separately (258 queries). Now 4 queries, 0.7 s down to 0.1 s.
+- **Users** asked twice per person who runs fans or changes settings.
+  `_control_names()` gets both lists for everyone at once: 137 queries down
+  to 56, 0.4 s down to 0.2 s.
+
+**Compression.** Every page leaves through a Cloudflare tunnel over the
+server's own internet link. Cloudflare compresses for the visitor, but only
+after the page has crossed that link at full size. `app/compress.py` now
+gzips pages and JSON before they leave (level 5), when the caller asks for it.
+Cloudflare does ask. Live goes out at 44 KB instead of 435 KB, Buildings at
+10 KB instead of 179 KB. Static files, streamed responses, error pages and
+anything under 1 KB are left alone.
+
 ### Server: the machine these websites run on
 
 **Server** (superuser only, `/server`) shows the Raspberry Pi the portal runs on.

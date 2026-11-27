@@ -60,10 +60,11 @@ requires_postgres = pytest.mark.skipif(
 
 @pytest.fixture(autouse=True)
 def _fresh_heat_overnight_cache():
-    """app/heat_overnight.py keeps each night's verdicts in memory (the Live
-    page asks every minute); a test must not see another test's night."""
-    from app import heat_overnight
+    """app/heat_overnight.py and app/sensor_health.py keep their answers in
+    memory (they are slow to work out); a test must not see another test's."""
+    from app import heat_overnight, sensor_health
     heat_overnight.clear_cache()
+    sensor_health.clear_cache()
     yield
 
 

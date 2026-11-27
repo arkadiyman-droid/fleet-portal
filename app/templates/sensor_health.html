@@ -26,7 +26,7 @@
   <div class="crumbs"><a href="{{ url_for('admin.live_page') }}">Live</a></div>
   <div class="sh-head">
     <h1>Sensor health</h1>
-    <span class="card-sub">Probes that look faulty over the last {{ window_days }} days — read from each box's stored history. Click a row's chart to see it.</span>
+    <span class="card-sub">Probes that look faulty over the last {{ window_days }} days — read from each box's stored history. Click a row's chart to see it. <span title="Worked out from the stored reads at most a few minutes ago (it takes seconds, so the answer is reused briefly; the boxes are read every 5 minutes)">Checked {{ checked }}.</span></span>
   </div>
 
   <div class="sh-tally">

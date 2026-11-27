@@ -444,10 +444,14 @@ def list_buildings():
     q = base if show_archived else base.filter_by(is_active=True)
     if filter_property:
         q = q.filter_by(property_id=property_id)
-    buildings = q.order_by(Building.name).all()
+    from sqlalchemy.orm import joinedload
+    buildings = q.options(joinedload(Building.property)).order_by(Building.name).all()
+    # every open contract in one query (current_contract() per building was ~250 queries)
+    open_contracts = {c.building_id: c for c in Contract.query.filter(
+        Contract.end_date.is_(None), Contract.building_id.in_([b.id for b in buildings] or [-1]))}
     rows = []
     for b in buildings:
-        contract = current_contract(b)
+        contract = open_contracts.get(b.id)
         contract_cell = f"{contract.unit_count} unit(s) @ {_dollars(contract.rate_per_unit_cents)}/yr" if contract else "—"
         rows.append({
             "id": b.id,
@@ -1846,15 +1850,16 @@ def sensor_health_page():
     noisy, read from the stored history (app/sensor_health.py)."""
     if not is_superuser():
         abort(403)
-    from app import sensor_health
-    findings = sensor_health.scan()
+    from app import history, sensor_health
+    findings, checked_at = sensor_health.scan(with_time=True)
     kinds = {}
     for f in findings:
         kinds[f["kind"]] = kinds.get(f["kind"], 0) + 1
     return render_template("sensor_health.html", title="Sensor health", findings=findings,
                            buildings=sensor_health.by_building(findings),
                            kinds=kinds, window_days=sensor_health.WINDOW_DAYS,
-                           flat_hours=sensor_health.FLAT_HOURS)
+                           flat_hours=sensor_health.FLAT_HOURS,
+                           checked=history.local(checked_at).strftime("%I:%M %p").lstrip("0"))
 
 
 @admin_bp.route("/heat")
@@ -3333,8 +3338,20 @@ def adopt_restore(eid):
 _SCOPE_MODELS = {"client": Client, "property": Property, "building": Building}
 
 
-def _access_summary(user) -> str:
-    """'Berry, DCA (view)' — what a person can see, for the Users list."""
+def _control_names() -> tuple:
+    """({user id: [property names where they run fans]}, {... change settings}),
+    two queries for everyone: the Users list asks for every person at once."""
+    from app.models import FanControl, SettingControl
+    out = ({}, {})
+    for i, model in enumerate((FanControl, SettingControl)):
+        for uid, name in db.session.query(model.user_id, Property.name).join(Property, model.property_id == Property.id):
+            out[i].setdefault(uid, []).append(name)
+    return out
+
+
+def _access_summary(user, controls=None) -> str:
+    """'Berry, DCA (view)' — what a person can see, for the Users list.
+    `controls` is _control_names(), fetched once by a caller listing many."""
     by_role = {}
     for p in user.permissions:
         model = _SCOPE_MODELS.get(p.scope_type)
@@ -3344,10 +3361,13 @@ def _access_summary(user) -> str:
     said = "; ".join(f"{', '.join(sorted(by_role[r]))} ({words[r]})" for r in ("admin", "operator", "viewer")
                      if r in by_role) or "nothing yet"
     from app.models import FanControl, SettingControl
-    fans = sorted(p.name for p in Property.query.join(FanControl, FanControl.property_id == Property.id)
-                  .filter(FanControl.user_id == user.id).all())
-    sets = sorted(p.name for p in Property.query.join(SettingControl, SettingControl.property_id == Property.id)
-                  .filter(SettingControl.user_id == user.id).all())
+    if controls is not None:
+        fans, sets = sorted(controls[0].get(user.id, [])), sorted(controls[1].get(user.id, []))
+    else:
+        fans = sorted(p.name for p in Property.query.join(FanControl, FanControl.property_id == Property.id)
+                      .filter(FanControl.user_id == user.id).all())
+        sets = sorted(p.name for p in Property.query.join(SettingControl, SettingControl.property_id == Property.id)
+                      .filter(SettingControl.user_id == user.id).all())
     return said + (f"; runs fans at {', '.join(fans)}" if fans else "") + \
         (f"; changes settings at {', '.join(sets)}" if sets else "")
 
@@ -3392,13 +3412,15 @@ def _scope_label(scope_type: str, scope_id: int) -> str:
 @superuser_required
 def list_users():
     show_archived = _bool_arg("show_archived")
+    from sqlalchemy.orm import selectinload
     q = User.query if show_archived else User.query.filter_by(is_active=True)
-    users = q.order_by(User.name).all()
+    users = q.options(selectinload(User.permissions)).order_by(User.name).all()
+    controls = _control_names()
     rows = [
         {
             "id": u.id,
             "is_active": u.is_active,
-            "cells": [u.name, u.email, u.login, _access_summary(u)],
+            "cells": [u.name, u.email, u.login, _access_summary(u, controls)],
             "can_edit": True,
             "can_archive": True,
             "extra_url": url_for("admin.user_permissions", user_id=u.id),
