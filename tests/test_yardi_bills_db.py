@@ -90,3 +90,29 @@ def test_the_summary_and_the_page(app, session, world):
     assert "Utility costs by property (Yardi)" in html and "Twin and Grote" in html
     assert "paid twice?" in html and "$26,408" in html
     assert "Yardi properties not in the portal" in html and "westvill" in html
+
+
+def test_usage_on_the_bills_and_the_page(app, session, world):
+    import app.models as m
+    from app import yardi_bills as yb
+    from tests.test_yardi_bills import _usage
+    res = yb.import_lines(_lines(), usage=_usage())
+    assert res["usage"] == {"bills": 5, "with_usage": 3, "dropped": 0}       # garden 2025, Longwood gas, the water
+    garden = m.UtilityAccount.query.filter_by(account_number="26271-11000-4").one()
+    got = {b.period_end.year: (b.usage, b.unit) for b in garden.bills}
+    assert got == {2025: (100000.0, "kWh"), 2026: (None, None)}
+    s = yb.summary(today=dt.date(2026, 11, 27))
+    tg = {r["name"]: r for r in s["rows"]}["Twin and Grote"]
+    e = tg["use"]["electric"]
+    assert e["ref"] == 100000.0 and e["cover"] == 1.0 and e["price"] == 0.2 and e["per_apt"] == 1000.0
+    assert s["usage"]["electric"]["ref"] == 100000.0 and s["usage"]["electric"]["props"] == 1
+    app.config["WTF_CSRF_ENABLED"] = False
+    c = app.test_client()
+    with c.session_transaction() as x:
+        x["superuser"] = True
+    html = c.get("/utilities").get_data(as_text=True)
+    assert "Usage by property, 2025" in html and "$0.20" in html and "100,000" in html
+    # a re-import without usage leaves the bills with money only, and the page says so
+    yb.import_lines(_lines())
+    assert yb.summary(today=dt.date(2026, 11, 27))["usage"] is None
+    assert "Usage by property" not in c.get("/utilities").get_data(as_text=True)

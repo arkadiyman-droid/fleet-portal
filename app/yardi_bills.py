@@ -13,8 +13,8 @@ What the lines carry (the user's own export, 2026-11-27):
   Notes      "<what> <MM/DD/YYYY>-<MM/DD/YYYY> <service address>", e.g.
              "Electricity 08/31/2026-09/30/2026 20 RICHMAN PLZ",
              "Vacant Electric 09/03/2019-09/29/2019 [DI-6028] 6602 District..."
-There is no usage (kWh, therms) in Yardi, only money: usage comes later
-from the bills themselves or the utilities' own feeds.
+There is no usage (kWh, therms) in Yardi, only money: usage comes from the
+utility bills Conservice keeps for each payable (see "usage" below).
 
 How lines become accounts and bills:
   * one account = utility (payee) + account number + commodity + the
@@ -358,10 +358,12 @@ def flags(bill, account):
     return None
 
 
-def import_lines(lines, source_ref="yardi"):
-    """Replace every Yardi-sourced account and bill with what `lines` make.
-    Building links a person set on a Yardi account (kept by the account's
-    key) survive. Returns counts. App context assumed."""
+def import_lines(lines, source_ref="yardi", usage=None):
+    """Replace every Yardi-sourced account and bill with what `lines` make,
+    with usage from `usage` (usage_index / load_usage) when given; without
+    it the bills carry money only. Building links a person set on a Yardi
+    account (kept by the account's key) survive. Returns counts. App context
+    assumed."""
     from app.extensions import db
     from app.models import Building, Property, UtilityAccount, UtilityAccountBuilding, UtilityBill
     props = []
@@ -372,6 +374,7 @@ def import_lines(lines, source_ref="yardi"):
         props.append({"id": p.id, "name": p.name, "buildings": blds.get(p.id, [])})
     pmap = match_properties(lines, props)
     res = build(lines, pmap, blds)
+    used = attach_usage(res["accounts"], usage) if usage else None
     old = {a.ext_key: a for a in UtilityAccount.query.filter_by(source="yardi").all()}
     manual = {}
     for a in old.values():
@@ -399,7 +402,8 @@ def import_lines(lines, source_ref="yardi"):
             rows.append(dict(account_id=ua.id, period_start=b["start"], period_end=b["end"],
                              cost_cents=int(round(b["cost"] * 100)), source="yardi", source_ref=source_ref[:300],
                              lines=b["lines"], invoices=len([v for v in b["inv"].values() if abs(v) >= 0.005]),
-                             flags=b["flags"], imported_at=now, estimated=False))
+                             flags=b["flags"], imported_at=now, estimated=False,
+                             usage=b.get("usage"), unit=b.get("unit")))
         if rows:
             db.session.bulk_insert_mappings(UtilityBill, rows)
             n_bills += len(rows)
@@ -407,8 +411,99 @@ def import_lines(lines, source_ref="yardi"):
     unmatched = sorted(c for c, (pid, _) in pmap.items() if not pid)
     return {"lines": len(lines), "accounts": len(res["accounts"]), "bills": n_bills, "skipped": res["skipped"],
             "deposits": round(sum(res["deposits"].values()), 2),
+            "usage": ({"bills": used["bills"], "with_usage": used["with_usage"], "dropped": len(used["dropped"])}
+                      if used else None),
             "matched": {c: pid for c, (pid, _) in pmap.items() if pid}, "unmatched": unmatched,
             "how": {c: how for c, (_, how) in pmap.items()}}
+
+
+# ── usage, from the bill data Conservice keeps ───────────────────────────────
+# Conservice pays the utility bills and keeps each one's line items: one
+# record per Yardi invoice, [account, batch, [[utility id, service address,
+# account type, amount, usage, unit], ...]], pulled read-only from its DNA
+# site (yardi-utilities/raw/conservice_usage.json). A bill with supply and
+# delivery on it lists the same kWh twice (electric + elecsupp), an ESCO's
+# own invoice repeats the utility's kWh, and sewer repeats water's gallons:
+# only the utility's delivery items are counted, and an ESCO's account
+# (supplier=True) gets none, so nothing is counted twice.
+# A few utilities' records are off by ~1000x (36M kWh on a $5,497 Central
+# Hudson bill, San Antonio water in gallons x1000): usage whose own items
+# price it below FLOOR $ per unit is a data error, dropped and counted.
+DELIVERY = {"electric": {"electric", "elec2"}, "gas": {"gas", "gas2", "gas3"}, "water": {"water", "water2"}}
+UNITS = {"kwh": ("kWh", 1.0), "therms": ("therm", 1.0), "gal": ("kgal", 0.001)}
+FLOOR = {"kWh": 0.02, "therm": 0.05, "kgal": 0.5}
+
+
+def batch_of(invoice):
+    """Yardi's batch code out of the invoice number ("...-HBB26102007499"), or None."""
+    m = _BATCH.search(str(invoice or ""))
+    return m.group(0).strip("- \r\n") if m else None
+
+
+def usage_index(records):
+    """Conservice records -> {(account, batch): items}."""
+    return {(norm_account(acct), str(batch).strip()): items for acct, batch, items in records if items}
+
+
+def load_usage(path):
+    import gzip
+    import json
+    op = gzip.open if str(path).endswith(".gz") else open
+    with op(path, "rt", encoding="utf-8") as f:
+        return usage_index(json.load(f))
+
+
+def invoice_usage(items, commodity, address):
+    """(usage, unit, amount) that one invoice's delivery items show for
+    this commodity and service address, or None. An invoice that covers
+    several buildings (one account, several addresses) gives each its own."""
+    want = DELIVERY.get(commodity)
+    if not want:
+        return None
+    its = [i for i in items if i[0] in want and i[4] is not None and str(i[5] or "").strip().lower() in UNITS]
+    if not its:
+        return None
+    if len({street_key(i[1]) or str(i[1]).upper() for i in its}) > 1:
+        k = street_key(address)
+        its = [i for i in its if k and street_key(i[1]) == k]
+        if not its:
+            return None
+    units = {UNITS[str(i[5]).strip().lower()] for i in its}
+    if len(units) != 1:
+        return None
+    unit, f = units.pop()
+    return (round(sum(float(i[4]) for i in its) * f, 3), unit,
+            round(sum(float(i[3] or 0) for i in its), 2))
+
+
+def attach_usage(accounts, index):
+    """Put usage on the building bills build() made. A bill paid on two
+    invoices (a duplicate, a rebill) shows its usage on both: the larger one
+    is the bill's, never the sum. Returns counts and the dropped data errors."""
+    out = {"bills": 0, "with_usage": 0, "dropped": []}
+    for a in accounts:
+        if a["kind"] != "building" or a["supplier"]:
+            continue
+        for b in a["bills"].values():
+            out["bills"] += 1
+            best = None
+            for inv, amt in b["inv"].items():
+                if amt <= 0.005:
+                    continue
+                items = index.get((norm_account(account_number(inv)), batch_of(inv) or ""))
+                u = invoice_usage(items, a["commodity"], a["service_address"]) if items else None
+                if not u or u[0] <= 0:
+                    continue
+                if u[2] / u[0] < FLOOR[u[1]]:
+                    out["dropped"].append({"invoice": inv, "address": a["service_address"], "usage": u[0],
+                                           "unit": u[1], "amount": u[2]})
+                    continue
+                if best is None or u[0] > best[0]:
+                    best = u
+            if best:
+                b["usage"], b["unit"] = best[0], best[1]
+                out["with_usage"] += 1
+    return out
 
 
 # ── moving parsed lines between machines ─────────────────────────────────────
@@ -438,6 +533,72 @@ def load_lines(path):
 
 # ── what the Utilities page shows ────────────────────────────────────────────
 GROUP = {"electric": "electric", "gas": "gas", "oil": "oil", "water": "water", "sewer": "water"}
+
+
+USE_UNIT = {"electric": "kWh", "gas": "therm", "water": "kgal"}
+COVER_MIN = 0.9          # a price per unit only where usage covers this share of the utility's own bills
+
+
+def _usage(rows, ref, prev, yr):
+    """Usage per property (electric kWh, gas therms, water kgal) for the
+    reference year and the one before, the all-in price per unit (supply
+    and sewer included) and per apartment. Each row gets r["use"]; returns
+    the portfolio totals, or None when no bill has usage. App context assumed."""
+    from sqlalchemy import case, func
+    from app.extensions import db
+    from app.models import UtilityAccount, UtilityBill
+    if not ref:
+        return None
+    q = (db.session.query(UtilityAccount.property_id, UtilityAccount.commodity, UtilityAccount.supplier, yr,
+                          func.sum(UtilityBill.cost_cents),
+                          func.sum(case((UtilityBill.usage.isnot(None), UtilityBill.cost_cents), else_=0)),
+                          func.sum(UtilityBill.usage))
+         .join(UtilityBill, UtilityBill.account_id == UtilityAccount.id)
+         .filter(UtilityAccount.source == "yardi", UtilityAccount.kind == "building",
+                 UtilityAccount.property_id.isnot(None), yr.in_([ref, prev] if prev else [ref]))
+         .group_by(UtilityAccount.property_id, UtilityAccount.commodity, UtilityAccount.supplier, yr))
+    acc = defaultdict(lambda: {"usage": 0.0, "all": 0.0, "own": 0.0, "cov": 0.0})
+    any_use = False
+    for pid, com, sup, y, cents, cov_cents, used in q:
+        g = GROUP.get(com, com)
+        if g not in USE_UNIT:
+            continue
+        x = acc[(pid, int(y), g)]
+        x["all"] += (cents or 0) / 100
+        if not sup and com != "sewer":
+            x["own"] += (cents or 0) / 100
+            x["cov"] += (cov_cents or 0) / 100
+        if used:
+            x["usage"] += used
+            any_use = True
+    if not any_use:
+        for r in rows:
+            r["use"] = {}
+        return None
+    tot = {g: {"ref": 0.0, "all": 0.0, "props": 0} for g in USE_UNIT}
+    for r in rows:
+        r["use"] = {}
+        for g in USE_UNIT:
+            a, p = acc.get((r["id"], ref, g)), acc.get((r["id"], prev, g))
+            if not a or not a["usage"]:
+                continue
+            cover = a["cov"] / a["own"] if a["own"] > 0 else None
+            full = cover is not None and cover >= COVER_MIN
+            pfull = p and p["usage"] and p["own"] > 0 and p["cov"] / p["own"] >= COVER_MIN
+            r["use"][g] = {
+                "ref": a["usage"], "unit": USE_UNIT[g], "cover": cover,
+                "price": a["all"] / a["usage"] if full else None,
+                "per_apt": a["usage"] / r["units"] if full and r["units"] else None,
+                "change": (a["usage"] / p["usage"] - 1) if full and pfull else None}
+            if full:
+                t = tot[g]
+                t["ref"] += a["usage"]
+                t["all"] += a["all"]
+                t["props"] += 1
+    for g, t in tot.items():
+        t["unit"] = USE_UNIT[g]
+        t["price"] = t["all"] / t["ref"] if t["ref"] else None
+    return tot
 
 
 def summary(today=None):
@@ -497,13 +658,15 @@ def summary(today=None):
         r["apt_share"] = (r["apts"].get(ref, 0.0) / r["ref"]) if r["ref"] else None
         rows.append(r)
     rows.sort(key=lambda r: -r["ref"])
+    use_tot = _usage(rows, ref, prev, yr)
     # the building meters behind each property: the latest 12 months
     # the last month whose bills are all in: two months before the newest
     # import (a September bill is posted in October or November)
     anchor = min(last or today, (span[2].date() if span[2] else today))
     cut_hi = (anchor.replace(day=1) - _dt.timedelta(days=1)).replace(day=1) - _dt.timedelta(days=1)
     cut_lo = (cut_hi.replace(day=1) - _dt.timedelta(days=330)).replace(day=1)
-    aq = (db.session.query(UtilityAccount, func.sum(UtilityBill.cost_cents), func.count(UtilityBill.id))
+    aq = (db.session.query(UtilityAccount, func.sum(UtilityBill.cost_cents), func.count(UtilityBill.id),
+                           func.sum(UtilityBill.usage), func.max(UtilityBill.unit))
           .join(UtilityBill, UtilityBill.account_id == UtilityAccount.id)
           .filter(UtilityAccount.source == "yardi", UtilityAccount.property_id.isnot(None),
                   UtilityBill.period_end >= cut_lo, UtilityBill.period_end <= cut_hi)
@@ -515,11 +678,11 @@ def summary(today=None):
               .filter(UtilityAccount.source == "yardi")):
         links[x[0]].append(x[1])
     meters = defaultdict(list)
-    for a, cents, nb in aq:
+    for a, cents, nb, used, unit in aq:
         meters[a.property_id].append({
             "id": a.id, "utility": a.utility, "commodity": a.commodity, "kind": a.kind, "number": a.account_number,
             "address": a.service_address, "buildings": links.get(a.id, []), "supplier": a.supplier,
-            "cost": (cents or 0) / 100, "bills": nb})
+            "cost": (cents or 0) / 100, "bills": nb, "usage": used, "unit": unit})
     for pid in meters:
         meters[pid].sort(key=lambda m: -m["cost"])
     for r in rows:
@@ -546,4 +709,5 @@ def summary(today=None):
         "others": others, "others_ref": sum(o["ref"] for o in others),
         "portal_ref": sum(r["ref"] for r in rows), "cut_lo": cut_lo, "cut_hi": cut_hi,
         "totals": {yy: sum(r["years"].get(yy, 0.0) for r in rows) for yy in years},
+        "usage": use_tot,
     }

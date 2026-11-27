@@ -529,19 +529,39 @@ exist yet.
      person set (`links_set_by`) are kept.
    - **"Paid twice?"** flags the same account and period paid on two invoices
      within 2% of each other, with neither voided.
-   - **No usage:** Yardi holds no kWh or therms. Usage comes later, from the
-     plant-level bills on file (not Skyline's tenant submetering) and the
-     DEP / Con Edison / National Grid feeds (see
-     `EMS/UTILITY_DATA_INTEGRATION.md`).
+   - **Usage (kWh, therms, kgal):** Yardi holds none. It comes from the
+     utility bills Conservice keeps for each payable, read-only from its DNA
+     site. That gives one record per Yardi invoice (`<account>-<batch>`)
+     with the bill's line items: utility id, service address, amount, usage
+     and unit. `attach_usage` puts it on the bills:
+     - Only the utility's delivery items count (`electric`/`elec2`,
+       `gas`/`gas2`/`gas3`, `water`/`water2`). The supply line on the same
+       bill, an ESCO's own invoice (supplier accounts get none) and sewer
+       repeat the same quantity.
+     - An invoice covering several buildings gives each building its own
+       usage, matched by service address.
+     - A bill paid on two invoices takes the larger usage, never the sum.
+     - A reading whose own items price it below $0.02/kWh, $0.05/therm or
+       $0.50/kgal is a utility data error (36M kWh on a $5,497 bill) and is
+       dropped and counted.
+     The page's "Usage by property" shows a property's price per unit (all-in:
+     supply and sewer included) and usage per apartment only where usage is
+     on at least 90% of that utility's bills (by cost) for the year.
    - **Running it:** parse where the export was downloaded, because the Pi
      has no openpyxl: `read_xlsx` + `parse_line` + `dump_lines` write a
      `.json.gz`. On the Pi, run a quiet script (pollers off) that calls
-     `load_lines` + `import_lines`.
+     `load_lines` + `load_usage` + `import_lines(lines, usage=...)`. Without
+     `usage=` a re-import leaves money only.
    - **First import (2026-11-27):** 2023 to 2026-to-date, 200,399 lines,
      $130,953,273 (equal to Yardi's grand totals). That made 4,536 accounts
      and 80,101 bills. 31 Yardi properties matched 26 portal properties; 41
      are not in the portal. 512-030 (heating oil) is empty, as it should be:
      no property burns oil.
+   - **Usage added (2026-11-27):** 66,251 Conservice records were pulled
+     (60,458 with usage). 45,084 of 59,349 utility building bills got usage;
+     266 readings were dropped as data errors. From 2024 on, about 92-99% of
+     electric and gas delivery cost has usage. 2023 and water are partial:
+     NYC Water Board's `-MM/YY` invoices have no Conservice record.
 
 Tables: `benchmark_properties`, `benchmark_years`, `benchmark_stats`,
 `building_benchmarks`, `utility_accounts`, `utility_account_buildings`,

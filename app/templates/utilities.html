@@ -37,6 +37,9 @@
 {% macro pathway(r) %}{% if r.pathway %}<span class="ut-pill {{ 'p3' if r.pathway == 'CP3' }}" title="{{ r.pathway_words }}">{{ r.pathway }}</span>{% else %}<span class="ut-pill unk" title="Not known until the city's Covered Buildings List is loaded. Rent-regulated and HUD buildings often follow Article 321 (prescriptive measures) instead of the limits.">unknown</span>{% endif %}{% endmacro %}
 {% macro bldgs(r) %}<div class="b">{% for nm, pr in r.buildings[:4] %}{{ nm }}{{ ', ' if not loop.last }}{% endfor %}{% if r.buildings|length > 4 %} +{{ r.buildings|length - 4 }}{% endif %} · {{ r.buildings[0][1] if r.buildings }}</div>{% endmacro %}
 
+{% macro usecell(r, g, ref) %}{% set x = r.use.get(g) %}{% if x %}<td>{% if x.price is none %}<span class="b" title="Usage is on only {{ '%.0f'|format((x.cover or 0) * 100) }}% of this utility's {{ ref }} bills (by cost), so the year is incomplete">{{ n0(x.ref) }}*</span>{% else %}{{ n0(x.ref) }}{% endif %}</td>
+  <td class="{{ 'over' if x.change and x.change > 0.15 else 'under' if x.change and x.change < -0.05 }}">{% if x.change is not none %}{{ '+' if x.change > 0 }}{{ '%.0f'|format(x.change * 100) }}%{% else %}—{% endif %}</td>
+  <td>{% if x.price %}${{ '%.2f'|format(x.price) }}{% else %}—{% endif %}</td><td>{{ n0(x.per_apt) if x.per_apt else '—' }}</td>{% else %}<td>—</td><td>—</td><td>—</td><td>—</td>{% endif %}{% endmacro %}
 {% block content %}
 <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
   <h1 style="margin:0">Utilities</h1>
@@ -121,7 +124,7 @@
 {% if y %}
 <div class="ut-sec">
   <h2>Utility costs by property (Yardi)</h2>
-  <p class="card-sub">What was paid for electric, gas and water &amp; sewer, from Yardi's payables (accounts 512-010 to 512-050), {{ y.first.strftime('%b %Y') if y.first }} to {{ y.last.strftime('%b %Y') if y.last }}. Bills are counted in the year their service period ends; deposits are left out (money held, not use). <b>Money only:</b> Yardi has no kWh or therms; usage comes with the bills and the utilities' feeds.
+  <p class="card-sub">What was paid for electric, gas and water &amp; sewer, from Yardi's payables (accounts 512-010 to 512-050), {{ y.first.strftime('%b %Y') if y.first }} to {{ y.last.strftime('%b %Y') if y.last }}. Bills are counted in the year their service period ends; deposits are left out (money held, not use). Yardi has no kWh or therms; {% if y.usage %}the usage below comes from the utility bills Conservice keeps for each payable{% else %}usage comes with the bills and the utilities' feeds{% endif %}.
     "Apartments" = vacant-unit and owner-paid apartment electric, not the plant. {{ y.rows|length }} portal properties matched by their service addresses (or name){% if y.others %}; {{ y.others|length }} Yardi properties are not in the portal (below){% endif %}.</p>
   <div class="ut-scroll"><table class="ut">
     <thead><tr><th>Property</th>{% for yy in y.years %}<th>{{ yy }}{% if yy > y.ref %} <span class="b">to date</span>{% endif %}</th>{% endfor %}
@@ -143,16 +146,38 @@
     {% for r in y.rows %}{% if r.meters %}
     <details style="margin:6px 0 0 12px"><summary style="cursor:pointer;font-size:12.5px"><b>{{ r.name }}</b> <span class="b">{{ r.meters|length }} account{{ 's' if r.meters|length != 1 }}, {{ money(r.meters|sum(attribute='cost')) }}</span></summary>
       <div class="ut-scroll"><table class="ut" style="margin:4px 0 8px">
-        <thead><tr><th>Service address</th><th>Building</th><th>Utility</th><th>Account</th><th>What</th><th>Bills</th><th>12 months</th></tr></thead>
+        <thead><tr><th>Service address</th><th>Building</th><th>Utility</th><th>Account</th><th>What</th><th>Bills</th><th>12 months</th><th>Usage</th></tr></thead>
         <tbody>{% for m in r.meters[:40] %}
           <tr><td class="l">{{ m.address or '—' }}</td><td class="l">{{ m.buildings|join(', ') or '—' }}</td>
             <td class="l">{{ m.utility }}{% if m.supplier %} <span class="b">supply</span>{% endif %}</td><td class="l">{{ m.number or '—' }}</td>
-            <td>{{ m.commodity }}{% if m.kind != 'building' %} <span class="b">{{ m.kind }}</span>{% endif %}</td><td>{{ m.bills }}</td><td>{{ money(m.cost) }}</td></tr>
-        {% endfor %}{% if r.meters|length > 40 %}<tr><td class="l b" colspan="7">+{{ r.meters|length - 40 }} smaller accounts</td></tr>{% endif %}</tbody>
+            <td>{{ m.commodity }}{% if m.kind != 'building' %} <span class="b">{{ m.kind }}</span>{% endif %}</td><td>{{ m.bills }}</td><td>{{ money(m.cost) }}</td>
+            <td>{% if m.usage %}{{ n0(m.usage) }} <span class="b">{{ m.unit }}</span>{% else %}—{% endif %}</td></tr>
+        {% endfor %}{% if r.meters|length > 40 %}<tr><td class="l b" colspan="8">+{{ r.meters|length - 40 }} smaller accounts</td></tr>{% endif %}</tbody>
       </table></div></details>
     {% endif %}{% endfor %}
   </details>
 </div>
+
+{% if y.usage %}
+{% set U = y.usage %}
+<div class="ut-sec">
+  <h2>Usage by property, {{ y.ref }} (utility bills)</h2>
+  <p class="card-sub">kWh, therms and water from the utilities' own bills, which Conservice keeps for every payable. Only the utility's delivery charges are counted: the supply line on the same bill, an ESCO's own invoice (Direct Energy and the like) and the sewer charge repeat the same kWh, therms or gallons. The price per unit is all-in: what was paid for that fuel in {{ y.ref }} (supply and sewer included) divided by the usage. It and "per apt" are shown only where usage is on at least 90% of the utility's bills; a number marked * is a partial year. Readings that price out impossibly low (a utility's data error, e.g. 36M kWh on a $5,497 bill) are left out.</p>
+  <div class="ut-tiles">
+    {% for g, lab in [('electric', 'Electric'), ('gas', 'Gas'), ('water', 'Water')] %}{% set t = U[g] %}
+    <div class="ut-tile"><div class="l">{{ lab }} {{ y.ref }}</div><div class="n">{{ n0(t.ref) }} <span style="font-size:13px">{{ t.unit }}{{ 's' if t.unit == 'therm' }}</span></div>
+      <div class="s">{% if t.price %}${{ '%.2f'|format(t.price) }} per {{ t.unit }} all-in · {% endif %}{{ t.props }} propert{{ 'y' if t.props == 1 else 'ies' }} with a full year</div></div>
+    {% endfor %}
+  </div>
+  <div class="ut-scroll"><table class="ut">
+    <thead><tr><th rowspan="2">Property</th><th colspan="4" style="text-align:center">Electric (kWh)</th><th colspan="4" style="text-align:center">Gas (therms)</th><th colspan="4" style="text-align:center">Water (kgal)</th></tr>
+      <tr>{% for g in ['electric', 'gas', 'water'] %}<th>{{ y.ref }}</th><th>vs {{ y.prev }}</th><th>$ / unit</th><th>Per apt</th>{% endfor %}</tr></thead>
+    <tbody>{% for r in y.rows %}{% if r.use %}
+      <tr><td class="l"><b>{{ r.name }}</b></td>{{ usecell(r, 'electric', y.ref) }}{{ usecell(r, 'gas', y.ref) }}{{ usecell(r, 'water', y.ref) }}</tr>
+    {% endif %}{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
 
 {% if y.checks %}
 <div class="ut-sec">

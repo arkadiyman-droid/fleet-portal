@@ -151,3 +151,59 @@ def test_the_other_ways_notes_are_written():
     assert yb.parse_line(row("Gas 06/01/2024-06/30/2024 23 New Lots Ave Unit UM", 1708.16,
                              period=dt.datetime(2024, 7, 1)))["kind"] == "building"        # a meter, not a flat
     assert yb.parse_line(row("Something 3", 5.0, inv="HBB22111705021"))["kind"] == "other"
+
+
+# ── usage from the Conservice bill records ───────────────────────────────────
+def _usage():
+    return yb.usage_index([
+        # Con Ed electric with the supply line repeating the kWh: counted once
+        ["26271-11000-4", "HBB25033012395\r", [["electric", "725 GARDENST ENTM", "CA", 15000.0, 100000, "kWh"],
+                                               ["elecsupp", "725 GARDENST ENTM", "CA", 5000.0, 100000, "kWh"]]],
+        # one gas account over two buildings: each its own therms
+        ["52487-85000-1", "AJX26010310531", [["gas", "775 SOUTHERN BLVD", "CA", 9000.0, 6000, "Therms"],
+                                             ["gas", "755 SOUTHERN BLVD", "CA", 4204.1, 3000, "Therms"],
+                                             ["gassupp", "775 SOUTHERN BLVD", "CA", 1.0, 6000, "Therms"]]],
+        # the same bill paid on a second invoice: the same therms again
+        ["52487-85000-1", "PSA26010622668", [["gas", "775 SOUTHERN BLVD", "CA", 9000.0, 6000, "Therms"],
+                                             ["gas", "755 SOUTHERN BLVD", "CA", 4204.1, 3000, "Therms"]]],
+        # a utility's data error: 36M kWh on a $5,497 bill
+        ["2100-1858-54-3", "AJA25081200306", [["electric", "135 MAIN ST", "CA", 5497.0, 36000000, "kWh"]]],
+        # an ESCO's own invoice repeats the kWh
+        ["644660-80133", "AJB24040610409", [["electric", "20 Richman Plaza", "CA", 900.0, 7000, "kWh"]]],
+        ["9", "HBB26033012499", [["water", "1 Far Away Rd", "CA", 700.0, 120000, "Gal"],
+                                 ["sewer", "1 Far Away Rd", "CA", 77.0, 120000, "Gal"]]],
+    ])
+
+
+def test_usage_counts_the_utilitys_delivery_items_once():
+    idx = _usage()
+    assert yb.batch_of("26271-11000-4-HBB25033012395") == "HBB25033012395"
+    items = idx[("26271110004", "HBB25033012395")]
+    assert yb.invoice_usage(items, "electric", "725 GARDENST ENTM") == (100000.0, "kWh", 15000.0)
+    gas = idx[("52487850001", "AJX26010310531")]
+    assert yb.invoice_usage(gas, "gas", "775 SOUTHERN BLVD")[:2] == (6000.0, "therm")
+    assert yb.invoice_usage(gas, "gas", "755 Southern Blvd.")[:2] == (3000.0, "therm")
+    assert yb.invoice_usage(gas, "gas", "1 Elsewhere St") is None           # several buildings, none of them this
+    w = idx[("9", "HBB26033012499")]
+    assert yb.invoice_usage(w, "water", "1 Far Away Rd")[:2] == (120.0, "kgal")
+    assert yb.invoice_usage(w, "sewer", "1 Far Away Rd") is None            # sewer repeats water's gallons
+
+
+def test_usage_lands_on_the_bills_once_and_data_errors_are_dropped():
+    lines = [yb.parse_line(r) for r in [
+        row("Electricity 01/25/2025-02/24/2025 725 GARDENST ENTM", 20000.0, inv="26271-11000-4-HBB25033012395"),
+        row("Gas 12/02/2025-12/31/2025 775 SOUTHERN BLVD", 13204.10, inv="52487-85000-1-AJX26010310531", gl="512-020"),
+        row("Gas 12/02/2025-12/31/2025 775 SOUTHERN BLVD", 13204.10, inv="52487-85000-1-PSA26010622668", gl="512-020"),
+        row("Electricity 07/02/2025-07/31/2025 135 MAIN ST", 5497.0, inv="2100-1858-54-3-AJA25081200306",
+            payee="Central Hudson"),
+        row("Electricity 03/02/2024-04/01/2024 20 Richman Plaza", 900.0, inv="644660-80133-AJB24040610409",
+            payee="Direct Energy Business"),
+    ]]
+    res = yb.build(lines, {}, {})
+    out = yb.attach_usage(res["accounts"], _usage())
+    by = {a["account_number"]: list(a["bills"].values())[0] for a in res["accounts"]}
+    assert by["26271-11000-4"]["usage"] == 100000.0 and by["26271-11000-4"]["unit"] == "kWh"
+    assert by["52487-85000-1"]["usage"] == 6000.0                           # paid twice, used once
+    assert "usage" not in by["2100-1858-54-3"]                              # $0.00015 per kWh: not real
+    assert "usage" not in by["644660-80133"]                                # the ESCO's copy of the kWh
+    assert out["bills"] == 3 and out["with_usage"] == 2 and len(out["dropped"]) == 1
